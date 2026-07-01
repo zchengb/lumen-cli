@@ -2,6 +2,25 @@
 
 Lumen scans recent git commits across your local repositories for code quality, security, and reliability issues using the Cursor CLI agent. It tracks findings over time, can open fix PRs for confirmed High severity items, and ships a standalone HTML dashboard that opens in any browser — no server, no Python required to view it.
 
+## Why Lumen instead of running Cursor/Codex ad hoc?
+
+You can already ask a coding agent (Cursor's `agent`, Codex, etc.) to "review my repo for bugs" whenever you feel like it. Lumen exists because that doesn't scale past one repo or one afternoon. It's an operational layer **on top of** the agent, not a replacement for it:
+
+| | Running Cursor/Codex manually | Lumen CLI |
+|---|---|---|
+| **Scope** | One repo, one prompt, one terminal session at a time | Scans N repositories across your whole project root in a single run (`config/repos.json`) |
+| **Scheduling** | You remember to run it | `lumen schedule add --project <slug> --cron "0 9 * * *"` — cron-driven, unattended, with start/finish desktop notifications |
+| **History & dedup** | Every run is a blank slate; the same issue gets reported again and again | Persistent `state/issue-registry.json` fingerprints findings (repo:file:title:type) and tracks status (open → in_progress → resolved) across runs, so you only see what's new or still unresolved |
+| **Safety** | The agent can run arbitrary project commands (`npm test`, `./gradlew build`, migrations) unless you carefully scope the prompt every time | `runtime-profiles.json` + `run_project_commands: false` hard-codes "review only, never execute repo build/test/deploy commands" as a workspace-wide policy, not something you have to remember to type |
+| **Isolation** | Agent edits your working directory directly; a bad auto-fix can leave your tree dirty | Every repo is reviewed inside a dedicated, reusable git worktree (`worktrees/<repo>`) — your actual working copy is never touched until a PR is opened |
+| **Output** | Whatever the agent prints to your terminal, gone when you close it | Structured `scan-result.json`, versioned HTML reports, and a standalone `dashboard.html` (works offline, no server) with historical trends across every run |
+| **Notification** | None, unless you build it yourself | Feishu card sent automatically per scan (global or per-project webhook via `lumen config set-webhook`), plus OS notifications on scan start/finish |
+| **Fix delivery** | You copy-paste the agent's suggested diff by hand | Confirmed High-severity findings can be committed on an `auto-fix/*` branch and opened as a PR automatically via `gh` |
+| **Multi-project** | Separate ad hoc setup per repo/project | Central registry (`~/.lumen/projects.json`); switch with `--project <slug>` or `lumen use <slug>` |
+| **Onboarding** | Re-explain your conventions to the agent every session | `config/scan-prompt.md` is a versioned, reusable operating spec for the agent — write it once, every scan (and every teammate) uses the same rules |
+
+In short: **the agent still does the actual code understanding** — Lumen is the scheduler, safety rail, history tracker, and reporting/notification layer around it, so reviewing "all our repos, safely, on a schedule, with a paper trail" doesn't depend on someone remembering to open a terminal.
+
 ## Install
 
 ### One-command install (recommended)
@@ -19,6 +38,9 @@ curl -fsSL https://raw.githubusercontent.com/zchengb/lumen-cli/main/get.sh | bas
 ```
 
 Env overrides: `LUMEN_REPO` (fork/mirror), `LUMEN_VERSION` (pin a release tag), `LUMEN_HOME`, `LUMEN_BIN_DIR`.
+
+> **"No GitHub release found... Falling back to the main branch source."**
+> This just means the repo has no published [Releases](https://github.com/zchengb/lumen-cli/releases) yet (or the Release workflow hasn't produced one) — `get.sh` still installs successfully from the `main` branch. To get an actual versioned release, push a `v*.*.*` tag (see [Packaging a New Release](#packaging-a-new-release-maintainers)) and confirm the **Release** workflow ran under the repo's **Actions** tab. If Actions shows no runs at all, GitHub Actions may be disabled for the repo — enable it under Settings → Actions → General.
 
 ### Manual install (from a downloaded zip)
 
