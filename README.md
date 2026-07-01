@@ -20,9 +20,6 @@ curl -fsSL https://raw.githubusercontent.com/zchengb/lumen-cli/main/get.sh | bas
 
 Env overrides: `LUMEN_REPO` (fork/mirror), `LUMEN_VERSION` (pin a release tag), `LUMEN_HOME`, `LUMEN_BIN_DIR`.
 
-> **"No GitHub release found... Falling back to the main branch source."**
-> This just means the repo has no published [Releases](https://github.com/zchengb/lumen-cli/releases) yet (or the Release workflow hasn't produced one) — `get.sh` still installs successfully from the `main` branch. To get an actual versioned release, push a `v*.*.*` tag (see [Packaging a New Release](#packaging-a-new-release-maintainers)) and confirm the **Release** workflow ran under the repo's **Actions** tab. If Actions shows no runs at all, GitHub Actions may be disabled for the repo — enable it under Settings → Actions → General.
-
 ### Manual install (from a downloaded zip)
 
 ```bash
