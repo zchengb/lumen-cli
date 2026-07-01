@@ -30,18 +30,20 @@ To install the CLI **and** set up a scan workspace at the same time:
 ## Quick Start
 
 ```bash
-mkdir -p ~/my-scan-workspace && cd ~/my-scan-workspace
+cd ~/Projects/my-project
 lumen init
 ```
+
+This creates a `.lumen/` folder inside your project root with all scan configuration and outputs. Your application code stays untouched at the project root.
 
 `lumen init` asks you a few questions interactively — no manual JSON editing required for a first run:
 
 - Project display name and where your repositories live locally
 - Scan window (days) and which Cursor model to use
-- Your Feishu webhook URL (optional — written to `.env.local`)
-- Each repository to scan: a git clone URL (Lumen clones it for you) or an existing local path, default branch, runtime profile, and whether auto-fix/PR creation are allowed
+- Your Feishu webhook URL (optional — written to `.lumen/.env.local` for this project only)
+- Repositories to scan: Lumen scans your project root for local git repositories and opens an interactive checklist (`○` / `●`). Use ↑↓ to move, **Space** to toggle a repository, **Enter** to confirm, `a` to select all, and choose **Continue** when done. You can also add repositories manually by clone URL or local path
 
-You can add, remove, or edit repositories and settings at any time by editing `config/repos.json` and `config/common.json` directly. To skip the prompts and get the raw templates instead (e.g. for scripting), run `lumen init --yes` or pipe input from a non-interactive shell.
+You can add, remove, or edit repositories and settings at any time by editing `.lumen/config/repos.json` and `.lumen/config/common.json` directly. If `lumen init` was interrupted, run `lumen init` again — it detects the incomplete `.lumen` folder, removes it, and starts fresh. To skip the prompts and get the raw templates instead (e.g. for scripting), run `lumen init --yes` or pipe input from a non-interactive shell.
 
 ```text
 Then:
@@ -55,16 +57,53 @@ Then:
 
 | Command | Description |
 |---|---|
-| `lumen init [dir] [--yes]` | Create a new scan workspace and interactively configure it (default: current directory) |
+| `lumen init [dir] [--yes] [--force]` | Create a new scan workspace and interactively configure it (default: current directory). Re-runs after an interrupted init automatically clean up the incomplete `.lumen` folder. Use `--force` to replace a fully configured workspace. |
 | `lumen list` | List all registered scan projects (name, slug, workspace) |
 | `lumen use [slug]` | Set or show the default project slug |
 | `lumen register [dir]` | Register an existing workspace (e.g. an `.auto-scan` folder) as a project |
-| `lumen scan --project <slug>` | Run a scan for a specific project |
+| `lumen scan --project <slug> [--dry-run]` | Run a scan; add `--dry-run` to mock the pipeline without the Cursor agent |
+| `lumen schedule add --project <slug> --cron "<expr>" [--dry-run]` | Schedule recurring scans via cron |
+| `lumen schedule remove --project <slug>` | Remove a project's scheduled scan |
+| `lumen schedule list` | List all configured schedules |
 | `lumen watch --project <slug>` | Tail the latest scan log with readable formatting |
 | `lumen dashboard --project <slug> [--open]` | Refresh `dashboard-data.js`, optionally open `dashboard.html` |
 | `lumen doctor` | Check installed prerequisites (agent, git, node/python, gh, webhook) |
+| `lumen config set-webhook <url>` | Set a Feishu webhook used by all projects by default |
+| `lumen config show` / `lumen config unset-webhook` | Inspect or remove the global webhook config |
 | `lumen version` | Print the installed CLI version |
 | `lumen help` | Show usage |
+
+### Feishu webhook: global vs per-project
+
+You can set the Feishu webhook once for all projects instead of repeating it in every workspace:
+
+```bash
+lumen config set-webhook https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx
+```
+
+This is stored in `~/.lumen/env` and used automatically by every scan and by `lumen doctor`, unless a specific project overrides it in its own `.env.local`.
+
+Resolution order (highest priority first):
+1. `FEISHU_WEBHOOK_URL` set in your current shell
+2. `<workspace>/.env.local` (per-project override, created by `lumen init`)
+3. `~/.lumen/env` (global default set with `lumen config set-webhook`)
+
+### Scheduled scans
+
+Lumen can run scans on a recurring schedule via cron:
+
+```bash
+lumen schedule add --project mbpass --cron "0 9 * * *"     # daily at 09:00
+lumen schedule add --project mbpass --cron "0 */6 * * *"   # every 6 hours
+lumen schedule list
+lumen schedule remove --project mbpass
+```
+
+The cron expression uses the standard 5-field format (`minute hour day-of-month month day-of-week`). Scheduled runs are appended to `crontab` with a `# lumen-schedule:<slug>` marker and log to `<workspace>/logs/schedule.log`. Add `--dry-run` to schedule mock runs (no Cursor agent, no PRs, no Feishu).
+
+### Scan notifications
+
+Every `lumen scan` (manual or scheduled) sends a desktop notification when the scan starts and when it finishes or fails — on macOS via Notification Center (`osascript`), on Linux via `notify-send` if installed. No configuration needed.
 
 ### Multi-project workflow
 
@@ -103,22 +142,37 @@ lumen scan
 LUMEN_PROJECT=mbpass lumen scan
 ```
 
-`lumen init` registers the new workspace automatically. For an existing workspace (such as `MBPass/.auto-scan`), run:
+**Dry-run (verify the pipeline without a real scan):**
 
 ```bash
-lumen register /path/to/your/.auto-scan
+lumen scan --project mbpass --dry-run
+```
+
+Dry-run mode:
+- Skips the Cursor agent, git worktrees, PR creation, and Feishu sending
+- Writes a mock `scan-result.json`
+- Generates the HTML report and refreshes `dashboard-data.js`
+- Does not modify `state/issue-registry.json`
+
+`lumen init` registers the new workspace automatically. For an existing workspace (such as a legacy `MBPass/.auto-scan` folder), run:
+
+```bash
+lumen register /path/to/your/project
 lumen scan --project mbpass
 ```
+
+Legacy layouts with config at the project root (not under `.lumen/`) are still supported for `lumen register` and `lumen scan --workspace`.
 
 Every scan-related command resolves the workspace in this order:
 
 1. `--project <slug>`
 2. `LUMEN_PROJECT` environment variable (slug)
 3. `--workspace <dir>`
-4. Current directory (if it contains `config/common.json`)
-5. Default project (`lumen use <slug>`)
-6. Single registered project (auto-selected)
-7. Interactive project picker (if multiple projects and terminal is interactive)
+4. `./.lumen/` in the current directory
+5. Current directory if it is already a Lumen workspace (legacy layout)
+6. Default project (`lumen use <slug>`)
+7. Single registered project (auto-selected)
+8. Interactive project picker (if multiple projects and terminal is interactive)
 
 ## Prerequisites
 
@@ -128,7 +182,7 @@ Every scan-related command resolves the workspace in this order:
 | git | Worktree-based repository scanning | Required |
 | Node.js **or** Python 3 | Rendering `dashboard-data.js` | Node preferred; falls back to Python 3 |
 | GitHub CLI (`gh`) | Automated PR creation for High findings | Scan still runs; findings reported without PRs |
-| `FEISHU_WEBHOOK_URL` | Feishu scan summary notifications | Scan still runs; notification marked "not sent" |
+| `FEISHU_WEBHOOK_URL` (global config, per-project `.env.local`, or shell env) | Feishu scan summary notifications | Scan still runs; notification marked "not sent" |
 
 Run `lumen doctor` after installing to check all of the above.
 
@@ -137,26 +191,29 @@ Run `lumen doctor` after installing to check all of the above.
 A workspace created by `lumen init` looks like this:
 
 ```text
-my-scan-workspace/
-  .env.common.example
-  .env.local.example
-  .env.local            (create this; never commit it)
-  .gitignore
-  dashboard.html         standalone dashboard (open directly in a browser)
-  dashboard-data.js       generated after each scan
-  config/
-    common.json          product name, execution mode, paths, retention
-    repos.json            repositories to scan (edit this)
-    runtime-profiles.json safety profiles per language/stack
-    scan-prompt.md         the agent's operating instructions
-    feishu-card-template.json
-  tmp/                    run metadata only
-  worktrees/              one reusable git worktree per repository
-  reports/                generated HTML/PDF reports
-  results/                scan-result-*.json history
-  logs/                   run-*.log (readable with 'lumen watch')
-  state/
-    issue-registry.json   persistent finding tracker
+my-project/                 ← your project root (application code lives here)
+  .lumen/                   ← Lumen scan workspace (all Lumen files live here)
+    .env.common.example
+    .env.local.example
+    .env.local              (create this; never commit it)
+    .gitignore
+    dashboard.html          standalone dashboard (open directly in a browser)
+    dashboard-data.js       generated after each scan
+    config/
+      common.json           product name, execution mode, paths, retention
+      repos.json            repositories to scan (edit this)
+      runtime-profiles.json safety profiles per language/stack
+      scan-prompt.md        the agent's operating instructions
+      feishu-card-template.json
+    tmp/                    run metadata only
+    worktrees/              one reusable git worktree per repository
+    reports/                generated HTML/PDF reports
+    results/                scan-result-*.json history
+    logs/                   run-*.log (readable with 'lumen watch')
+    state/
+      issue-registry.json   persistent finding tracker
+  service-a/                ← your git repositories
+  web-app/
 ```
 
 ## Uninstall

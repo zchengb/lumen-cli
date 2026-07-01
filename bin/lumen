@@ -6,6 +6,7 @@ LUMEN_LIB_DIR="${LUMEN_HOME}/lib/scripts"
 LUMEN_TEMPLATES_DIR="${LUMEN_HOME}/lib/templates"
 LUMEN_VERSION_FILE="${LUMEN_HOME}/VERSION"
 PROJECTS_REGISTRY_JS="${LUMEN_HOME}/lib/scripts/projects-registry.js"
+LUMEN_GLOBAL_ENV_FILE="${LUMEN_HOME}/env"
 
 RESOLVED_WORKSPACE=""
 RESOLVED_REMAINING_ARGS=()
@@ -26,6 +27,31 @@ lumen_version() {
   else
     echo "unknown"
   fi
+}
+
+LUMEN_DIR_NAME=".lumen"
+
+is_lumen_workspace() {
+  [[ -f "$1/config/common.json" ]]
+}
+
+default_lumen_workspace_path() {
+  local project_root="$1"
+  printf '%s/%s' "$(cd "${project_root}" && pwd)" "${LUMEN_DIR_NAME}"
+}
+
+resolve_lumen_workspace_path() {
+  local input="$1"
+  input="$(cd "${input}" && pwd)"
+  if is_lumen_workspace "${input}"; then
+    printf '%s' "${input}"
+    return 0
+  fi
+  if is_lumen_workspace "${input}/${LUMEN_DIR_NAME}"; then
+    printf '%s' "$(cd "${input}/${LUMEN_DIR_NAME}" && pwd)"
+    return 0
+  fi
+  return 1
 }
 
 resolve_workspace() {
@@ -179,6 +205,12 @@ resolve_command_workspace() {
     return 0
   fi
 
+  if [[ -f "./${LUMEN_DIR_NAME}/config/common.json" ]]; then
+    RESOLVED_WORKSPACE="$(cd "./${LUMEN_DIR_NAME}" && pwd)"
+    require_workspace_initialized "${RESOLVED_WORKSPACE}"
+    return 0
+  fi
+
   if [[ -f "./config/common.json" ]]; then
     RESOLVED_WORKSPACE="$(pwd)"
     require_workspace_initialized "${RESOLVED_WORKSPACE}"
@@ -228,9 +260,9 @@ resolve_command_workspace() {
 
 require_workspace_initialized() {
   local workspace="$1"
-  if [[ ! -f "${workspace}/config/common.json" ]]; then
+  if ! is_lumen_workspace "${workspace}"; then
     err "No Lumen workspace found at: ${workspace}"
-    printf 'Run: %slumen init%s to create one here, or pass --workspace <dir>.\n' "${BOLD}" "${RESET}"
+    printf 'Run: %slumen init%s in your project root to create %s/.lumen, or pass --workspace <dir>.\n' "${BOLD}" "${RESET}" "${LUMEN_DIR_NAME}"
     exit 1
   fi
 }
@@ -240,24 +272,43 @@ cmd_help() {
 Lumen - illuminate code health across your repositories
 
 Usage:
-  lumen init [dir] [--yes]      Create a new Lumen scan workspace (default: current directory)
+  lumen init [dir] [--yes] [--force]  Create a Lumen scan workspace at <dir>/.lumen
                                  Prompts for repositories, Cursor model, and Feishu webhook.
                                  Pass --yes (or run non-interactively) to skip prompts and use templates.
+                                 If a previous init was interrupted, init removes the incomplete
+                                 .lumen folder and starts again. Use --force to replace a fully
+                                 configured workspace.
   lumen list                    List all registered scan projects (name and slug)
   lumen use [slug]              Set or show the default project slug
   lumen register [dir]          Register an existing workspace as a scan project
-  lumen scan --project <slug>   Run a scan for a specific project
+  lumen scan --project <slug> [--dry-run]
+                                 Run a scan for a specific project
+                                 Add --dry-run to mock the pipeline without the Cursor agent
+  lumen schedule add --project <slug> --cron "<cron-expr>" [--dry-run]
+                                 Schedule recurring scans via cron (e.g. "0 9 * * *" = daily at 09:00)
+  lumen schedule remove --project <slug>
+                                 Remove a project's scheduled scan
+  lumen schedule list           List all configured schedules
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen dashboard --project <slug> [--open]
                                  Refresh dashboard-data.js (and optionally open dashboard.html)
   lumen doctor                  Check that required and optional tools are installed
+  lumen config set-webhook <url>
+                                 Set a Feishu webhook used by all projects (global config)
+  lumen config show             Print the global config file
+  lumen config unset-webhook     Remove the global Feishu webhook
   lumen version                 Print the installed Lumen CLI version
   lumen help                    Show this help message
 
 Environment:
   LUMEN_HOME                    Lumen CLI installation directory (default: ~/.lumen)
   CURSOR_AGENT_MODEL            Overrides the Cursor model set in config/common.json (execution.model)
-  FEISHU_WEBHOOK_URL            Overrides the Feishu webhook set in .env.local
+  FEISHU_WEBHOOK_URL            Overrides the Feishu webhook for all projects
+
+Feishu webhook resolution order (highest priority first):
+  1. FEISHU_WEBHOOK_URL in the current shell environment
+  2. <workspace>/.env.local (per-project override)
+  3. ~/.lumen/env (global default, set with 'lumen config set-webhook <url>')
 
 Project registry:
   Registered projects are stored in ~/.lumen/projects.json
@@ -274,6 +325,16 @@ EOF
 
 cmd_version() {
   printf 'lumen %s\n' "$(lumen_version)"
+}
+
+load_env_file_if_present() {
+  local file="$1"
+  if [[ -f "${file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${file}"
+    set +a
+  fi
 }
 
 cmd_doctor() {
@@ -309,11 +370,85 @@ cmd_doctor() {
     warn "GitHub CLI (gh) not found. Scans will run, but automated PR creation will be skipped."
   fi
 
+  local webhook_source=""
   if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
-    ok "FEISHU_WEBHOOK_URL is set in the current environment."
+    webhook_source="the current shell environment"
   else
-    warn "FEISHU_WEBHOOK_URL is not set. Set it in .env.local inside your workspace to enable Feishu notifications."
+    local workspace=""
+    workspace="$( (set +e; resolve_command_workspace >/dev/null 2>&1; printf '%s' "${RESOLVED_WORKSPACE}") )" || true
+    if [[ -n "${workspace}" ]]; then
+      load_env_file_if_present "${LUMEN_GLOBAL_ENV_FILE}"
+      load_env_file_if_present "${workspace}/.env.common"
+      load_env_file_if_present "${workspace}/.env.local"
+      if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
+        if [[ -f "${workspace}/.env.local" ]] && grep -q '^FEISHU_WEBHOOK_URL=' "${workspace}/.env.local" 2>/dev/null; then
+          webhook_source="${workspace}/.env.local"
+        else
+          webhook_source="the global config (${LUMEN_GLOBAL_ENV_FILE})"
+        fi
+      fi
+    else
+      load_env_file_if_present "${LUMEN_GLOBAL_ENV_FILE}"
+      if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
+        webhook_source="the global config (${LUMEN_GLOBAL_ENV_FILE})"
+      fi
+    fi
   fi
+
+  if [[ -n "${webhook_source}" ]]; then
+    ok "FEISHU_WEBHOOK_URL is set (from ${webhook_source})."
+  else
+    warn "FEISHU_WEBHOOK_URL is not set. Set it once for all projects with: lumen config set-webhook <url>"
+    printf '  Or set it per-project in .env.local inside that workspace.\n'
+  fi
+}
+
+cmd_config() {
+  local sub="${1:-}"
+  shift || true
+
+  case "${sub}" in
+    set-webhook)
+      local url="${1:-}"
+      if [[ -z "${url}" ]]; then
+        err "Usage: lumen config set-webhook <url>"
+        exit 1
+      fi
+      mkdir -p "${LUMEN_HOME}"
+      if [[ -f "${LUMEN_GLOBAL_ENV_FILE}" ]] && grep -q '^FEISHU_WEBHOOK_URL=' "${LUMEN_GLOBAL_ENV_FILE}"; then
+        sed -i.bak "s#^FEISHU_WEBHOOK_URL=.*#FEISHU_WEBHOOK_URL=\"$(sed_escape_replacement "${url}")\"#" "${LUMEN_GLOBAL_ENV_FILE}"
+        rm -f "${LUMEN_GLOBAL_ENV_FILE}.bak"
+      else
+        printf 'FEISHU_WEBHOOK_URL="%s"\n' "$(sed_escape_replacement "${url}")" >> "${LUMEN_GLOBAL_ENV_FILE}"
+      fi
+      ok "Saved FEISHU_WEBHOOK_URL to ${LUMEN_GLOBAL_ENV_FILE}"
+      printf 'This applies to every project unless a workspace has its own .env.local override.\n'
+      ;;
+    show)
+      if [[ -f "${LUMEN_GLOBAL_ENV_FILE}" ]]; then
+        printf 'Global config: %s\n\n' "${LUMEN_GLOBAL_ENV_FILE}"
+        cat "${LUMEN_GLOBAL_ENV_FILE}"
+      else
+        printf 'No global config found at %s\n' "${LUMEN_GLOBAL_ENV_FILE}"
+        printf 'Run: lumen config set-webhook <url>\n'
+      fi
+      ;;
+    unset-webhook)
+      if [[ -f "${LUMEN_GLOBAL_ENV_FILE}" ]]; then
+        sed -i.bak '/^FEISHU_WEBHOOK_URL=/d' "${LUMEN_GLOBAL_ENV_FILE}"
+        rm -f "${LUMEN_GLOBAL_ENV_FILE}.bak"
+        ok "Removed FEISHU_WEBHOOK_URL from global config."
+      fi
+      ;;
+    *)
+      printf 'Usage:\n'
+      printf '  lumen config set-webhook <url>   Set a Feishu webhook used by all projects (unless a workspace overrides it)\n'
+      printf '  lumen config unset-webhook       Remove the global Feishu webhook\n'
+      printf '  lumen config show                Print the global config file\n'
+      printf '\nGlobal config file: %s\n' "${LUMEN_GLOBAL_ENV_FILE}"
+      exit 1
+      ;;
+  esac
 }
 
 json_escape() {
@@ -379,68 +514,268 @@ prompt_menu() {
 
 REPOS=()
 
-collect_repositories_interactively() {
+discover_repos_json() {
   local workspace_root="$1"
-  local repo_count=0
+  node "${LUMEN_LIB_DIR}/discover-repos.js" list "${workspace_root}"
+}
 
-  printf '\n%sRepositories to scan%s\n' "${BOLD}" "${RESET}"
-  printf 'Add each repository you want Lumen to review. Leave the name blank to stop.\n\n'
+append_repo_entry() {
+  local name="$1"
+  local path="$2"
+  local branch="$3"
+  local profile="$4"
+  local allow_fix="$5"
+  local allow_pr="$6"
+  REPOS+=("{\"name\":\"$(json_escape "${name}")\",\"path\":\"$(json_escape "${path}")\",\"default_branch\":\"$(json_escape "${branch}")\",\"runtime_profile\":\"$(json_escape "${profile}")\",\"validation_commands\":[],\"allow_auto_fix\":${allow_fix},\"allow_pr\":${allow_pr}}")
+}
+
+collect_repository_manually() {
+  local workspace_root="$1"
+  local allow_fix="$2"
+  local allow_pr="$3"
+  local name path clone_url branch profile
+
+  name="$(prompt "Repository name" "")"
+  [[ -z "${name}" ]] && return 1
 
   while true; do
-    local name path clone_url branch profile allow_fix allow_pr
-    name="$(prompt "Repository name (blank to finish)" "")"
-    [[ -z "${name}" ]] && break
-
-    clone_url="$(prompt "Git clone URL (leave blank if it's already cloned locally)" "")"
+    clone_url="$(prompt "Git clone URL (leave blank if it is already cloned locally)" "")"
     if [[ -n "${clone_url}" ]]; then
+      if [[ "${clone_url}" != *"/"* && "${clone_url}" != *":"* ]]; then
+        warn "That doesn't look like a git URL: ${clone_url}"
+        if ! prompt_yn "Try entering the URL again?" "y"; then
+          printf 'Cancelled adding repository "%s".\n' "${name}"
+          return 1
+        fi
+        continue
+      fi
+
       path="$(prompt "Local directory to clone into" "${workspace_root}/${name}")"
       if [[ -d "${path}/.git" ]]; then
         warn "Directory already looks like a git repo, skipping clone: ${path}"
-      else
-        printf 'Cloning %s into %s ...\n' "${clone_url}" "${path}"
-        if git clone "${clone_url}" "${path}"; then
-          ok "Cloned ${name}."
-        else
-          warn "Clone failed. You can fix config/repos.json and clone manually later."
-        fi
+        break
+      fi
+
+      printf 'Cloning %s into %s ...\n' "${clone_url}" "${path}"
+      if git clone "${clone_url}" "${path}"; then
+        ok "Cloned ${name}."
+        break
+      fi
+
+      warn "Clone failed for: ${clone_url}"
+      if ! prompt_yn "Try again with a different URL?" "y"; then
+        printf 'Cancelled adding repository "%s".\n' "${name}"
+        return 1
       fi
     else
       path="$(prompt "Local path to the existing repository" "${workspace_root}/${name}")"
-      if [[ ! -d "${path}" ]]; then
-        warn "Path does not exist yet: ${path} (you can fix this later in config/repos.json)"
+      if [[ -d "${path}/.git" ]]; then
+        break
       fi
-    fi
-
-    branch="main"
-    if [[ -d "${path}/.git" ]]; then
-      branch="$(git -C "${path}" symbolic-ref --short HEAD 2>/dev/null || echo main)"
-    fi
-    branch="$(prompt "Default branch" "${branch}")"
-
-    profile="$(prompt_menu "Runtime profile (safety label; no project commands are ever run)" \
-      "local-java-review-only" "local-react-native-review-only" "local-php-review-only" "local-generic-review-only")"
-
-    if prompt_yn "Allow automated fix commits for confirmed High findings?" "y"; then allow_fix="true"; else allow_fix="false"; fi
-    if prompt_yn "Allow automated PR creation for confirmed High findings?" "y"; then allow_pr="true"; else allow_pr="false"; fi
-
-    REPOS+=("{\"name\":\"$(json_escape "${name}")\",\"path\":\"$(json_escape "${path}")\",\"default_branch\":\"$(json_escape "${branch}")\",\"runtime_profile\":\"$(json_escape "${profile}")\",\"validation_commands\":[],\"allow_auto_fix\":${allow_fix},\"allow_pr\":${allow_pr}}")
-    repo_count=$((repo_count + 1))
-    printf '\n'
-    if ! prompt_yn "Add another repository?" "n"; then
-      break
+      warn "No git repository found at: ${path}"
+      if ! prompt_yn "Try a different path?" "y"; then
+        printf 'Cancelled adding repository "%s".\n' "${name}"
+        return 1
+      fi
     fi
   done
 
+  branch="main"
+  if [[ -d "${path}/.git" ]]; then
+    branch="$(git -C "${path}" symbolic-ref --short HEAD 2>/dev/null || echo main)"
+  fi
+  branch="$(prompt "Default branch" "${branch}")"
+  profile="$(prompt_menu "Runtime profile" \
+    "local-java-review-only" "local-react-native-review-only" "local-php-review-only" "local-generic-review-only")"
+  append_repo_entry "${name}" "${path}" "${branch}" "${profile}" "${allow_fix}" "${allow_pr}"
+  ok "Added ${name}."
+  return 0
+}
+
+collect_repositories_interactively() {
+  local workspace_root="$1"
+  local discovered_json repo_count selection selected_json allow_fix allow_pr select_tmp select_exit
+
+  printf '\n%sRepositories to scan%s\n' "${BOLD}" "${RESET}"
+
+  if ! command -v node >/dev/null 2>&1 || [[ ! -f "${LUMEN_LIB_DIR}/discover-repos.js" ]]; then
+    warn "Repository discovery requires Node.js. Falling back to manual entry."
+    while collect_repository_manually "${workspace_root}" "true" "true"; do
+      if ! prompt_yn "Add another repository manually?" "n"; then
+        break
+      fi
+    done
+    return 0
+  fi
+
+  discovered_json="$(discover_repos_json "${workspace_root}")"
+  repo_count="$(printf '%s' "${discovered_json}" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));process.stdout.write(String(d.length))")"
+
+  if [[ "${repo_count}" == "0" ]]; then
+    printf 'No git repositories found under %s\n' "${workspace_root}"
+    printf 'You can add repositories manually instead.\n\n'
+    while collect_repository_manually "${workspace_root}" "true" "true"; do
+      if ! prompt_yn "Add another repository manually?" "n"; then
+        break
+      fi
+    done
+    return 0
+  fi
+
+  printf 'Found %s git repositor%s under %s\n' "${repo_count}" "$([ "${repo_count}" = "1" ] && echo y || echo ies)" "${workspace_root}"
+
+  selected_json=""
+  if [[ -t 0 && -t 1 && -f "${LUMEN_LIB_DIR}/select-repos.js" ]]; then
+    select_tmp="$(mktemp)"
+    set +e
+    node "${LUMEN_LIB_DIR}/select-repos.js" "${workspace_root}" --output "${select_tmp}"
+    select_exit=$?
+    set -e
+  else
+    select_exit=1
+  fi
+
+  if [[ "${select_exit}" == "2" ]]; then
+    rm -f "${select_tmp:-}"
+    printf '\n%sAdd repository manually%s\n' "${BOLD}" "${RESET}"
+    collect_repository_manually "${workspace_root}" "true" "true"
+    return 0
+  fi
+
+  if [[ "${select_exit}" == "130" ]]; then
+    rm -f "${select_tmp:-}"
+    printf '\nAborted.\n'
+    exit 130
+  fi
+
+  if [[ "${select_exit}" != "0" ]]; then
+    rm -f "${select_tmp:-}"
+    printf '\nEnter repository numbers to scan (comma-separated), %sall%s, or %smanual%s to add by URL:\n' "${BOLD}" "${RESET}" "${BOLD}" "${RESET}"
+    selection=""
+    while true; do
+      read -r -p "Selection: " selection || true
+      if [[ -n "${selection}" ]]; then
+        break
+      fi
+      printf 'Select at least one repository, or type "all".\n'
+    done
+
+    if [[ "${selection}" == "+" || "${selection}" == "manual" ]]; then
+      collect_repository_manually "${workspace_root}" "true" "true"
+      return 0
+    fi
+
+    if ! selected_json="$(node "${LUMEN_LIB_DIR}/discover-repos.js" select "${workspace_root}" "${selection}" 2>/dev/null)"; then
+      err "Invalid selection: ${selection}"
+      exit 1
+    fi
+  else
+    selected_json="$(cat "${select_tmp}")"
+    rm -f "${select_tmp}"
+    printf '\n'
+  fi
+
+  if prompt_yn "Allow automated fix commits for confirmed High findings for all selected repositories?" "y"; then
+    allow_fix="true"
+  else
+    allow_fix="false"
+  fi
+  if prompt_yn "Allow automated PR creation for confirmed High findings for all selected repositories?" "y"; then
+    allow_pr="true"
+  else
+    allow_pr="false"
+  fi
+
+  while IFS= read -r repo_line; do
+    local name path branch profile
+    name="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
+    path="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).path)")"
+    branch="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).default_branch)")"
+    profile="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).runtime_profile)")"
+    append_repo_entry "${name}" "${path}" "${branch}" "${profile}" "${allow_fix}" "${allow_pr}"
+    ok "Selected ${name}"
+  done < <(printf '%s' "${selected_json}" | node -e "
+    const repos = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+    repos.forEach((repo) => console.log(JSON.stringify(repo)));
+  ")
+
+  printf '\n'
+  if prompt_yn "Add another repository manually?" "n"; then
+    collect_repository_manually "${workspace_root}" "${allow_fix}" "${allow_pr}"
+  fi
+
+  return 0
+}
+
+is_lumen_workspace_configured() {
+  local lumen_dir="$1"
+  if [[ ! -f "${lumen_dir}/config/common.json" || ! -f "${lumen_dir}/config/repos.json" ]]; then
+    return 1
+  fi
+  node -e "
+    const fs = require('fs');
+    const root = process.argv[1];
+    const common = JSON.parse(fs.readFileSync(root + '/config/common.json', 'utf8'));
+    const name = ((common.project && common.project.display_name) || '').trim();
+    const workspaceRoot = ((common.project && common.project.workspace_root) || '').trim();
+    process.exit(name && workspaceRoot ? 0 : 1);
+  " "${lumen_dir}"
+}
+
+remove_lumen_workspace() {
+  local lumen_dir="$1"
+  rm -rf "${lumen_dir}"
+}
+
+maybe_replace_existing_workspace() {
+  local lumen_dir="$1"
+  local assume_yes="$2"
+  local force="$3"
+  local interactive="0"
+
+  if [[ "${assume_yes}" == "0" && -t 0 && -t 1 ]]; then
+    interactive="1"
+  fi
+
+  if is_lumen_workspace_configured "${lumen_dir}"; then
+    if [[ "${force}" != "1" ]]; then
+      warn "A Lumen workspace already exists at: ${lumen_dir}"
+      printf 'Edit config there, or run %slumen init --force%s to replace it.\n' "${BOLD}" "${RESET}"
+      return 1
+    fi
+    warn "Replacing existing workspace at: ${lumen_dir}"
+    if [[ "${interactive}" == "1" ]]; then
+      if ! prompt_yn "Delete the existing workspace and all scan history inside it?" "n"; then
+        printf 'Aborted.\n'
+        return 1
+      fi
+    fi
+  else
+    warn "Incomplete Lumen workspace found at: ${lumen_dir} (previous init was interrupted)."
+    if [[ "${interactive}" == "1" ]]; then
+      if ! prompt_yn "Remove it and run init again?" "y"; then
+        printf 'Aborted. Delete %s manually to re-run init.\n' "${lumen_dir}"
+        return 1
+      fi
+    else
+      printf 'Removing incomplete workspace and starting again.\n'
+    fi
+  fi
+
+  remove_lumen_workspace "${lumen_dir}"
+  ok "Removed previous workspace."
   return 0
 }
 
 cmd_init() {
   local target="."
   local assume_yes="0"
+  local force="0"
   local arg
   for arg in "$@"; do
     case "${arg}" in
       --yes|-y) assume_yes="1" ;;
+      --force|-f) force="1" ;;
       --*) ;;
       *) target="${arg}" ;;
     esac
@@ -448,32 +783,46 @@ cmd_init() {
 
   mkdir -p "${target}"
   target="$(cd "${target}" && pwd)"
+  local lumen_dir
+  lumen_dir="$(default_lumen_workspace_path "${target}")"
 
-  if [[ -f "${target}/config/common.json" ]]; then
-    warn "A Lumen workspace already exists at: ${target}"
-    printf 'Nothing was overwritten. Run %slumen register%s to add it to the project list.\n' "${BOLD}" "${RESET}"
-    return 0
+  if is_lumen_workspace "${lumen_dir}"; then
+    if ! maybe_replace_existing_workspace "${lumen_dir}" "${assume_yes}" "${force}"; then
+      return 0
+    fi
   fi
 
-  printf 'Initializing Lumen workspace at: %s\n' "${target}"
+  if is_lumen_workspace "${target}"; then
+    if [[ "${force}" == "1" ]]; then
+      warn "Replacing legacy Lumen workspace at: ${target}"
+      remove_lumen_workspace "${target}"
+      ok "Removed previous workspace."
+    else
+      warn "A legacy Lumen workspace already exists at: ${target}"
+      printf 'Nothing was overwritten. Consider migrating to %s/.lumen or run %slumen init --force%s.\n' "${LUMEN_DIR_NAME}" "${BOLD}" "${RESET}"
+      return 0
+    fi
+  fi
 
-  mkdir -p "${target}/config" "${target}/tmp" "${target}/worktrees" \
-    "${target}/reports" "${target}/results" "${target}/logs" "${target}/state"
+  printf 'Initializing Lumen workspace at: %s\n' "${lumen_dir}"
 
-  cp "${LUMEN_TEMPLATES_DIR}/config/common.json" "${target}/config/common.json"
-  cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${target}/config/repos.example.json"
-  cp "${LUMEN_TEMPLATES_DIR}/config/runtime-profiles.json" "${target}/config/runtime-profiles.json"
-  cp "${LUMEN_TEMPLATES_DIR}/config/scan-prompt.md" "${target}/config/scan-prompt.md"
-  cp "${LUMEN_TEMPLATES_DIR}/config/feishu-card-template.json" "${target}/config/feishu-card-template.json"
-  cp "${LUMEN_TEMPLATES_DIR}/.env.common.example" "${target}/.env.common.example"
-  cp "${LUMEN_TEMPLATES_DIR}/.env.local.example" "${target}/.env.local.example"
-  cp "${LUMEN_TEMPLATES_DIR}/.gitignore" "${target}/.gitignore"
-  cp "${LUMEN_TEMPLATES_DIR}/dashboard.html" "${target}/dashboard.html"
+  mkdir -p "${lumen_dir}/config" "${lumen_dir}/tmp" "${lumen_dir}/worktrees" \
+    "${lumen_dir}/reports" "${lumen_dir}/results" "${lumen_dir}/logs" "${lumen_dir}/state"
 
-  touch "${target}/tmp/.gitkeep" "${target}/worktrees/.gitkeep" "${target}/reports/.gitkeep" \
-    "${target}/results/.gitkeep" "${target}/logs/.gitkeep" "${target}/state/.gitkeep"
+  cp "${LUMEN_TEMPLATES_DIR}/config/common.json" "${lumen_dir}/config/common.json"
+  cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${lumen_dir}/config/repos.example.json"
+  cp "${LUMEN_TEMPLATES_DIR}/config/runtime-profiles.json" "${lumen_dir}/config/runtime-profiles.json"
+  cp "${LUMEN_TEMPLATES_DIR}/config/scan-prompt.md" "${lumen_dir}/config/scan-prompt.md"
+  cp "${LUMEN_TEMPLATES_DIR}/config/feishu-card-template.json" "${lumen_dir}/config/feishu-card-template.json"
+  cp "${LUMEN_TEMPLATES_DIR}/.env.common.example" "${lumen_dir}/.env.common.example"
+  cp "${LUMEN_TEMPLATES_DIR}/.env.local.example" "${lumen_dir}/.env.local.example"
+  cp "${LUMEN_TEMPLATES_DIR}/.gitignore" "${lumen_dir}/.gitignore"
+  cp "${LUMEN_TEMPLATES_DIR}/dashboard.html" "${lumen_dir}/dashboard.html"
 
-  echo '{"schema_version": "1.0", "issues": []}' > "${target}/state/issue-registry.json"
+  touch "${lumen_dir}/tmp/.gitkeep" "${lumen_dir}/worktrees/.gitkeep" "${lumen_dir}/reports/.gitkeep" \
+    "${lumen_dir}/results/.gitkeep" "${lumen_dir}/logs/.gitkeep" "${lumen_dir}/state/.gitkeep"
+
+  echo '{"schema_version": "1.0", "issues": []}' > "${lumen_dir}/state/issue-registry.json"
 
   local interactive="0"
   if [[ "${assume_yes}" == "0" && -t 0 && -t 1 ]]; then
@@ -481,20 +830,20 @@ cmd_init() {
   fi
 
   if [[ "${interactive}" == "0" ]]; then
-    if [[ ! -f "${target}/config/repos.json" ]]; then
-      cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${target}/config/repos.json"
+    if [[ ! -f "${lumen_dir}/config/repos.json" ]]; then
+      cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${lumen_dir}/config/repos.json"
     fi
     ok "Workspace created (non-interactive)."
-    try_register_project "${target}" "$(workspace_display_name "${target}")"
+    try_register_project "${lumen_dir}" "$(workspace_display_name "${lumen_dir}")"
     cat <<EOF
 
 Next steps:
-  1. Edit config/repos.json to list the repositories to scan.
-  2. Edit config/common.json to set project.display_name, project.workspace_root, and execution.model.
-  3. Copy .env.local.example to .env.local and set FEISHU_WEBHOOK_URL if you want Feishu notifications.
-  4. Run: lumen doctor        (check prerequisites)
-  4. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  6. Open dashboard.html in a browser to view results.
+  1. Edit ${LUMEN_DIR_NAME}/config/repos.json to list the repositories to scan.
+  2. Edit ${LUMEN_DIR_NAME}/config/common.json to set project.display_name, project.workspace_root, and execution.model.
+  3. Copy ${LUMEN_DIR_NAME}/.env.local.example to ${LUMEN_DIR_NAME}/.env.local and set FEISHU_WEBHOOK_URL if you want Feishu notifications.
+  4. Run: lumen doctor
+  5. Run: lumen scan --project <slug>   (see slugs with: lumen list)
+  6. Open ${LUMEN_DIR_NAME}/dashboard.html in a browser to view results.
 EOF
     return 0
   fi
@@ -503,7 +852,7 @@ EOF
 
   local display_name workspace_root scan_window model webhook
   display_name="$(prompt "Project display name" "$(basename "${target}")")"
-  workspace_root="$(prompt "Where do your repositories live locally? (parent directory)" "$(cd "${target}/.." && pwd)")"
+  workspace_root="$(prompt "Where do your repositories live locally? (project root)" "${target}")"
   scan_window="$(prompt "Scan window in days" "7")"
   model="$(prompt_menu "Cursor model to use for scans" "composer-2.5" "sonnet-4.5" "gpt-5.1-codex" "custom")"
   if [[ "${model}" == "custom" ]]; then
@@ -514,7 +863,7 @@ EOF
   REPOS=()
   collect_repositories_interactively "${workspace_root}"
 
-  local common_json="${target}/config/common.json"
+  local common_json="${lumen_dir}/config/common.json"
   sed -i.bak "s/\"display_name\": \"\"/\"display_name\": \"$(sed_escape_replacement "${display_name}")\"/" "${common_json}"
   sed -i.bak "s#\"workspace_root\": \"\"#\"workspace_root\": \"$(sed_escape_replacement "${workspace_root}")\"#" "${common_json}"
   sed -i.bak "s/\"model\": \"composer-2.5\"/\"model\": \"$(sed_escape_replacement "${model}")\"/" "${common_json}"
@@ -534,24 +883,24 @@ EOF
       printf '\n  '
     fi
     printf ']\n}\n'
-  } > "${target}/config/repos.json"
+  } > "${lumen_dir}/config/repos.json"
 
   if [[ -n "${webhook}" ]]; then
     sed "s#FEISHU_WEBHOOK_URL=\"\"#FEISHU_WEBHOOK_URL=\"$(sed_escape_replacement "${webhook}")\"#" \
-      "${LUMEN_TEMPLATES_DIR}/.env.local.example" > "${target}/.env.local"
+      "${LUMEN_TEMPLATES_DIR}/.env.local.example" > "${lumen_dir}/.env.local"
     ok ".env.local created with your Feishu webhook."
   fi
 
   ok "Workspace configured with ${#REPOS[@]} repositor$([ "${#REPOS[@]}" = "1" ] && echo y || echo ies)."
-  try_register_project "${target}" "${display_name}"
+  try_register_project "${lumen_dir}" "${display_name}"
   cat <<EOF
 
 Next steps:
-  1. Review config/repos.json and config/common.json — edit anytime.
-  2. Run: lumen list          (see all registered projects)
-  3. Run: lumen doctor        (check prerequisites)
+  1. Review ${LUMEN_DIR_NAME}/config/repos.json and ${LUMEN_DIR_NAME}/config/common.json — edit anytime.
+  2. Run: lumen list
+  3. Run: lumen doctor
   4. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  5. Open dashboard.html in a browser, or run: lumen dashboard --open
+  5. Open ${LUMEN_DIR_NAME}/dashboard.html in a browser, or run: lumen dashboard --project <slug> --open
 EOF
 }
 
@@ -603,18 +952,38 @@ cmd_register() {
   done
 
   target="$(cd "${target}" && pwd)"
+  local workspace
+  workspace="$(resolve_lumen_workspace_path "${target}")" || {
+    err "No Lumen workspace found at: ${target} or ${target}/${LUMEN_DIR_NAME}"
+    printf 'Run %slumen init%s in your project root first.\n' "${BOLD}" "${RESET}"
+    exit 1
+  }
   local reg_name project_json project_slug project_name
-  reg_name="$(workspace_display_name "${target}")"
-  project_json="$(register_project_workspace "${target}" "${reg_name}")"
+  reg_name="$(workspace_display_name "${workspace}")"
+  project_json="$(register_project_workspace "${workspace}" "${reg_name}")"
   project_slug="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).slug)")"
   project_name="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
   ok "Registered project '${project_name}' (slug: ${project_slug})"
-  printf 'Workspace: %s\n' "${target}"
+  printf 'Workspace: %s\n' "${workspace}"
   printf 'Run: %slumen scan --project %s%s\n' "${BOLD}" "${project_slug}" "${RESET}"
 }
 
 cmd_scan() {
-  resolve_command_workspace "$@"
+  local dry_run=0
+  local filtered_args=()
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --dry-run) dry_run=1 ;;
+      *) filtered_args+=("${arg}") ;;
+    esac
+  done
+  resolve_command_workspace "${filtered_args[@]}"
+  if [[ "${dry_run}" == "1" ]]; then
+    export LUMEN_DRY_RUN=1
+  else
+    unset LUMEN_DRY_RUN 2>/dev/null || true
+  fi
   bash "${LUMEN_LIB_DIR}/run-scan.sh" "${RESOLVED_WORKSPACE}"
 }
 
@@ -664,6 +1033,160 @@ cmd_watch() {
   fi
 }
 
+is_valid_cron_expr() {
+  local expr="$1"
+  local field_count
+  field_count="$(printf '%s' "${expr}" | tr -s ' \t' ' ' | awk '{print NF}')"
+  [[ "${field_count}" == "5" ]]
+}
+
+schedule_marker() {
+  printf '# lumen-schedule:%s' "$1"
+}
+
+read_crontab() {
+  crontab -l 2>/dev/null || true
+}
+
+write_crontab() {
+  local content="$1"
+  printf '%s\n' "${content}" | sed '/^[[:space:]]*$/d' | crontab -
+}
+
+cmd_schedule_add() {
+  local slug="" cron_expr="" dry_run="0"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project) slug="${2:-}"; shift 2 ;;
+      --cron) cron_expr="${2:-}"; shift 2 ;;
+      --dry-run) dry_run="1"; shift ;;
+      *) err "Unknown argument: $1"; exit 1 ;;
+    esac
+  done
+
+  if [[ -z "${slug}" || -z "${cron_expr}" ]]; then
+    err "Usage: lumen schedule add --project <slug> --cron \"<5-field cron expression>\" [--dry-run]"
+    printf 'Example: lumen schedule add --project mbpass --cron "0 9 * * *"   (daily at 09:00)\n'
+    exit 1
+  fi
+
+  if ! command -v crontab >/dev/null 2>&1; then
+    err "'crontab' is not available on this system. Scheduling requires cron."
+    exit 1
+  fi
+
+  if ! is_valid_cron_expr "${cron_expr}"; then
+    err "Invalid cron expression: \"${cron_expr}\" (expected 5 space-separated fields: minute hour day-of-month month day-of-week)"
+    exit 1
+  fi
+
+  local workspace
+  workspace="$(registry_cmd resolve-slug "${slug}" --workspace-only)" || {
+    err "Project not found: ${slug}. Run 'lumen list' to see available slugs."
+    exit 1
+  }
+  require_workspace_initialized "${workspace}"
+
+  local lumen_bin
+  lumen_bin="$(command -v lumen || true)"
+  if [[ -z "${lumen_bin}" ]]; then
+    lumen_bin="${BASH_SOURCE[0]}"
+  fi
+  lumen_bin="$(cd "$(dirname "${lumen_bin}")" && pwd)/$(basename "${lumen_bin}")"
+
+  local log_file="${workspace}/logs/schedule.log"
+  mkdir -p "${workspace}/logs"
+
+  local dry_run_flag=""
+  [[ "${dry_run}" == "1" ]] && dry_run_flag=" --dry-run"
+
+  local cron_line
+  cron_line="${cron_expr} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" scan --project ${slug}${dry_run_flag} >> \"${log_file}\" 2>&1 $(schedule_marker "${slug}")"
+
+  local existing filtered updated
+  existing="$(read_crontab)"
+  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(schedule_marker "${slug}")" || true)"
+  updated="$(printf '%s\n%s' "${filtered}" "${cron_line}")"
+  write_crontab "${updated}"
+
+  ok "Scheduled scans for '${slug}': ${cron_expr}$([ "${dry_run}" == "1" ] && echo ' (dry-run)')"
+  printf 'Log file: %s\n' "${log_file}"
+  printf 'Run %slumen schedule list%s to review all schedules.\n' "${BOLD}" "${RESET}"
+}
+
+cmd_schedule_remove() {
+  local slug=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project) slug="${2:-}"; shift 2 ;;
+      *) err "Unknown argument: $1"; exit 1 ;;
+    esac
+  done
+
+  if [[ -z "${slug}" ]]; then
+    err "Usage: lumen schedule remove --project <slug>"
+    exit 1
+  fi
+
+  if ! command -v crontab >/dev/null 2>&1; then
+    err "'crontab' is not available on this system."
+    exit 1
+  fi
+
+  local existing filtered
+  existing="$(read_crontab)"
+  if ! printf '%s\n' "${existing}" | grep -qF "$(schedule_marker "${slug}")"; then
+    warn "No schedule found for '${slug}'."
+    return 0
+  fi
+  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(schedule_marker "${slug}")" || true)"
+  if [[ -z "$(printf '%s' "${filtered}" | tr -d '[:space:]')" ]]; then
+    crontab -r 2>/dev/null || true
+  else
+    write_crontab "${filtered}"
+  fi
+  ok "Removed schedule for '${slug}'."
+}
+
+cmd_schedule_list() {
+  if ! command -v crontab >/dev/null 2>&1; then
+    warn "'crontab' is not available on this system."
+    return 0
+  fi
+  local lines
+  lines="$(read_crontab | grep '# lumen-schedule:' || true)"
+  if [[ -z "${lines}" ]]; then
+    printf 'No Lumen schedules configured.\n'
+    printf 'Add one with: lumen schedule add --project <slug> --cron "0 9 * * *"\n'
+    return 0
+  fi
+  printf '%sSCHEDULE                   PROJECT%s\n' "${BOLD}" "${RESET}"
+  while IFS= read -r line; do
+    local slug cron_fields
+    slug="$(printf '%s' "${line}" | sed -n 's/.*# lumen-schedule:\([^ ]*\).*/\1/p')"
+    cron_fields="$(printf '%s' "${line}" | awk '{print $1, $2, $3, $4, $5}')"
+    printf '%-26s %s\n' "${cron_fields}" "${slug}"
+  done <<< "${lines}"
+}
+
+cmd_schedule() {
+  local sub="${1:-}"
+  shift || true
+  case "${sub}" in
+    add) cmd_schedule_add "$@" ;;
+    remove|rm) cmd_schedule_remove "$@" ;;
+    list|ls) cmd_schedule_list "$@" ;;
+    *)
+      printf 'Usage:\n'
+      printf '  lumen schedule add --project <slug> --cron "<cron-expr>" [--dry-run]\n'
+      printf '  lumen schedule remove --project <slug>\n'
+      printf '  lumen schedule list\n'
+      printf '\nExample (daily at 09:00): lumen schedule add --project mbpass --cron "0 9 * * *"\n'
+      exit 1
+      ;;
+  esac
+}
+
 main() {
   local command="${1:-help}"
   shift || true
@@ -674,9 +1197,11 @@ main() {
     use) cmd_use "$@" ;;
     register) cmd_register "$@" ;;
     scan) cmd_scan "$@" ;;
+    schedule) cmd_schedule "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
     watch) cmd_watch "$@" ;;
     doctor) cmd_doctor "$@" ;;
+    config) cmd_config "$@" ;;
     version|-v|--version) cmd_version ;;
     help|-h|--help) cmd_help ;;
     *)
