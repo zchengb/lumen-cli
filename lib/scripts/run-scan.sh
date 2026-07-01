@@ -114,6 +114,41 @@ clear_stale_lock() {
   rm -rf "${LOCK_DIR}"
 }
 
+latest_scan_result_file() {
+  local results_dir="${WORKSPACE_ROOT}/results"
+  local fixed_path="${results_dir}/scan-result.json"
+  if [[ -f "${fixed_path}" ]]; then
+    printf '%s' "${fixed_path}"
+    return 0
+  fi
+  find "${results_dir}" -maxdepth 1 -name 'scan-result-*.json' -type f -print0 2>/dev/null \
+    | xargs -0 ls -t 2>/dev/null \
+    | head -n1
+}
+
+run_report_and_notify() {
+  local result_file
+  result_file="$(latest_scan_result_file)"
+  if [[ -z "${result_file}" ]]; then
+    printf 'Warning: no scan-result.json was found under %s/results. Skipping report generation and Feishu notification.\n' "${WORKSPACE_ROOT}" >&2
+    return 1
+  fi
+
+  local report_script="${LUMEN_LIB_DIR}/render-report-and-notify.py"
+  if [[ ! -f "${report_script}" ]]; then
+    printf 'Warning: report script not found: %s\n' "${report_script}" >&2
+    return 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    printf 'Warning: python3 not found; skipped HTML/PDF generation and Feishu notification.\n' >&2
+    return 1
+  fi
+
+  printf '\nGenerating report and sending Feishu notification from %s ...\n' "${result_file}"
+  LUMEN_WORKSPACE="${WORKSPACE_ROOT}" python3 "${report_script}" "${result_file}" | tee -a "${LOG_FILE}" || \
+    printf 'Warning: report/notification step failed. See log for details.\n' >&2
+}
+
 refresh_dashboard() {
   local dashboard_script="${LUMEN_LIB_DIR}/render-dashboard.sh"
   if [[ -f "${dashboard_script}" ]]; then
@@ -177,7 +212,7 @@ run_real_scan() {
   printf 'Run log: %s\n' "${LOG_FILE}"
 
   if [[ -z "${FEISHU_WEBHOOK_URL:-}" ]]; then
-    printf 'Notice: FEISHU_WEBHOOK_URL is not set. Feishu sending should be skipped or reported as unavailable by the agent.\n'
+    printf 'Notice: FEISHU_WEBHOOK_URL is not set. The Feishu notification step will be skipped after this scan.\n'
   fi
 
   if ! command -v gh >/dev/null 2>&1; then
@@ -207,7 +242,11 @@ run_real_scan() {
   fi
 
   set +e
-  agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}"
+  if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v node >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format-scan-log.js" ]]; then
+    agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}" | node "${LUMEN_LIB_DIR}/format-scan-log.js"
+  else
+    agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}"
+  fi
   local agent_exit=${PIPESTATUS[0]}
   set -e
 
@@ -217,6 +256,7 @@ run_real_scan() {
   fi
 
   printf '\nLumen scan agent finished at %s UTC.\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
+  run_report_and_notify || true
   refresh_dashboard
 }
 

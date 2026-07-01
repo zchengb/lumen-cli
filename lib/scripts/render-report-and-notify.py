@@ -309,23 +309,37 @@ def write_html(scan: dict, registry: dict, output_path: Path) -> None:
   <title>Code Quality & Security Review Report</title>
   <style>
     @page {{ size: A4; margin: 18mm; }}
-    body {{ font-family: Arial, Helvetica, sans-serif; color: #111; line-height: 1.42; font-size: 13px; }}
-    h1 {{ font-size: 28px; margin: 0 0 8px; }}
+    * {{ box-sizing: border-box; }}
+    html, body {{ max-width: 100%; overflow-x: hidden; }}
+    body {{
+      font-family: Arial, Helvetica, sans-serif; color: #111; line-height: 1.42; font-size: 13px;
+      overflow-wrap: break-word; word-wrap: break-word; word-break: break-word;
+    }}
+    h1 {{ font-size: 28px; margin: 0 0 8px; overflow-wrap: break-word; }}
     h2 {{ font-size: 18px; margin: 28px 0 10px; border-bottom: 1px solid #ccc; padding-bottom: 6px; }}
-    h3 {{ font-size: 15px; margin: 0 0 4px; }}
-    .meta, .muted {{ color: #666; }}
+    h3 {{ font-size: 15px; margin: 0 0 4px; overflow-wrap: break-word; }}
+    .meta, .muted {{ color: #666; overflow-wrap: break-word; }}
     .summary {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0; }}
-    .metric {{ border: 1px solid #ddd; padding: 10px; background: #f7f7f7; }}
+    .metric {{ border: 1px solid #ddd; padding: 10px; background: #f7f7f7; overflow: hidden; }}
     .metric b {{ display: block; font-size: 20px; }}
-    table {{ width: 100%; border-collapse: collapse; margin: 10px 0; }}
-    th, td {{ border-bottom: 1px solid #ddd; padding: 7px; text-align: left; vertical-align: top; }}
+    table {{ width: 100%; max-width: 100%; table-layout: fixed; border-collapse: collapse; margin: 10px 0; }}
+    th, td {{
+      border-bottom: 1px solid #ddd; padding: 7px; text-align: left; vertical-align: top;
+      overflow-wrap: break-word; word-wrap: break-word; word-break: break-word;
+    }}
     th {{ background: #f0f0f0; }}
-    .finding {{ page-break-inside: avoid; border-top: 1px solid #ddd; padding-top: 14px; margin-top: 16px; }}
-    dl {{ display: grid; grid-template-columns: 95px 1fr; gap: 6px 10px; }}
-    dt {{ font-weight: bold; color: #333; }}
-    dd {{ margin: 0; }}
-    pre {{ white-space: pre-wrap; word-break: break-word; background: #f5f5f5; padding: 8px; border: 1px solid #ddd; }}
-    code {{ font-family: Menlo, Consolas, monospace; }}
+    .finding {{ page-break-inside: avoid; border-top: 1px solid #ddd; padding-top: 14px; margin-top: 16px; overflow: hidden; }}
+    dl {{ display: grid; grid-template-columns: 95px 1fr; gap: 6px 10px; max-width: 100%; }}
+    dt {{ font-weight: bold; color: #333; overflow-wrap: break-word; }}
+    dd {{ margin: 0; min-width: 0; overflow-wrap: break-word; word-wrap: break-word; word-break: break-word; }}
+    pre {{
+      white-space: pre-wrap; overflow-wrap: break-word; word-wrap: break-word; word-break: break-word;
+      background: #f5f5f5; padding: 8px; border: 1px solid #ddd; max-width: 100%; overflow-x: hidden;
+    }}
+    code {{
+      font-family: Menlo, Consolas, monospace; overflow-wrap: break-word; word-wrap: break-word;
+      word-break: break-word; white-space: pre-wrap;
+    }}
     .empty {{ color: #666; }}
   </style>
 </head>
