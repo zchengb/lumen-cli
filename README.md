@@ -84,6 +84,7 @@ Then:
 | `lumen doctor` | Check installed prerequisites (agent, git, node/python, gh, webhook) |
 | `lumen config set-webhook <url>` | Set a Feishu webhook used by all projects by default |
 | `lumen config show` / `lumen config unset-webhook` | Inspect or remove the global webhook config |
+| `lumen upgrade [--sync-prompts] [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release. Add `--sync-prompts` to also overwrite this workspace's `config/scan-prompt.md`, `runtime-profiles.json`, `feishu-card-template.json`, and `dashboard.html` with the new bundled versions (old versions are backed up under `config/.template-backups/`). `common.json` and `repos.json` are never touched. |
 | `lumen version` | Print the installed CLI version |
 | `lumen help` | Show usage |
 

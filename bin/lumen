@@ -298,6 +298,15 @@ Usage:
                                  Set a Feishu webhook used by all projects (global config)
   lumen config show             Print the global config file
   lumen config unset-webhook     Remove the global Feishu webhook
+  lumen upgrade [--sync-prompts] [--cli-only] [--project <slug>]
+                                 Upgrade the installed Lumen CLI to the latest release.
+                                 Add --sync-prompts to also overwrite this workspace's
+                                 config/scan-prompt.md, runtime-profiles.json,
+                                 feishu-card-template.json, and dashboard.html with the
+                                 versions bundled in the new release (existing versions are
+                                 backed up first). config/common.json and config/repos.json
+                                 are never touched. Add --cli-only to skip the prompt sync
+                                 tip. Use --project <slug> to target a specific workspace.
   lumen version                 Print the installed Lumen CLI version
   lumen help                    Show this help message
 
@@ -326,6 +335,82 @@ EOF
 
 cmd_version() {
   printf 'lumen %s\n' "$(lumen_version)"
+}
+
+sync_workspace_templates() {
+  local workspace="$1"
+  local stamp
+  stamp="$(date -u '+%Y%m%d-%H%M%S')"
+  local backup_dir="${workspace}/config/.template-backups/${stamp}"
+  mkdir -p "${backup_dir}"
+
+  local file
+  for file in scan-prompt.md runtime-profiles.json feishu-card-template.json; do
+    if [[ -f "${workspace}/config/${file}" ]]; then
+      cp "${workspace}/config/${file}" "${backup_dir}/${file}"
+    fi
+    if [[ -f "${LUMEN_TEMPLATES_DIR}/config/${file}" ]]; then
+      cp "${LUMEN_TEMPLATES_DIR}/config/${file}" "${workspace}/config/${file}"
+    fi
+  done
+
+  if [[ -f "${workspace}/dashboard.html" ]]; then
+    cp "${workspace}/dashboard.html" "${backup_dir}/dashboard.html"
+  fi
+  if [[ -f "${LUMEN_TEMPLATES_DIR}/dashboard.html" ]]; then
+    cp "${LUMEN_TEMPLATES_DIR}/dashboard.html" "${workspace}/dashboard.html"
+  fi
+
+  ok "Refreshed scan-prompt.md, runtime-profiles.json, feishu-card-template.json, and dashboard.html."
+  printf '  Workspace: %s\n' "${workspace}"
+  printf '  Previous versions backed up to: %s\n' "${backup_dir}"
+  printf '  config/common.json and config/repos.json were left untouched (they hold your project data).\n'
+}
+
+cmd_upgrade() {
+  local sync_prompts="0"
+  local cli_only="0"
+  local passthrough_args=()
+  local arg
+  for arg in "$@"; do
+    case "${arg}" in
+      --sync-prompts) sync_prompts="1" ;;
+      --cli-only) cli_only="1" ;;
+      *) passthrough_args+=("${arg}") ;;
+    esac
+  done
+
+  local repo="${LUMEN_REPO:-zchengb/lumen-cli}"
+  local before_version
+  before_version="$(lumen_version)"
+
+  printf '%sUpgrading Lumen CLI (current: %s, repo: %s)...%s\n' "${BOLD}" "${before_version}" "${repo}" "${RESET}"
+
+  local installer_url="https://raw.githubusercontent.com/${repo}/main/get.sh"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "${installer_url}" | LUMEN_REPO="${repo}" LUMEN_HOME="${LUMEN_HOME}" bash
+  elif command -v wget >/dev/null 2>&1; then
+    wget -qO- "${installer_url}" | LUMEN_REPO="${repo}" LUMEN_HOME="${LUMEN_HOME}" bash
+  else
+    err "Neither curl nor wget is available to fetch the Lumen CLI upgrade."
+    exit 1
+  fi
+
+  local after_version
+  after_version="$(lumen_version)"
+  if [[ "${after_version}" == "${before_version}" ]]; then
+    ok "Lumen CLI is already up to date (${after_version})."
+  else
+    ok "Lumen CLI upgraded: ${before_version} -> ${after_version}."
+  fi
+
+  if [[ "${sync_prompts}" == "1" ]]; then
+    resolve_command_workspace "${passthrough_args[@]+"${passthrough_args[@]}"}"
+    sync_workspace_templates "${RESOLVED_WORKSPACE}"
+  elif [[ "${cli_only}" == "0" ]]; then
+    printf '\nTip: run %slumen upgrade --sync-prompts%s (optionally with --project <slug>) to also refresh\n' "${BOLD}" "${RESET}"
+    printf 'this workspace'"'"'s config/scan-prompt.md and other bundled templates to match the new CLI version.\n'
+  fi
 }
 
 load_env_file_if_present() {
@@ -1205,6 +1290,7 @@ main() {
     watch) cmd_watch "$@" ;;
     doctor) cmd_doctor "$@" ;;
     config) cmd_config "$@" ;;
+    upgrade) cmd_upgrade "$@" ;;
     version|-v|--version) cmd_version ;;
     help|-h|--help) cmd_help ;;
     *)
