@@ -73,7 +73,7 @@ def issue_fingerprint(finding: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def reconcile_issue_registry(scan: dict, registry_path: Path) -> dict:
+def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = True) -> dict:
     registry = load_json(registry_path, {"schema_version": "1.0", "issues": []})
     issues = registry.setdefault("issues", [])
     by_fingerprint = {item["fingerprint"]: item for item in issues if item.get("fingerprint")}
@@ -138,7 +138,8 @@ def reconcile_issue_registry(scan: dict, registry_path: Path) -> dict:
         "resolved_issues": sum(1 for i in issues if i.get("status") == "resolved"),
     }
     registry["updated_at"] = now
-    write_json(registry_path, registry)
+    if persist:
+        write_json(registry_path, registry)
     scan["issue_registry"] = summary
     return registry
 
@@ -473,6 +474,7 @@ def main() -> int:
 
     result_path = Path(sys.argv[1]).resolve()
     scan = load_json(result_path, {})
+    dry_run = os.environ.get("LUMEN_DRY_RUN", "").strip().lower() in {"1", "true", "yes"} or bool(scan.get("dry_run"))
     workspace_root = result_path.parent.parent
     reports_dir = workspace_root / "reports"
     state_dir = workspace_root / "state"
@@ -481,7 +483,7 @@ def main() -> int:
     product_name = common.get("product", {}).get("name", "Lumen")
     pdf_engine_preference = common.get("reporting", {}).get("pdf_engine_preference", ["playwright", "weasyprint", "wkhtmltopdf"])
 
-    registry = reconcile_issue_registry(scan, registry_path)
+    registry = reconcile_issue_registry(scan, registry_path, persist=not dry_run)
 
     stamp = datetime.now().strftime("%Y-%m-%d")
     html_path = reports_dir / f"code-quality-security-scan-{stamp}.html"
@@ -495,7 +497,9 @@ def main() -> int:
         scan["report"] = {"html_path": str(html_path), "pdf_path": None, "status": "pdf_failed", "error": redact(str(exc))}
 
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
-    if not webhook_url:
+    if dry_run:
+        scan["feishu"] = {"status": "dry_run_skipped", "error": None}
+    elif not webhook_url:
         scan["feishu"] = {"status": "not_sent", "error": "FEISHU_WEBHOOK_URL is not set"}
     else:
         try:
