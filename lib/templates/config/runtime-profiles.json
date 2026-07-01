@@ -1,0 +1,82 @@
+{
+  "local-java-review-only": {
+    "runner": "local",
+    "language": "java",
+    "install_strategy": "none",
+    "allowed_commands": [],
+    "blocked_command_patterns": [
+      "gradle",
+      "./gradlew",
+      "mvn",
+      "java",
+      "bootRun",
+      "test",
+      "check",
+      "build",
+      "publish",
+      "deploy"
+    ],
+    "validation": "skipped_by_policy",
+    "auto_fix_policy": "high_only_pr_allowed_without_local_validation"
+  },
+  "local-react-native-review-only": {
+    "runner": "local",
+    "language": "javascript",
+    "install_strategy": "none",
+    "allowed_commands": [],
+    "blocked_command_patterns": [
+      "yarn",
+      "npm",
+      "pnpm",
+      "expo",
+      "react-native",
+      "ios",
+      "android",
+      "codepush",
+      "test",
+      "lint",
+      "build",
+      "publish",
+      "deploy",
+      "release"
+    ],
+    "native_build": "skip",
+    "validation": "skipped_by_policy",
+    "auto_fix_policy": "high_only_pr_allowed_without_local_validation"
+  },
+  "local-php-review-only": {
+    "runner": "local",
+    "language": "php",
+    "install_strategy": "none",
+    "allowed_commands": [],
+    "blocked_command_patterns": [
+      "composer",
+      "php artisan",
+      "vendor/bin",
+      "phpunit",
+      "test",
+      "migrate",
+      "publish",
+      "deploy",
+      "release"
+    ],
+    "validation": "skipped_by_policy",
+    "auto_fix_policy": "high_only_pr_allowed_without_local_validation"
+  },
+  "local-generic-review-only": {
+    "runner": "local",
+    "language": "generic",
+    "install_strategy": "none",
+    "allowed_commands": [],
+    "blocked_command_patterns": [
+      "install",
+      "build",
+      "test",
+      "publish",
+      "deploy",
+      "release"
+    ],
+    "validation": "skipped_by_policy",
+    "auto_fix_policy": "high_only_pr_allowed_without_local_validation"
+  }
+}

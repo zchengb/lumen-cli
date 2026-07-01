@@ -1,0 +1,88 @@
+{
+  "schema_version": "1.0",
+  "product": {
+    "name": "Lumen",
+    "tagline": "Illuminate code health across your repositories",
+    "codename": "lumen"
+  },
+  "project": {
+    "display_name": "",
+    "workspace_root": ""
+  },
+  "execution": {
+    "mode": "lightweight_review_only",
+    "model": "composer-2.5",
+    "scan_window_days": 7,
+    "run_project_commands": false,
+    "validation_policy": "skip_all_local_validation_commands",
+    "workspace_strategy": "stable_reusable_worktree_per_repo",
+    "keep_worktrees_after_run": true,
+    "max_worktrees_per_repo": 1,
+    "create_pr_for_severity": ["High"]
+  },
+  "paths": {
+    "config_dir": "config",
+    "tmp_dir": "tmp",
+    "worktrees_dir": "worktrees",
+    "results_dir": "results",
+    "reports_dir": "reports",
+    "logs_dir": "logs",
+    "state_dir": "state",
+    "issue_registry": "state/issue-registry.json",
+    "dashboard_html": "dashboard.html",
+    "dashboard_data_js": "dashboard-data.js"
+  },
+  "retention": {
+    "enabled": true,
+    "keep_latest_run_dirs": 1,
+    "keep_result_days": 90,
+    "keep_report_days": 90,
+    "keep_log_days": 30,
+    "cleanup_worktrees_before_run": true,
+    "cleanup_only_auto_scan_paths": true
+  },
+  "issue_tracking": {
+    "enabled": true,
+    "fingerprint_strategy": "repository:file:normalized_title:issue_type:trigger_hash",
+    "carry_open_issues_across_scan_windows": true,
+    "do_not_drop_unresolved_issues_after_scan_window": true,
+    "statuses": [
+      "open",
+      "in_progress",
+      "pr_open",
+      "resolved",
+      "accepted_risk",
+      "false_positive",
+      "ignored"
+    ],
+    "stale_after_days": 7,
+    "include_stale_open_issues_in_report": true
+  },
+  "reporting": {
+    "html_first": true,
+    "dashboard_enabled": true,
+    "dashboard_path": "dashboard.html",
+    "dashboard_scope": "all_historical_runs",
+    "html_path_pattern": "reports/code-quality-security-scan-YYYY-MM-DD.html",
+    "pdf_path_pattern": "reports/code-quality-security-scan-YYYY-MM-DD.pdf",
+    "style": "minimal",
+    "pdf_engine_preference": ["playwright", "weasyprint", "wkhtmltopdf"]
+  },
+  "security": {
+    "redact_secrets": true,
+    "redaction_token": "[REDACTED]",
+    "never_include_secret_values": true,
+    "report_secret_findings_without_value": true
+  },
+  "notifications": {
+    "feishu_webhook_env": "FEISHU_WEBHOOK_URL",
+    "send_exactly_one_card": true,
+    "include_pdf_path_in_card": false
+  },
+  "git": {
+    "branch_prefix": "auto-fix",
+    "commit_message_strategy": "match_repository_history",
+    "inspect_recent_commit_count": 20,
+    "never_push_default_branch": true
+  }
+}

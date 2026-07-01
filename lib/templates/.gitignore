@@ -1,0 +1,10 @@
+tmp/*
+!tmp/.gitkeep
+logs/*.log
+results/*.json
+reports/*.pdf
+reports/*.html
+dashboard-data.js
+.env.local
+*.tmp
+.DS_Store

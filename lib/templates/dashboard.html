@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Lumen Dashboard</title>
+  <style>
+    :root {
+      --bg: #f5f6f8;
+      --surface: #ffffff;
+      --border: #e2e5ea;
+      --text: #1a1d23;
+      --muted: #5c6573;
+      --accent: #0078d4;
+      --accent-soft: #e8f3fc;
+      --high: #c42b1c;
+      --high-bg: #fde7e5;
+      --medium: #8a5b00;
+      --medium-bg: #fff4ce;
+      --low: #0f6cbd;
+      --low-bg: #e8f3fc;
+      --success: #0e7a3b;
+      --success-bg: #dff6dd;
+      --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 16px rgba(16, 24, 40, 0.04);
+      --radius: 10px;
+      --font: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--text);
+      background: linear-gradient(180deg, #eef2f7 0%, var(--bg) 180px);
+      line-height: 1.45;
+    }
+
+    .page {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 24px 48px;
+    }
+
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+    }
+
+    .brand .tagline {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .meta {
+      text-align: right;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .meta strong { color: var(--text); }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric .label {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+    }
+
+    .metric .value {
+      margin-top: 6px;
+      font-size: 28px;
+      font-weight: 650;
+      line-height: 1;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      background: #fafbfc;
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .panel-body { padding: 0 18px 16px; }
+
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px 18px;
+      padding-top: 14px;
+      font-size: 14px;
+    }
+
+    .config-item span {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 2px;
+    }
+
+    code {
+      font-family: var(--mono);
+      font-size: 12px;
+      background: #f0f2f5;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      padding: 10px 8px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      font-weight: 600;
+      background: #fafbfc;
+      position: sticky;
+      top: 0;
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover { text-decoration: underline; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .badge-high { background: var(--high-bg); color: var(--high); }
+    .badge-medium { background: var(--medium-bg); color: var(--medium); }
+    .badge-low { background: var(--low-bg); color: var(--low); }
+    .badge-open { background: #fde7e5; color: #a4262c; }
+    .badge-pr_open { background: #fff4ce; color: #8a5b00; }
+    .badge-in_progress { background: var(--accent-soft); color: var(--accent); }
+    .badge-resolved { background: var(--success-bg); color: var(--success); }
+    .badge-sent { background: var(--success-bg); color: var(--success); }
+    .badge-failed, .badge-not_sent { background: #f3f2f1; color: #605e5c; }
+
+    .status-completed_with_findings { color: var(--medium); font-weight: 600; }
+    .status-completed_clean { color: var(--success); font-weight: 600; }
+    .status-failed { color: var(--high); font-weight: 600; }
+
+    .trend {
+      display: flex;
+      align-items: flex-end;
+      gap: 10px;
+      padding: 16px 0 4px;
+      min-height: 120px;
+    }
+
+    .trend-bar {
+      flex: 1;
+      min-width: 48px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .trend-stack {
+      width: 100%;
+      max-width: 56px;
+      display: flex;
+      flex-direction: column-reverse;
+      border-radius: 6px 6px 2px 2px;
+      overflow: hidden;
+      background: #f0f2f5;
+      min-height: 8px;
+    }
+
+    .trend-seg { width: 100%; }
+    .trend-seg.high { background: var(--high); }
+    .trend-seg.medium { background: #eaa300; }
+    .trend-seg.low { background: var(--low); }
+
+    .trend-label {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+      word-break: break-all;
+    }
+
+    .trend-count {
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .legend {
+      display: flex;
+      gap: 14px;
+      font-size: 12px;
+      color: var(--muted);
+      padding-bottom: 8px;
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+      margin-right: 4px;
+      vertical-align: -1px;
+    }
+
+    .empty {
+      padding: 28px 18px;
+      text-align: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .empty strong { display: block; color: var(--text); margin-bottom: 6px; }
+
+    .artifact-links a { margin-right: 10px; }
+
+    .filter-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 12px 0 4px;
+    }
+
+    .filter-row button {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .filter-row button.active {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    .table-wrap { overflow-x: auto; }
+
+    @media (max-width: 720px) {
+      .meta { text-align: left; }
+      header { align-items: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page" id="app">
+    <header>
+      <div class="brand">
+        <h1 id="product-name">Lumen</h1>
+        <p class="tagline" id="product-tagline">Illuminate code health across your repositories</p>
+      </div>
+      <div class="meta" id="meta"></div>
+    </header>
+    <div id="content"></div>
+  </div>
+  <script src="dashboard-data.js"></script>
+  <script>
+    (function () {
+      var data = window.DASHBOARD_DATA;
+
+      function esc(value) {
+        return String(value == null ? "" : value)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function formatTime(value) {
+        if (!value) return "—";
+        var date = new Date(value);
+        if (isNaN(date.getTime())) return esc(value);
+        return date.toLocaleString();
+      }
+
+      function badgeClass(kind, value) {
+        if (kind === "severity") {
+          return "badge badge-" + String(value || "").toLowerCase();
+        }
+        return "badge badge-" + String(value || "unknown").replace(/\s+/g, "_");
+      }
+
+      function link(href, label) {
+        if (!href) return "";
+        return '<a href="' + esc(href) + '" target="_blank" rel="noopener">' + esc(label) + "</a>";
+      }
+
+      function artifactLinks(run) {
+        var parts = [];
+        if (run.html) parts.push(link(run.html, "HTML"));
+        if (run.pdf) parts.push(link(run.pdf, "PDF"));
+        if (run.json) parts.push(link(run.json, "JSON"));
+        return parts.length ? '<span class="artifact-links">' + parts.join(" ") + "</span>" : "—";
+      }
+
+      function renderEmpty() {
+        document.getElementById("content").innerHTML =
+          '<div class="panel"><div class="empty">' +
+          "<strong>No dashboard data yet</strong>" +
+          "Run a Lumen scan first. <code>dashboard-data.js</code> is refreshed automatically at the end of each scan.<br>" +
+          "You can open this file directly in a browser — no local server required." +
+          "</div></div>";
+      }
+
+      function renderTrend(runs) {
+        if (!runs.length) {
+          return '<div class="empty">No runs to chart.</div>';
+        }
+        var recent = runs.slice(0, 8).reverse();
+        var bars = recent.map(function (run) {
+          var total = run.high + run.medium + run.low;
+          var label = (run.finished_at || run.started_at || "").slice(0, 10);
+          var highH = total ? Math.round((run.high / total) * 72) : 0;
+          var mediumH = total ? Math.round((run.medium / total) * 72) : 0;
+          var lowH = total ? Math.round((run.low / total) * 72) : 0;
+          return (
+            '<div class="trend-bar">' +
+            '<div class="trend-count">' + total + "</div>" +
+            '<div class="trend-stack" style="height:' + Math.max(total ? 24 : 8, highH + mediumH + lowH) + 'px">' +
+            (run.low ? '<div class="trend-seg low" style="height:' + lowH + 'px"></div>' : "") +
+            (run.medium ? '<div class="trend-seg medium" style="height:' + mediumH + 'px"></div>' : "") +
+            (run.high ? '<div class="trend-seg high" style="height:' + highH + 'px"></div>' : "") +
+            "</div>" +
+            '<div class="trend-label">' + esc(label) + "</div>" +
+            "</div>"
+          );
+        }).join("");
+        return (
+          '<div class="legend">' +
+          '<span><i style="background:var(--high)"></i>High</span>' +
+          '<span><i style="background:#eaa300"></i>Medium</span>' +
+          '<span><i style="background:var(--low)"></i>Low</span>' +
+          "</div>" +
+          '<div class="trend">' + bars + "</div>"
+        );
+      }
+
+      function renderIssues(issues) {
+        var active = issues.filter(function (issue) {
+          return ["open", "in_progress", "pr_open"].indexOf(issue.status) >= 0;
+        });
+        if (!active.length) {
+          return '<tr><td colspan="7" class="empty">No open tracked issues.</td></tr>';
+        }
+        return active.map(function (issue) {
+          return (
+            "<tr>" +
+            "<td><code>" + esc(issue.id || issue.fingerprint || "—") + "</code></td>" +
+            '<td><span class="' + badgeClass("status", issue.status) + '">' + esc(issue.status) + "</span></td>" +
+            '<td><span class="' + badgeClass("severity", issue.severity) + '">' + esc(issue.severity) + "</span></td>" +
+            "<td>" + esc(issue.repository) + "</td>" +
+            "<td>" + esc(issue.title) + "</td>" +
+            "<td>" + formatTime(issue.last_seen_at) + "</td>" +
+            "<td>" + link(issue.pr_url, issue.pr_url ? "PR" : "") + "</td>" +
+            "</tr>"
+          );
+        }).join("");
+      }
+
+      function renderLatestFindings(latestRun) {
+        if (!latestRun || !latestRun.findings || !latestRun.findings.length) {
+          return '<div class="empty">No findings in the latest run.</div>';
+        }
+        var rows = latestRun.findings.map(function (finding) {
+          return (
+            "<tr>" +
+            '<td><span class="' + badgeClass("severity", finding.severity) + '">' + esc(finding.severity) + "</span></td>" +
+            "<td>" + esc(finding.repository) + "</td>" +
+            "<td>" + esc(finding.title) + "</td>" +
+            "<td><code>" + esc(finding.file) + "</code></td>" +
+            "<td>" + link(finding.pr_url, finding.pr_url ? "PR" : "") + "</td>" +
+            "</tr>"
+          );
+        }).join("");
+        return (
+          '<div class="table-wrap"><table>' +
+          "<tr><th>Severity</th><th>Repository</th><th>Title</th><th>File</th><th>PR</th></tr>" +
+          rows +
+          "</table></div>"
+        );
+      }
+
+      if (!data) {
+        renderEmpty();
+        return;
+      }
+
+      var product = data.product || {};
+      var config = data.config || {};
+      var execution = config.execution || {};
+      var project = config.project || {};
+      var issueCounts = data.issue_counts || {};
+      var runs = data.runs || [];
+      var latestRun = data.latest_run || null;
+
+      document.getElementById("product-name").textContent = product.name || "Lumen";
+      document.getElementById("product-tagline").textContent =
+        product.tagline || "Illuminate code health across your repositories";
+      document.getElementById("meta").innerHTML =
+        "<div>Project: <strong>" + esc(project.display_name || "—") + "</strong></div>" +
+        "<div>Data refreshed: <strong>" + formatTime(data.generated_at) + "</strong></div>" +
+        "<div>Mode: <strong>" + esc(execution.mode || "—") + "</strong></div>";
+
+      var metricsHtml =
+        '<div class="metrics">' +
+        '<div class="metric"><div class="label">Runs</div><div class="value">' + runs.length + "</div></div>" +
+        '<div class="metric"><div class="label">Repositories</div><div class="value">' + (data.repositories || []).length + "</div></div>" +
+        '<div class="metric"><div class="label">Open issues</div><div class="value">' + (issueCounts.open || 0) + "</div></div>" +
+        '<div class="metric"><div class="label">PR open</div><div class="value">' + (issueCounts.pr_open || 0) + "</div></div>" +
+        '<div class="metric"><div class="label">Resolved</div><div class="value">' + (issueCounts.resolved || 0) + "</div></div>" +
+        "</div>";
+
+      var repoRows = (data.repositories || []).map(function (repo) {
+        return (
+          "<tr>" +
+          "<td>" + esc(repo.name) + "</td>" +
+          "<td><code>" + esc(repo.default_branch) + "</code></td>" +
+          "<td>" + esc(repo.runtime_profile) + "</td>" +
+          "<td>" + esc(String(repo.allow_pr)) + "</td>" +
+          "</tr>"
+        );
+      }).join("");
+
+      var runRows = runs.length
+        ? runs.map(function (run) {
+            return (
+              "<tr>" +
+              "<td>" + formatTime(run.finished_at || run.started_at) + "</td>" +
+              '<td><span class="status-' + esc(run.status) + '">' + esc(run.status) + "</span></td>" +
+              "<td>" + esc(run.repos) + "</td>" +
+              "<td>" + run.high + "</td>" +
+              "<td>" + run.medium + "</td>" +
+              "<td>" + run.low + "</td>" +
+              "<td>" + run.prs + "</td>" +
+              '<td><span class="' + badgeClass("status", run.feishu) + '">' + esc(run.feishu || "—") + "</span></td>" +
+              "<td>" + run.failures + "</td>" +
+              "<td>" + artifactLinks(run) + "</td>" +
+              "</tr>"
+            );
+          }).join("")
+        : '<tr><td colspan="10" class="empty">No runs yet.</td></tr>';
+
+      var logLinks = (data.logs || []).length
+        ? data.logs.map(function (log) {
+            return link(log.href, log.name);
+          }).join(" ")
+        : "No logs yet.";
+
+      document.getElementById("content").innerHTML =
+        metricsHtml +
+        '<div class="panel"><div class="panel-head"><h2>Configuration</h2></div><div class="panel-body">' +
+        '<div class="config-grid">' +
+        "<div class='config-item'><span>Scan window</span><code>" + esc(execution.scan_window_days) + " days</code></div>" +
+        "<div class='config-item'><span>Workspace strategy</span><code>" + esc(execution.workspace_strategy) + "</code></div>" +
+        "<div class='config-item'><span>Run project commands</span><code>" + esc(String(execution.run_project_commands)) + "</code></div>" +
+        "<div class='config-item'><span>PR severity threshold</span><code>" + esc((execution.create_pr_for_severity || []).join(", ")) + "</code></div>" +
+        "</div></div></div>" +
+        '<div class="panel"><div class="panel-head"><h2>Finding Trend</h2></div><div class="panel-body">' + renderTrend(runs) + "</div></div>" +
+        '<div class="panel"><div class="panel-head"><h2>Latest Run Findings</h2></div><div class="panel-body">' + renderLatestFindings(latestRun) + "</div></div>" +
+        '<div class="panel"><div class="panel-head"><h2>Repositories In Scope</h2></div><div class="panel-body table-wrap"><table>' +
+        "<tr><th>Name</th><th>Branch</th><th>Profile</th><th>PR allowed</th></tr>" +
+        (repoRows || '<tr><td colspan="4" class="empty">No repositories configured.</td></tr>') +
+        "</table></div></div>" +
+        '<div class="panel"><div class="panel-head"><h2>Historical Runs</h2></div><div class="panel-body table-wrap"><table>' +
+        "<tr><th>Finished</th><th>Status</th><th>Repos</th><th>High</th><th>Medium</th><th>Low</th><th>PRs</th><th>Feishu</th><th>Failures</th><th>Artifacts</th></tr>" +
+        runRows +
+        "</table></div></div>" +
+        '<div class="panel"><div class="panel-head"><h2>Open / Active Issues</h2></div><div class="panel-body table-wrap"><table>' +
+        "<tr><th>ID</th><th>Status</th><th>Severity</th><th>Repository</th><th>Title</th><th>Last seen</th><th>PR</th></tr>" +
+        renderIssues(data.issues || []) +
+        "</table></div></div>" +
+        '<div class="panel"><div class="panel-head"><h2>Recent Logs</h2></div><div class="panel-body"><p>' + logLinks + "</p></div></div>";
+    })();
+  </script>
+</body>
+</html>

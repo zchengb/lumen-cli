@@ -1,0 +1,140 @@
+{
+  "template_version": "1.0",
+  "description": "Feishu Card JSON 2.0 template for Lumen local auto scan. Render this template from scan-result.json before sending. Do not send this file directly while placeholders remain.",
+  "placeholders": {
+    "header_template": "red | orange | green | grey",
+    "scan_window": "Last 7 Days",
+    "repositories_scanned": "3",
+    "scan_status": "Completed with High findings",
+    "high_count": "2",
+    "medium_count": "1",
+    "low_count": "1",
+    "finding_index": "1",
+    "finding_title": "Missing ownership validation in user profile update",
+    "severity_icon": "🔴 | 🟡 | 🟢",
+    "severity": "High | Medium | Low",
+    "repository": "backend-service",
+    "impact": "Authenticated users can update another user's profile.",
+    "trigger": "Authenticated user calls PATCH /api/users/{id} with another user ID.",
+    "pr_url": "https://github.com/org/repo/pull/123",
+    "file_with_line_range": "src/main/java/com/example/user/UserController.java:42-45",
+    "code_snippet": "return userService.update(id, request);",
+    "suggestion": "Validate ownership before the write operation."
+  },
+  "rendering_rules": [
+    "Use schema 2.0 and put elements under card.body.elements.",
+    "Render the card header title as: 🔎 <product.name> — Code Quality & Security Scan Report, using product.name from config/common.json.",
+    "Choose header.template as red when High findings exist, orange when only Medium findings exist, green when only Low or no findings exist, and grey when the scan failed.",
+    "Render exactly one summary card per scan run.",
+    "Do not include local PDF paths or PDF buttons.",
+    "Do not include Repository Results section.",
+    "Do not include PR Created in Overall Summary.",
+    "Use Finding, not Bug.",
+    "Render the PR line only for High findings with an actual PR URL.",
+    "Omit the PR line for Medium and Low findings.",
+    "Put File, Code Snippet, and Suggestion only inside the collapsed View detail panel.",
+    "Use inline code snippets only. Do not use fenced code blocks.",
+    "Escape markdown-sensitive user content before rendering.",
+    "Do not include an 'Open tracked issues' count in the Overall Summary.",
+    "Do not include an 'Issue:' id/status line inside individual findings."
+  ],
+  "card_template": {
+    "msg_type": "interactive",
+    "card": {
+      "schema": "2.0",
+      "config": {
+        "wide_screen_mode": true
+      },
+      "header": {
+        "template": "{{header_template}}",
+        "title": {
+          "tag": "plain_text",
+          "content": "🔎 Lumen — Code Quality & Security Scan Report"
+        }
+      },
+      "body": {
+        "elements": [
+          {
+            "tag": "markdown",
+            "content": "**Scan Window:** {{scan_window}}\n**Repositories Scanned:** {{repositories_scanned}}\n**Status:** {{scan_status}}"
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "markdown",
+            "content": "**Overall Summary**\n🔴 High: **{{high_count}}**\n🟡 Medium: **{{medium_count}}**\n🟢 Low: **{{low_count}}**"
+          },
+          {
+            "tag": "hr"
+          },
+          {
+            "tag": "markdown",
+            "content": "{{finding_elements_placeholder}}"
+          }
+        ]
+      }
+    }
+  },
+  "partials": {
+    "finding_with_pr": [
+      {
+        "tag": "markdown",
+        "content": "**Finding {{finding_index}} — {{finding_title}}**\n**Severity:** {{severity_icon}} {{severity}}\n**Repository:** `{{repository}}`\n**Impact:** {{impact}}\n**Trigger:** {{trigger}}\n**PR:** {{pr_url}}"
+      },
+      {
+        "tag": "collapsible_panel",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "View detail"
+          }
+        },
+        "elements": [
+          {
+            "tag": "markdown",
+            "content": "**File:** `{{file_with_line_range}}`\n**Code Snippet:** `{{code_snippet}}`\n**Suggestion:** {{suggestion}}"
+          }
+        ]
+      }
+    ],
+    "finding_without_pr": [
+      {
+        "tag": "markdown",
+        "content": "**Finding {{finding_index}} — {{finding_title}}**\n**Severity:** {{severity_icon}} {{severity}}\n**Repository:** `{{repository}}`\n**Impact:** {{impact}}\n**Trigger:** {{trigger}}"
+      },
+      {
+        "tag": "collapsible_panel",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "View detail"
+          }
+        },
+        "elements": [
+          {
+            "tag": "markdown",
+            "content": "**File:** `{{file_with_line_range}}`\n**Code Snippet:** `{{code_snippet}}`\n**Suggestion:** {{suggestion}}"
+          }
+        ]
+      }
+    ],
+    "finding_separator": {
+      "tag": "hr"
+    },
+    "no_findings": [
+      {
+        "tag": "markdown",
+        "content": "**Findings:** No confirmed High, Medium, or Low findings were detected in this scan window."
+      }
+    ],
+    "failure_summary": [
+      {
+        "tag": "markdown",
+        "content": "**Failures:** {{failure_summary}}"
+      }
+    ]
+  }
+}

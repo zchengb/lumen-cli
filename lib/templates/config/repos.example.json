@@ -1,0 +1,22 @@
+{
+  "repositories": [
+    {
+      "name": "service-a",
+      "path": "/absolute/path/to/service-a",
+      "default_branch": "main",
+      "runtime_profile": "local-java-review-only",
+      "validation_commands": [],
+      "allow_auto_fix": true,
+      "allow_pr": true
+    },
+    {
+      "name": "web-or-mobile-app",
+      "path": "/absolute/path/to/web-or-mobile-app",
+      "default_branch": "master",
+      "runtime_profile": "local-react-native-review-only",
+      "validation_commands": [],
+      "allow_auto_fix": true,
+      "allow_pr": true
+    }
+  ]
+}
