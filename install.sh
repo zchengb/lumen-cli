@@ -69,4 +69,4 @@ fi
 echo "  4. Run: lumen list          (see registered projects and IDs)"
 echo "  5. Run: lumen doctor"
 echo "  6. Run: lumen scan --project <slug>   (see slugs with: lumen list)"
-echo "  7. Open dashboard.html in a browser, or run: lumen dashboard --open"
+echo "  7. Run: lumen dashboard --project <slug>   (opens dashboard.html in your browser)"

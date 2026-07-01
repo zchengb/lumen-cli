@@ -86,7 +86,7 @@ Then:
   1. lumen doctor   — verify prerequisites
   2. lumen list     — see your project slug
   3. lumen scan --project <slug>   — run your first scan
-  4. lumen dashboard --project <slug> --open   — view results in your browser
+  4. lumen dashboard --project <slug>   — opens results in your browser
 ```
 
 ## Commands
@@ -102,7 +102,7 @@ Then:
 | `lumen schedule remove --project <slug>` | Remove a project's scheduled scan |
 | `lumen schedule list` | List all configured schedules |
 | `lumen watch --project <slug>` | Tail the latest scan log with readable formatting |
-| `lumen dashboard --project <slug> [--open]` | Refresh `dashboard-data.js`, optionally open `dashboard.html` |
+| `lumen dashboard --project <slug> [--no-open]` | Refresh `dashboard-data.js` and open `dashboard.html`; pass `--no-open` to skip opening a browser |
 | `lumen doctor` | Check installed prerequisites (agent, git, node/python, gh, webhook) |
 | `lumen config set-webhook <url>` | Set a Feishu webhook used by all projects by default |
 | `lumen config show` / `lumen config unset-webhook` | Inspect or remove the global webhook config |
@@ -162,7 +162,7 @@ NAME                 SLUG                 WORKSPACE
 ```bash
 lumen scan --project mbpass
 lumen watch --project mbpass
-lumen dashboard --project mbpass --open
+lumen dashboard --project mbpass
 ```
 
 **Set a default** (then `lumen scan` works without `--project`):

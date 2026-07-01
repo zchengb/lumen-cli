@@ -169,7 +169,7 @@ resolve_command_workspace() {
         explicit_workspace="1"
         i=$((i + 2))
         ;;
-      --open)
+      --open|--no-open)
         RESOLVED_REMAINING_ARGS+=("${args[$i]}")
         i=$((i + 1))
         ;;
@@ -290,8 +290,9 @@ Usage:
                                  Remove a project's scheduled scan
   lumen schedule list           List all configured schedules
   lumen watch --project <slug>  Watch the latest scan log in real time
-  lumen dashboard --project <slug> [--open]
-                                 Refresh dashboard-data.js (and optionally open dashboard.html)
+  lumen dashboard --project <slug> [--no-open]
+                                 Refresh dashboard-data.js and open dashboard.html in your browser
+                                 Pass --no-open to only refresh the data without opening a browser
   lumen doctor                  Check that required and optional tools are installed
   lumen config set-webhook <url>
                                  Set a Feishu webhook used by all projects (global config)
@@ -900,7 +901,7 @@ Next steps:
   2. Run: lumen list
   3. Run: lumen doctor
   4. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  5. Open ${LUMEN_DIR_NAME}/dashboard.html in a browser, or run: lumen dashboard --project <slug> --open
+  5. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
 EOF
 }
 
@@ -978,7 +979,7 @@ cmd_scan() {
       *) filtered_args+=("${arg}") ;;
     esac
   done
-  resolve_command_workspace "${filtered_args[@]}"
+  resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
   if [[ "${dry_run}" == "1" ]]; then
     export LUMEN_DRY_RUN=1
   else
@@ -992,19 +993,21 @@ cmd_dashboard() {
   local workspace="${RESOLVED_WORKSPACE}"
   bash "${LUMEN_LIB_DIR}/render-dashboard.sh" "${workspace}"
 
-  local open_flag="0"
+  local open_flag="1"
   local arg
-  for arg in "${RESOLVED_REMAINING_ARGS[@]}" "$@"; do
-    if [[ "${arg}" == "--open" ]]; then
-      open_flag="1"
+  for arg in "${RESOLVED_REMAINING_ARGS[@]+"${RESOLVED_REMAINING_ARGS[@]}"}" "$@"; do
+    if [[ "${arg}" == "--no-open" ]]; then
+      open_flag="0"
     fi
   done
 
   if [[ "${open_flag}" == "1" ]]; then
     if command -v open >/dev/null 2>&1; then
       open "${workspace}/dashboard.html"
+    elif command -v xdg-open >/dev/null 2>&1; then
+      xdg-open "${workspace}/dashboard.html" >/dev/null 2>&1
     else
-      printf 'Open manually: %s/dashboard.html\n' "${workspace}"
+      printf 'Dashboard: %s/dashboard.html\n' "${workspace}"
     fi
   else
     printf 'Dashboard: %s/dashboard.html\n' "${workspace}"
