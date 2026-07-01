@@ -4,7 +4,23 @@ Lumen scans recent git commits across your local repositories for code quality, 
 
 ## Install
 
-Download and extract the release zip, then run one command:
+### One-command install (recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zchengb/lumen-cli/main/get.sh | bash
+```
+
+This downloads the latest [GitHub release](https://github.com/zchengb/lumen-cli/releases) zip (or falls back to the `main` branch source if no release exists yet), then runs `install.sh` for you.
+
+To install **and** initialize a scan workspace in one step, pass a directory after `--`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/zchengb/lumen-cli/main/get.sh | bash -s -- ~/my-scan-workspace
+```
+
+Env overrides: `LUMEN_REPO` (fork/mirror), `LUMEN_VERSION` (pin a release tag), `LUMEN_HOME`, `LUMEN_BIN_DIR`.
+
+### Manual install (from a downloaded zip)
 
 ```bash
 unzip lumen-*.zip
@@ -12,16 +28,14 @@ cd lumen-*
 ./install.sh
 ```
 
-This installs:
+Both install paths install:
 
 - `~/.local/bin/lumen` — the CLI entrypoint
 - `~/.lumen/` — CLI library, workspace templates, and project registry (`projects.json`)
 
 If `~/.local/bin` is not already on your `PATH`, the installer prints the line to add to your shell profile (`~/.zshrc` or `~/.bashrc`).
 
-### Install and initialize in one command
-
-To install the CLI **and** set up a scan workspace at the same time:
+### Install and initialize in one command (manual zip)
 
 ```bash
 ./install.sh ~/my-scan-workspace
@@ -226,11 +240,20 @@ This removes the installed CLI and library. Any scan workspaces you created with
 
 ## Packaging a New Release (maintainers)
 
+Releases are automated via GitHub Actions (`.github/workflows/release.yml`): pushing a `v*.*.*` tag builds `lumen-<version>.zip` with `package.sh` and publishes it as a GitHub Release asset, which `get.sh` (the one-command installer) downloads automatically.
+
+```bash
+./release.sh 1.6.1                    # bumps VERSION, commits, tags v1.6.1
+git push origin main --follow-tags    # triggers the Release workflow
+```
+
+To build the zip locally without cutting a release (e.g. for manual distribution):
+
 ```bash
 ./package.sh
 ```
 
-Produces `build/lumen-<version>.zip`, ready to upload to GitHub Releases or a shared drive.
+Produces `build/lumen-<version>.zip`, ready to upload to GitHub Releases or a shared drive by hand.
 
 ## Security Notes
 

@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify VERSION matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+          if [[ "${TAG_VERSION}" != "${FILE_VERSION}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match VERSION file (${FILE_VERSION})"
+            exit 1
+          fi
+
+      - name: Build package
+        run: |
+          chmod +x package.sh
+          ./package.sh build
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" build/*.zip \
+            --title "Lumen ${GITHUB_REF_NAME}" \
+            --generate-notes
