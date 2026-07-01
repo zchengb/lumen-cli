@@ -11,6 +11,7 @@ PKG_NAME="lumen-${VERSION}"
 STAGE_DIR="$(mktemp -d)/${PKG_NAME}"
 
 mkdir -p "${OUT_DIR}"
+OUT_DIR="$(cd "${OUT_DIR}" && pwd)"
 mkdir -p "${STAGE_DIR}"
 
 cp -R "${SCRIPT_DIR}/bin" "${STAGE_DIR}/bin"
