@@ -12,16 +12,14 @@ model_from_config() {
   if [[ ! -f "${COMMON_CONFIG}" ]]; then
     return 0
   fi
-  if command -v node >/dev/null 2>&1; then
-    node -e "try{const c=require('${COMMON_CONFIG}');process.stdout.write((c.execution&&c.execution.model)||'')}catch(e){}" 2>/dev/null
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c "import json,sys
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json
 try:
     with open('${COMMON_CONFIG}') as f:
         c = json.load(f)
-    sys.stdout.write(c.get('execution', {}).get('model', ''))
+    print(c.get('execution', {}).get('model', '') or '', end='')
 except Exception:
-    pass"
+    pass" 2>/dev/null
   fi
 }
 
@@ -29,16 +27,14 @@ project_name_from_config() {
   if [[ ! -f "${COMMON_CONFIG}" ]]; then
     return 0
   fi
-  if command -v node >/dev/null 2>&1; then
-    node -e "try{const c=require('${COMMON_CONFIG}');process.stdout.write((c.project&&c.project.display_name)||'')}catch(e){}" 2>/dev/null
-  elif command -v python3 >/dev/null 2>&1; then
-    python3 -c "import json,sys
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json
 try:
     with open('${COMMON_CONFIG}') as f:
         c = json.load(f)
-    sys.stdout.write(c.get('project', {}).get('display_name', ''))
+    print(c.get('project', {}).get('display_name', '') or '', end='')
 except Exception:
-    pass"
+    pass" 2>/dev/null
   fi
 }
 
@@ -161,21 +157,21 @@ refresh_dashboard() {
 }
 
 run_dry_scan() {
-  command -v node >/dev/null 2>&1 || fail "Node.js is required for dry-run mode."
+  command -v python3 >/dev/null 2>&1 || fail "Python 3 is required for dry-run mode."
   [[ -f "${WORKSPACE_ROOT}/config/common.json" ]] || fail "Workspace config not found. Run 'lumen init' first."
 
   printf 'Lumen workspace: %s\n' "${WORKSPACE_ROOT}"
   printf 'Mode: DRY-RUN (Cursor agent will not run)\n'
   printf 'Run log: %s\n' "${LOG_FILE}"
 
-  local dry_run_script="${LUMEN_LIB_DIR}/dry-run-scan.js"
+  local dry_run_script="${LUMEN_LIB_DIR}/dry_run_scan.py"
   [[ -f "${dry_run_script}" ]] || fail "Dry-run script not found: ${dry_run_script}"
 
   printf '\nGenerating mock scan result at %s UTC...\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
   {
     printf '[dry-run] started_at=%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf '[dry-run] generating mock scan-result.json\n'
-    node "${dry_run_script}" "${WORKSPACE_ROOT}" "${RUN_ID}"
+    python3 "${dry_run_script}" "${WORKSPACE_ROOT}" "${RUN_ID}"
     printf '[dry-run] mock scan-result.json written\n'
   } 2>&1 | tee "${LOG_FILE}"
 
@@ -242,8 +238,8 @@ run_real_scan() {
   fi
 
   set +e
-  if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v node >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format-scan-log.js" ]]; then
-    agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}" | node "${LUMEN_LIB_DIR}/format-scan-log.js"
+  if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
+    agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
   else
     agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}"
   fi

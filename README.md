@@ -81,7 +81,7 @@ Then:
 | `lumen schedule list` / `lumen schedule` | List all configured scan schedules |
 | `lumen watch --project <slug>` | Tail the latest scan log with readable formatting |
 | `lumen dashboard --project <slug> [--no-open]` | Refresh `dashboard-data.js` and open `dashboard.html`; pass `--no-open` to skip opening a browser |
-| `lumen doctor` | Check installed prerequisites (agent, git, node/python, gh, webhook) |
+| `lumen doctor` | Check installed prerequisites (agent, git, python3, gh, webhook) |
 | `lumen config set-webhook <url> [--project <slug>]` | Save the Feishu webhook in a workspace `.env.local` |
 | `lumen config show` / `lumen config unset-webhook` | Inspect or remove a workspace Feishu webhook |
 | `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled workspace templates (`scan-prompt.md`, report/dashboard templates). Use `--cli-only` to upgrade only the CLI. |
@@ -192,11 +192,19 @@ Every scan-related command resolves the workspace in this order:
 | Tool | Required for | If missing |
 |---|---|---|
 | [Cursor CLI](https://cursor.com/cli) (`agent`) | Running scans | `lumen scan` cannot start |
+| **Python 3** | Reports, Feishu, dashboard, project registry, init helpers | Most commands fail or skip post-processing |
 | git | Worktree-based repository scanning | Required |
-| Node.js **or** Python 3 | Rendering `dashboard-data.js` | Node preferred; falls back to Python 3 |
 | GitHub CLI (`gh`) | Automated PR creation for High findings | Scan still runs; findings reported without PRs |
 | `FEISHU_WEBHOOK_URL` in workspace `.env.local` (or shell env) | Feishu scan summary notifications | Scan still runs; notification marked "not sent" |
 | Google Chrome / Chromium / Edge | PDF export (uses system browser, no extra install) | HTML report still generated |
+
+Install Python 3 on macOS if needed:
+
+```bash
+xcode-select --install
+# or
+brew install python3
+```
 
 Run `lumen doctor` after installing to check all of the above.
 

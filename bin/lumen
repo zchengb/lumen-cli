@@ -5,7 +5,7 @@ LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
 LUMEN_LIB_DIR="${LUMEN_HOME}/lib/scripts"
 LUMEN_TEMPLATES_DIR="${LUMEN_HOME}/lib/templates"
 LUMEN_VERSION_FILE="${LUMEN_HOME}/VERSION"
-PROJECTS_REGISTRY_JS="${LUMEN_HOME}/lib/scripts/projects-registry.js"
+PROJECTS_REGISTRY_PY="${LUMEN_HOME}/lib/scripts/projects_registry.py"
 
 RESOLVED_WORKSPACE=""
 RESOLVED_PROJECT_SLUG=""
@@ -20,6 +20,29 @@ RESET="$(printf '\033[0m')"
 err() { printf '%sError:%s %s\n' "${RED}" "${RESET}" "$1" >&2; }
 ok()  { printf '%s✓%s %s\n' "${GREEN}" "${RESET}" "$1"; }
 warn() { printf '%s!%s %s\n' "${YELLOW}" "${RESET}" "$1"; }
+
+require_python3() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    err "Python 3 is required. Install it with: xcode-select --install  (or: brew install python3)"
+    exit 1
+  fi
+}
+
+json_get() {
+  local json="$1"
+  local key="$2"
+  printf '%s' "${json}" | python3 -c "import json,sys; d=json.load(sys.stdin); v=d.get('${key}'); print('' if v is None else v, end='')"
+}
+
+json_array_length() {
+  local json="$1"
+  printf '%s' "${json}" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))"
+}
+
+json_array_items() {
+  local json="$1"
+  printf '%s' "${json}" | python3 -c "import json,sys; data=json.load(sys.stdin); [print(json.dumps(item)) for item in data]"
+}
 
 lumen_version() {
   if [[ -f "${LUMEN_VERSION_FILE}" ]]; then
@@ -67,20 +90,17 @@ resolve_workspace() {
   pwd
 }
 
-require_registry_node() {
-  if ! command -v node >/dev/null 2>&1; then
-    err "Node.js is required for project registry operations."
-    exit 1
-  fi
-  if [[ ! -f "${PROJECTS_REGISTRY_JS}" ]]; then
+require_registry_python() {
+  require_python3
+  if [[ ! -f "${PROJECTS_REGISTRY_PY}" ]]; then
     err "Project registry script not found. Re-run install.sh to repair your Lumen CLI installation."
     exit 1
   fi
 }
 
 registry_cmd() {
-  require_registry_node
-  node "${PROJECTS_REGISTRY_JS}" "$@"
+  require_registry_python
+  python3 "${PROJECTS_REGISTRY_PY}" "$@"
 }
 
 register_project_workspace() {
@@ -97,22 +117,22 @@ register_project_workspace() {
 try_register_project() {
   local workspace="$1"
   local name="${2:-}"
-  if ! command -v node >/dev/null 2>&1 || [[ ! -f "${PROJECTS_REGISTRY_JS}" ]]; then
-    warn "Skipped project registry (Node.js required). Run 'lumen register ${workspace}' later."
+  if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "${PROJECTS_REGISTRY_PY}" ]]; then
+    warn "Skipped project registry (Python 3 required). Run 'lumen register ${workspace}' later."
     return 0
   fi
   local project_json project_slug project_name
   project_json="$(register_project_workspace "${workspace}" "${name}")"
-  project_slug="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).slug)")"
-  project_name="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
+  project_slug="$(json_get "${project_json}" slug)"
+  project_name="$(json_get "${project_json}" name)"
   ok "Registered project '${project_name}' (slug: ${project_slug})"
   printf 'Run: %slumen scan --project %s%s\n' "${BOLD}" "${project_slug}" "${RESET}"
 }
 
 workspace_display_name() {
   local workspace="$1"
-  if command -v node >/dev/null 2>&1; then
-    node -e "try{const c=require('${workspace}/config/common.json');process.stdout.write((c.project&&c.project.display_name)||'')}catch(e){}" 2>/dev/null
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json; c=json.load(open('${workspace}/config/common.json')); print((c.get('project') or {}).get('display_name') or '', end='')" 2>/dev/null || true
   fi
 }
 
@@ -218,7 +238,7 @@ resolve_command_workspace() {
     return 0
   fi
 
-  require_registry_node
+  require_registry_python
   local count
   count="$(registry_cmd count | tr -d '[:space:]')"
 
@@ -231,8 +251,8 @@ resolve_command_workspace() {
   if registry_cmd get-default --workspace-only >/dev/null 2>&1; then
     RESOLVED_WORKSPACE="$(registry_cmd get-default --workspace-only)"
     local default_slug default_name
-    default_slug="$(registry_cmd get-default | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).slug)")"
-    default_name="$(registry_cmd get-default | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
+    default_slug="$(json_get "$(registry_cmd get-default)" slug)"
+    default_name="$(json_get "$(registry_cmd get-default)" name)"
     printf 'Using default project: %s (lumen scan --project %s)\n' "${default_name}" "${default_slug}"
     require_workspace_initialized "${RESOLVED_WORKSPACE}"
     return 0
@@ -436,12 +456,11 @@ cmd_doctor() {
     err "Cursor CLI (agent) not found. Install from https://cursor.com/cli — required to run scans."
   fi
 
-  if command -v node >/dev/null 2>&1; then
-    ok "Node.js found: $(node --version)"
-  elif command -v python3 >/dev/null 2>&1; then
-    warn "Node.js not found, but python3 is available as a dashboard-render fallback."
+  if command -v python3 >/dev/null 2>&1; then
+    ok "Python 3 found: $(python3 --version 2>&1)"
   else
-    err "Neither Node.js nor Python 3 found. Dashboard rendering will not work."
+    err "Python 3 not found. Required for reports, Feishu notifications, dashboard, and project registry."
+    printf '  Install with: xcode-select --install   (or: brew install python3)\n'
   fi
 
   if command -v git >/dev/null 2>&1; then
@@ -646,7 +665,7 @@ REPOS=()
 
 discover_repos_json() {
   local workspace_root="$1"
-  node "${LUMEN_LIB_DIR}/discover-repos.js" list "${workspace_root}"
+  python3 "${LUMEN_LIB_DIR}/discover_repos.py" list "${workspace_root}"
 }
 
 append_repo_entry() {
@@ -728,8 +747,8 @@ collect_repositories_interactively() {
 
   printf '\n%sRepositories to scan%s\n' "${BOLD}" "${RESET}"
 
-  if ! command -v node >/dev/null 2>&1 || [[ ! -f "${LUMEN_LIB_DIR}/discover-repos.js" ]]; then
-    warn "Repository discovery requires Node.js. Falling back to manual entry."
+  if ! command -v python3 >/dev/null 2>&1 || [[ ! -f "${LUMEN_LIB_DIR}/discover_repos.py" ]]; then
+    warn "Repository discovery requires Python 3. Falling back to manual entry."
     while collect_repository_manually "${workspace_root}" "true" "true"; do
       if ! prompt_yn "Add another repository manually?" "n"; then
         break
@@ -739,7 +758,7 @@ collect_repositories_interactively() {
   fi
 
   discovered_json="$(discover_repos_json "${workspace_root}")"
-  repo_count="$(printf '%s' "${discovered_json}" | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));process.stdout.write(String(d.length))")"
+  repo_count="$(json_array_length "${discovered_json}")"
 
   if [[ "${repo_count}" == "0" ]]; then
     printf 'No git repositories found under %s\n' "${workspace_root}"
@@ -755,10 +774,10 @@ collect_repositories_interactively() {
   printf 'Found %s git repositor%s under %s\n' "${repo_count}" "$([ "${repo_count}" = "1" ] && echo y || echo ies)" "${workspace_root}"
 
   selected_json=""
-  if [[ -t 0 && -t 1 && -f "${LUMEN_LIB_DIR}/select-repos.js" ]]; then
+  if [[ -t 0 && -t 1 && -f "${LUMEN_LIB_DIR}/select_repos.py" ]]; then
     select_tmp="$(mktemp)"
     set +e
-    node "${LUMEN_LIB_DIR}/select-repos.js" "${workspace_root}" --output "${select_tmp}"
+    python3 "${LUMEN_LIB_DIR}/select_repos.py" "${workspace_root}" --output "${select_tmp}"
     select_exit=$?
     set -e
   else
@@ -795,7 +814,7 @@ collect_repositories_interactively() {
       return 0
     fi
 
-    if ! selected_json="$(node "${LUMEN_LIB_DIR}/discover-repos.js" select "${workspace_root}" "${selection}" 2>/dev/null)"; then
+    if ! selected_json="$(python3 "${LUMEN_LIB_DIR}/discover_repos.py" select "${workspace_root}" "${selection}" 2>/dev/null)"; then
       err "Invalid selection: ${selection}"
       exit 1
     fi
@@ -818,16 +837,13 @@ collect_repositories_interactively() {
 
   while IFS= read -r repo_line; do
     local name path branch profile
-    name="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
-    path="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).path)")"
-    branch="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).default_branch)")"
-    profile="$(printf '%s' "${repo_line}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).runtime_profile)")"
+    name="$(json_get "${repo_line}" name)"
+    path="$(json_get "${repo_line}" path)"
+    branch="$(json_get "${repo_line}" default_branch)"
+    profile="$(json_get "${repo_line}" runtime_profile)"
     append_repo_entry "${name}" "${path}" "${branch}" "${profile}" "${allow_fix}" "${allow_pr}"
     ok "Selected ${name}"
-  done < <(printf '%s' "${selected_json}" | node -e "
-    const repos = JSON.parse(require('fs').readFileSync(0, 'utf8'));
-    repos.forEach((repo) => console.log(JSON.stringify(repo)));
-  ")
+  done < <(json_array_items "${selected_json}")
 
   printf '\n'
   if prompt_yn "Add another repository manually?" "n"; then
@@ -842,14 +858,7 @@ is_lumen_workspace_configured() {
   if [[ ! -f "${lumen_dir}/config/common.json" || ! -f "${lumen_dir}/config/repos.json" ]]; then
     return 1
   fi
-  node -e "
-    const fs = require('fs');
-    const root = process.argv[1];
-    const common = JSON.parse(fs.readFileSync(root + '/config/common.json', 'utf8'));
-    const name = ((common.project && common.project.display_name) || '').trim();
-    const workspaceRoot = ((common.project && common.project.workspace_root) || '').trim();
-    process.exit(name && workspaceRoot ? 0 : 1);
-  " "${lumen_dir}"
+  python3 "${LUMEN_LIB_DIR}/workspace_configured.py" "${lumen_dir}"
 }
 
 remove_lumen_workspace() {
@@ -1051,9 +1060,9 @@ cmd_use() {
     if registry_cmd get-default >/dev/null 2>&1; then
       local project_json name slug workspace
       project_json="$(registry_cmd get-default)"
-      name="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
-      slug="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).slug)")"
-      workspace="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).workspace)")"
+      name="$(json_get "${project_json}" name)"
+      slug="$(json_get "${project_json}" slug)"
+      workspace="$(json_get "${project_json}" workspace)"
       printf 'Default project: %s (%s)\n' "${name}" "${slug}"
       printf 'Workspace: %s\n' "${workspace}"
     else
@@ -1065,8 +1074,8 @@ cmd_use() {
 
   local project_json name slug
   project_json="$(registry_cmd set-default "${arg}")"
-  name="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
-  slug="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).slug)")"
+  name="$(json_get "${project_json}" name)"
+  slug="$(json_get "${project_json}" slug)"
   ok "Default project set to '${name}' (slug: ${slug})"
   printf 'Run %slumen scan%s without --project to use this project.\n' "${BOLD}" "${RESET}"
 }
@@ -1091,8 +1100,8 @@ cmd_register() {
   local reg_name project_json project_slug project_name
   reg_name="$(workspace_display_name "${workspace}")"
   project_json="$(register_project_workspace "${workspace}" "${reg_name}")"
-  project_slug="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).slug)")"
-  project_name="$(printf '%s' "${project_json}" | node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(0,'utf8')).name)")"
+  project_slug="$(json_get "${project_json}" slug)"
+  project_name="$(json_get "${project_json}" name)"
   ok "Registered project '${project_name}' (slug: ${project_slug})"
   printf 'Workspace: %s\n' "${workspace}"
   printf 'Run: %slumen scan --project %s%s\n' "${BOLD}" "${project_slug}" "${RESET}"
@@ -1158,8 +1167,8 @@ cmd_watch() {
   printf 'Watching %s\n' "${latest_log}"
   printf 'Press Ctrl+C to stop.\n\n'
 
-  if command -v node >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format-scan-log.js" ]]; then
-    tail -n 50 -f "${latest_log}" | node "${LUMEN_LIB_DIR}/format-scan-log.js"
+  if command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
+    tail -n 50 -f "${latest_log}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
   else
     tail -f "${latest_log}"
   fi

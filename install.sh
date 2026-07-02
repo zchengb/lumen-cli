@@ -25,7 +25,6 @@ cp -R "${SCRIPT_DIR}/lib/templates" "${LUMEN_HOME}/lib/"
 cp "${SCRIPT_DIR}/VERSION" "${LUMEN_HOME}/VERSION"
 
 chmod +x "${LUMEN_HOME}/lib/scripts/"*.sh 2>/dev/null || true
-chmod +x "${LUMEN_HOME}/lib/scripts/"*.js 2>/dev/null || true
 chmod +x "${LUMEN_HOME}/lib/scripts/"*.py 2>/dev/null || true
 
 install -m 0755 "${SCRIPT_DIR}/bin/lumen" "${BIN_DIR}/lumen" 2>/dev/null \

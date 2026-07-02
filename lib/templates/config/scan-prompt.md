@@ -221,7 +221,7 @@ To refresh dashboard data manually after editing result files:
 bash scripts/render-dashboard.sh
 ```
 
-The renderer prefers Node.js and falls back to Python 3 only when Node is unavailable.
+The renderer uses Python 3 (`render-dashboard.py`).
 
 The dashboard should provide an overview across all historical Lumen runs.
 

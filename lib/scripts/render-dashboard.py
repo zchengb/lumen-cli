@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,56 @@ def load_json(path: Path, default):
             return json.load(handle)
     except Exception:
         return default
+
+
+def normalize_title(text) -> str:
+    value = re.sub(r"[^a-z0-9]+", "-", str(text or "").lower())
+    return value.strip("-")
+
+
+def issue_file_path(issue: dict) -> str:
+    if issue.get("file"):
+        return issue["file"]
+    fingerprint = issue.get("fingerprint") or ""
+    if fingerprint and not re.fullmatch(r"[a-f0-9]{64}", fingerprint):
+        parts = fingerprint.split(":")
+        if len(parts) >= 2:
+            return parts[1]
+    return ""
+
+
+def issue_match_key(issue: dict) -> str:
+    repo = issue.get("repository") or ""
+    file_path = issue_file_path(issue)
+    if repo and file_path:
+        return f"{repo}|{file_path}"
+    title = normalize_title(issue.get("title"))
+    if repo and title:
+        return f"{repo}|{title}"
+    return issue.get("id") or ""
+
+
+def deduplicate_issues(issues: list) -> list:
+    groups = {}
+    for issue in issues:
+        key = issue_match_key(issue)
+        groups.setdefault(key, []).append(issue)
+
+    merged = []
+    for group in groups.values():
+        if len(group) == 1:
+            merged.append(group[0])
+            continue
+        best = sorted(
+            group,
+            key=lambda item: (
+                1 if str(item.get("id", "")).startswith("ISSUE-") else 0,
+                str(item.get("last_seen_at") or ""),
+            ),
+            reverse=True,
+        )[0]
+        merged.append(best)
+    return merged
 
 
 def severity_counts(findings):
@@ -89,7 +140,7 @@ def main() -> int:
                 "findings": run["findings"],
             }
 
-    issues = registry.get("issues", [])
+    issues = deduplicate_issues(registry.get("issues", []))
     issue_counts = {}
     for issue in issues:
         status = issue.get("status", "unknown")
