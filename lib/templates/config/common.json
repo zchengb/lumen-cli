@@ -66,7 +66,7 @@
     "html_path_pattern": "reports/code-quality-security-scan-YYYY-MM-DD.html",
     "pdf_path_pattern": "reports/code-quality-security-scan-YYYY-MM-DD.pdf",
     "style": "minimal",
-    "pdf_engine_preference": ["chrome", "playwright", "weasyprint", "wkhtmltopdf"]
+    "pdf_engine_preference": ["chrome"]
   },
   "security": {
     "redact_secrets": true,

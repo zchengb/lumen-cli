@@ -7,7 +7,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -353,7 +352,6 @@ def escape_markdown(text: str) -> str:
 
 def build_feishu_card(scan: dict, product_name: str = "Lumen") -> dict:
     counts = severity_counts(scan.get("findings", []))
-    registry = scan.get("issue_registry", {})
     elements = [
         {
             "tag": "markdown",
@@ -445,13 +443,9 @@ def render_optional_field(label: str, value) -> str:
 def render_finding_html(finding: dict, index: int) -> str:
     pr = finding.get("pr_url")
     pr_html = f'<div><b>PR:</b> <a href="{h(pr)}">{h(pr)}</a></div>' if pr else ""
-    optional_fields = "".join(
-        render_optional_field(label, finding.get(field))
-        for label, field in [
-            ("Root cause", "root_cause"),
-            ("Validation", "validation"),
-            ("Rejected approaches", "rejected_approaches"),
-        ]
+    optional_fields = (
+        render_optional_field("Root cause", finding.get("root_cause"))
+        + render_optional_field("Validation", finding.get("validation"))
     )
     return f"""
     <section class="finding">
@@ -474,44 +468,11 @@ def render_finding_html(finding: dict, index: int) -> str:
     """
 
 
-def render_pr_rows(prs: list) -> str:
-    if not prs:
-        return '<tr><td colspan="4">No PRs were created in this run.</td></tr>'
-    return "\n".join(
-        f"<tr><td>{h(pr.get('repository', ''))}</td><td><code>{h(pr.get('branch', ''))}</code></td>"
-        f"<td><a href=\"{h(pr.get('url', ''))}\">{h(pr.get('url', ''))}</a></td>"
-        f"<td>{h(pr.get('push_note', pr.get('finding_title', '')))}</td></tr>"
-        for pr in prs
-    )
-
-
-def render_validation_rows(results: list) -> str:
-    if not results:
-        return '<tr><td colspan="3">No repository validation results recorded.</td></tr>'
-    return "\n".join(
-        f"<tr><td>{h(item.get('repository', ''))}</td><td>{h(item.get('status', ''))}</td><td>{h(item.get('reason', ''))}</td></tr>"
-        for item in results
-    )
-
-
-def write_html(scan: dict, registry: dict, output_path: Path) -> None:
+def write_html(scan: dict, output_path: Path) -> None:
     counts = severity_counts(scan.get("findings", []))
-    issue_summary = scan.get("issue_registry", {})
     findings_html = "\n".join(render_finding_html(f, i) for i, f in enumerate(scan.get("findings", []), start=1))
     if not findings_html:
         findings_html = '<p class="empty">No confirmed findings were detected in this scan window.</p>'
-
-    current_issue_ids = {f.get("issue_id") for f in scan.get("findings", []) if f.get("issue_id")}
-    existing_open = [
-        i
-        for i in registry.get("issues", [])
-        if i.get("status") in {"open", "pr_open", "in_progress"}
-        and i.get("id") not in current_issue_ids
-    ]
-    existing_rows = "\n".join(
-        f"<tr><td>{h(i.get('id'))}</td><td>{h(i.get('status'))}</td><td>{h(i.get('severity'))}</td><td>{h(i.get('repository'))}</td><td>{h(i.get('title'))}</td><td>{h(i.get('last_seen_at'))}</td></tr>"
-        for i in existing_open
-    ) or '<tr><td colspan="6">No open tracked issues.</td></tr>'
 
     html_text = f"""<!doctype html>
 <html>
@@ -567,44 +528,13 @@ def write_html(scan: dict, registry: dict, output_path: Path) -> None:
     <div class="metric"><span>Repositories</span><b>{h(scan.get('repositories_scanned', 0))}</b></div>
   </div>
 
-  <h2>2. Issue Registry Summary</h2>
-  <table>
-    <tr><th>New</th><th>Open</th><th>Stale open</th><th>PR open</th><th>Resolved</th></tr>
-    <tr>
-      <td>{issue_summary.get('new_issues', 0)}</td>
-      <td>{issue_summary.get('existing_open_issues', 0)}</td>
-      <td>{issue_summary.get('stale_open_issues', 0)}</td>
-      <td>{issue_summary.get('pr_open_issues', 0)}</td>
-      <td>{issue_summary.get('resolved_issues', 0)}</td>
-    </tr>
-  </table>
-
-  <h2>3. New Issue Findings</h2>
+  <h2>2. Findings</h2>
   {findings_html}
 
-  <h2>4. Existing Open / Stale Issues</h2>
-  <table>
-    <tr><th>ID</th><th>Status</th><th>Severity</th><th>Repository</th><th>Title</th><th>Last seen</th></tr>
-    {existing_rows}
-  </table>
+  <h2>3. PR Summary</h2>
+  <p>{h(len(scan.get('prs', [])))} PR(s) created in this run.</p>
 
-  <h2>5. PR Summary</h2>
-  <table>
-    <tr><th>Repository</th><th>Branch</th><th>PR</th><th>Notes</th></tr>
-    {render_pr_rows(scan.get('prs', []))}
-  </table>
-
-  <h2>6. Repository Validation</h2>
-  <table>
-    <tr><th>Repository</th><th>Status</th><th>Reason</th></tr>
-    {render_validation_rows(scan.get('validation_results', []))}
-  </table>
-
-  <h2>7. Others</h2>
-  <p>Local project validation was skipped by lightweight review-only policy unless noted above.</p>
-  <p>Repositories scanned: {h(scan.get('repositories_scanned', 0))} · Repositories failed: {h(scan.get('repositories_failed', 0))}</p>
-
-  <h2>8. Decisions</h2>
+  <h2>4. Decisions</h2>
   <p>Only confirmed High severity issues are eligible for automated fixes and PRs. Medium and Low issues remain report-only unless policy changes.</p>
 </body>
 </html>
@@ -649,89 +579,21 @@ def convert_via_chrome(html_path: Path, pdf_path: Path) -> None:
     )
 
 
-def convert_via_playwright(html_path: Path, pdf_path: Path) -> None:
-    node = shutil.which("node")
-    if not node:
-        raise RuntimeError("node was not found")
-
-    js = f"""
-async function main() {{
-  const playwright = require('playwright');
-  const browser = await playwright.chromium.launch({{ headless: true }});
-  const page = await browser.newPage();
-  await page.goto('file://{html_path}', {{ waitUntil: 'networkidle' }});
-  await page.pdf({{ path: '{pdf_path}', format: 'A4', printBackground: true }});
-  await browser.close();
-}}
-main().catch((err) => {{
-  console.error(err);
-  process.exit(1);
-}});
-"""
-    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as handle:
-        handle.write(js)
-        js_path = handle.name
-    try:
-        subprocess.run([node, js_path], check=True, capture_output=True, text=True)
-    finally:
-        Path(js_path).unlink(missing_ok=True)
-
-
-def convert_via_weasyprint(html_path: Path, pdf_path: Path) -> None:
-    python_bin = shutil.which("python3") or shutil.which("python")
-    if not python_bin:
-        raise RuntimeError("python3 was not found")
-    subprocess.run(
-        [python_bin, "-c", "import weasyprint"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    subprocess.run(
-        [python_bin, "-m", "weasyprint", str(html_path), str(pdf_path)],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
-def convert_via_wkhtmltopdf(html_path: Path, pdf_path: Path) -> None:
-    binary = shutil.which("wkhtmltopdf")
-    if not binary:
-        raise RuntimeError("wkhtmltopdf was not found")
-    subprocess.run([binary, str(html_path), str(pdf_path)], check=True, capture_output=True, text=True)
-
-
-PDF_ENGINES = {
-    "chrome": convert_via_chrome,
-    "playwright": convert_via_playwright,
-    "weasyprint": convert_via_weasyprint,
-    "wkhtmltopdf": convert_via_wkhtmltopdf,
-}
-
-
 def resolve_pdf_engine_preference(common: dict) -> list:
     configured = common.get("reporting", {}).get("pdf_engine_preference", [])
-    default = ["chrome", "playwright", "weasyprint", "wkhtmltopdf"]
-    preference = []
-    for engine in list(configured) + default:
-        if engine not in preference:
-            preference.append(engine)
-    return preference
+    if configured:
+        return [engine for engine in configured if engine == "chrome"]
+    return ["chrome"]
 
 
 def convert_html_to_pdf(html_path: Path, pdf_path: Path, engine_preference: list) -> str:
-    errors = []
-    for engine in engine_preference or list(PDF_ENGINES.keys()):
-        converter = PDF_ENGINES.get(engine)
-        if not converter:
-            continue
-        try:
-            converter(html_path, pdf_path)
-            return engine
-        except Exception as exc:
-            errors.append(f"{engine}: {redact(str(exc))}")
-    raise RuntimeError("No PDF engine succeeded. Tried: " + "; ".join(errors) if errors else "No PDF engine available.")
+    if find_chrome_binary():
+        convert_via_chrome(html_path, pdf_path)
+        return "chrome"
+    raise RuntimeError(
+        "PDF export requires a system browser (Google Chrome, Chromium, or Microsoft Edge). "
+        "HTML report was still generated."
+    )
 
 
 def send_feishu(card: dict, webhook_url: str) -> None:
@@ -771,7 +633,7 @@ def main() -> int:
     html_path = reports_dir / f"code-quality-security-scan-{stamp}.html"
     pdf_path = reports_dir / f"code-quality-security-scan-{stamp}.pdf"
 
-    write_html(scan, registry, html_path)
+    write_html(scan, html_path)
     try:
         engine_used = convert_html_to_pdf(html_path, pdf_path, pdf_engine_preference)
         scan["report"] = {"html_path": str(html_path), "pdf_path": str(pdf_path), "status": "generated", "engine": engine_used}

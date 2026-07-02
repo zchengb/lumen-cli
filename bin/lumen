@@ -6,7 +6,6 @@ LUMEN_LIB_DIR="${LUMEN_HOME}/lib/scripts"
 LUMEN_TEMPLATES_DIR="${LUMEN_HOME}/lib/templates"
 LUMEN_VERSION_FILE="${LUMEN_HOME}/VERSION"
 PROJECTS_REGISTRY_JS="${LUMEN_HOME}/lib/scripts/projects-registry.js"
-LUMEN_GLOBAL_ENV_FILE="${LUMEN_HOME}/env"
 
 RESOLVED_WORKSPACE=""
 RESOLVED_PROJECT_SLUG=""
@@ -291,16 +290,18 @@ Usage:
                                  Run without flags for an interactive project and schedule picker.
   lumen schedule remove --project <slug>
                                  Remove a project's scheduled scan
-  lumen schedule list           List all configured schedules
+  lumen schedule list           List all configured scan schedules (alias: lumen schedule)
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen dashboard --project <slug> [--no-open]
                                  Refresh dashboard-data.js and open dashboard.html in your browser
                                  Pass --no-open to only refresh the data without opening a browser
   lumen doctor                  Check that required and optional tools are installed
-  lumen config set-webhook <url>
-                                 Set a Feishu webhook used by all projects (global config)
-  lumen config show             Print the global config file
-  lumen config unset-webhook     Remove the global Feishu webhook
+  lumen config set-webhook <url> [--project <slug>]
+                                 Save the Feishu webhook in this workspace's .env.local
+  lumen config show [--project <slug>]
+                                 Show the Feishu webhook configured for a workspace
+  lumen config unset-webhook [--project <slug>]
+                                 Remove the Feishu webhook from a workspace
   lumen upgrade [--cli-only] [--project <slug>]
                                  Upgrade the installed Lumen CLI to the latest release and
                                  refresh this workspace's bundled templates (scan-prompt.md,
@@ -313,12 +314,11 @@ Usage:
 Environment:
   LUMEN_HOME                    Lumen CLI installation directory (default: ~/.lumen)
   CURSOR_AGENT_MODEL            Overrides the Cursor model set in config/common.json (execution.model)
-  FEISHU_WEBHOOK_URL            Overrides the Feishu webhook for all projects
+  FEISHU_WEBHOOK_URL            Optional shell override for a workspace Feishu webhook
 
 Feishu webhook resolution order (highest priority first):
   1. FEISHU_WEBHOOK_URL in the current shell environment
-  2. <workspace>/.env.local (per-project override)
-  3. ~/.lumen/env (global default, set with 'lumen config set-webhook <url>')
+  2. <workspace>/.env.local (per-project, set with 'lumen config set-webhook <url> --project <slug>')
 
 Project registry:
   Registered projects are stored in ~/.lumen/projects.json
@@ -461,35 +461,25 @@ cmd_doctor() {
   fi
 
   local webhook_source=""
+  local workspace=""
+  workspace="$( (set +e; resolve_command_workspace >/dev/null 2>&1; printf '%s' "${RESOLVED_WORKSPACE}") )" || true
+
   if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
     webhook_source="the current shell environment"
-  else
-    local workspace=""
-    workspace="$( (set +e; resolve_command_workspace >/dev/null 2>&1; printf '%s' "${RESOLVED_WORKSPACE}") )" || true
-    if [[ -n "${workspace}" ]]; then
-      load_env_file_if_present "${LUMEN_GLOBAL_ENV_FILE}"
-      load_env_file_if_present "${workspace}/.env.common"
-      load_env_file_if_present "${workspace}/.env.local"
-      if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
-        if [[ -f "${workspace}/.env.local" ]] && grep -q '^FEISHU_WEBHOOK_URL=' "${workspace}/.env.local" 2>/dev/null; then
-          webhook_source="${workspace}/.env.local"
-        else
-          webhook_source="the global config (${LUMEN_GLOBAL_ENV_FILE})"
-        fi
-      fi
-    else
-      load_env_file_if_present "${LUMEN_GLOBAL_ENV_FILE}"
-      if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
-        webhook_source="the global config (${LUMEN_GLOBAL_ENV_FILE})"
-      fi
+  elif [[ -n "${workspace}" ]]; then
+    load_env_file_if_present "${workspace}/.env.common"
+    load_env_file_if_present "${workspace}/.env.local"
+    if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
+      webhook_source="${workspace}/.env.local"
     fi
   fi
 
   if [[ -n "${webhook_source}" ]]; then
     ok "FEISHU_WEBHOOK_URL is set (from ${webhook_source})."
   else
-    warn "FEISHU_WEBHOOK_URL is not set. Set it once for all projects with: lumen config set-webhook <url>"
-    printf '  Or set it per-project in .env.local inside that workspace.\n'
+    warn "FEISHU_WEBHOOK_URL is not set for this workspace."
+    printf '  Set it with: lumen config set-webhook <url> --project <slug>\n'
+    printf '  Or add FEISHU_WEBHOOK_URL to <workspace>/.env.local\n'
   fi
 
   local chrome_path=""
@@ -503,12 +493,30 @@ cmd_doctor() {
     fi
   done
   if [[ -n "${chrome_path}" ]]; then
-    ok "PDF engine available: Chrome headless"
-  elif command -v wkhtmltopdf >/dev/null 2>&1; then
-    ok "PDF engine available: wkhtmltopdf"
+    ok "PDF export available via system browser (Chrome headless, no extra install)."
   else
-    warn "No PDF engine detected (Chrome headless or wkhtmltopdf). HTML reports will still be generated, but PDF conversion may fail."
-    printf '  Install Google Chrome, or run: pip install weasyprint\n'
+    warn "No system browser found for PDF export. HTML reports still work; install Chrome for PDF."
+  fi
+}
+
+write_workspace_webhook() {
+  local workspace="$1"
+  local url="$2"
+  local env_file="${workspace}/.env.local"
+  local example_file="${workspace}/.env.local.example"
+
+  if [[ ! -f "${env_file}" && -f "${example_file}" ]]; then
+    cp "${example_file}" "${env_file}"
+  fi
+  if [[ ! -f "${env_file}" ]]; then
+    printf 'FEISHU_WEBHOOK_URL="%s"\n' "$(sed_escape_replacement "${url}")" > "${env_file}"
+    return 0
+  fi
+  if grep -q '^FEISHU_WEBHOOK_URL=' "${env_file}" 2>/dev/null; then
+    sed -i.bak "s#^FEISHU_WEBHOOK_URL=.*#FEISHU_WEBHOOK_URL=\"$(sed_escape_replacement "${url}")\"#" "${env_file}"
+    rm -f "${env_file}.bak"
+  else
+    printf '\nFEISHU_WEBHOOK_URL="%s"\n' "$(sed_escape_replacement "${url}")" >> "${env_file}"
   fi
 }
 
@@ -518,43 +526,56 @@ cmd_config() {
 
   case "${sub}" in
     set-webhook)
-      local url="${1:-}"
+      local url="" filtered_args=() arg
+      for arg in "$@"; do
+        case "${arg}" in
+          --project|-p|--workspace|--no-open) filtered_args+=("${arg}") ;;
+          --*) err "Unknown option: ${arg}"; exit 1 ;;
+          *)
+            if [[ -z "${url}" ]]; then
+              url="${arg}"
+            else
+              err "Unexpected argument: ${arg}"
+              exit 1
+            fi
+            ;;
+        esac
+      done
       if [[ -z "${url}" ]]; then
-        err "Usage: lumen config set-webhook <url>"
+        err "Usage: lumen config set-webhook <url> [--project <slug>]"
         exit 1
       fi
-      mkdir -p "${LUMEN_HOME}"
-      if [[ -f "${LUMEN_GLOBAL_ENV_FILE}" ]] && grep -q '^FEISHU_WEBHOOK_URL=' "${LUMEN_GLOBAL_ENV_FILE}"; then
-        sed -i.bak "s#^FEISHU_WEBHOOK_URL=.*#FEISHU_WEBHOOK_URL=\"$(sed_escape_replacement "${url}")\"#" "${LUMEN_GLOBAL_ENV_FILE}"
-        rm -f "${LUMEN_GLOBAL_ENV_FILE}.bak"
-      else
-        printf 'FEISHU_WEBHOOK_URL="%s"\n' "$(sed_escape_replacement "${url}")" >> "${LUMEN_GLOBAL_ENV_FILE}"
-      fi
-      ok "Saved FEISHU_WEBHOOK_URL to ${LUMEN_GLOBAL_ENV_FILE}"
-      printf 'This applies to every project unless a workspace has its own .env.local override.\n'
+      resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+      write_workspace_webhook "${RESOLVED_WORKSPACE}" "${url}"
+      ok "Saved FEISHU_WEBHOOK_URL to ${RESOLVED_WORKSPACE}/.env.local"
       ;;
     show)
-      if [[ -f "${LUMEN_GLOBAL_ENV_FILE}" ]]; then
-        printf 'Global config: %s\n\n' "${LUMEN_GLOBAL_ENV_FILE}"
-        cat "${LUMEN_GLOBAL_ENV_FILE}"
+      resolve_command_workspace "$@"
+      local env_file="${RESOLVED_WORKSPACE}/.env.local"
+      if [[ -f "${env_file}" ]]; then
+        printf 'Workspace config: %s\n\n' "${env_file}"
+        grep '^FEISHU_WEBHOOK_URL=' "${env_file}" || printf 'FEISHU_WEBHOOK_URL is not set in this workspace.\n'
       else
-        printf 'No global config found at %s\n' "${LUMEN_GLOBAL_ENV_FILE}"
-        printf 'Run: lumen config set-webhook <url>\n'
+        printf 'No .env.local found at %s\n' "${env_file}"
+        printf 'Run: lumen config set-webhook <url> --project <slug>\n'
       fi
       ;;
     unset-webhook)
-      if [[ -f "${LUMEN_GLOBAL_ENV_FILE}" ]]; then
-        sed -i.bak '/^FEISHU_WEBHOOK_URL=/d' "${LUMEN_GLOBAL_ENV_FILE}"
-        rm -f "${LUMEN_GLOBAL_ENV_FILE}.bak"
-        ok "Removed FEISHU_WEBHOOK_URL from global config."
+      resolve_command_workspace "$@"
+      local env_file="${RESOLVED_WORKSPACE}/.env.local"
+      if [[ -f "${env_file}" ]]; then
+        sed -i.bak '/^FEISHU_WEBHOOK_URL=/d' "${env_file}"
+        rm -f "${env_file}.bak"
+        ok "Removed FEISHU_WEBHOOK_URL from ${env_file}"
+      else
+        warn "No .env.local found for this workspace."
       fi
       ;;
     *)
       printf 'Usage:\n'
-      printf '  lumen config set-webhook <url>   Set a Feishu webhook used by all projects (unless a workspace overrides it)\n'
-      printf '  lumen config unset-webhook       Remove the global Feishu webhook\n'
-      printf '  lumen config show                Print the global config file\n'
-      printf '\nGlobal config file: %s\n' "${LUMEN_GLOBAL_ENV_FILE}"
+      printf '  lumen config set-webhook <url> [--project <slug>]\n'
+      printf '  lumen config show [--project <slug>]\n'
+      printf '  lumen config unset-webhook [--project <slug>]\n'
       exit 1
       ;;
   esac
@@ -1287,6 +1308,16 @@ cmd_schedule_remove() {
   ok "Removed schedule for '${slug}'."
 }
 
+cron_label() {
+  local expr="$1"
+  case "${expr}" in
+    "0 9 * * *") printf 'Daily at 09:00' ;;
+    "0 9 * * 1-5") printf 'Weekdays at 09:00' ;;
+    "0 */6 * * *") printf 'Every 6 hours' ;;
+    *) printf '%s' "${expr}" ;;
+  esac
+}
+
 cmd_schedule_list() {
   if ! command -v crontab >/dev/null 2>&1; then
     warn "'crontab' is not available on this system."
@@ -1296,20 +1327,24 @@ cmd_schedule_list() {
   lines="$(read_crontab | grep '# lumen-schedule:' || true)"
   if [[ -z "${lines}" ]]; then
     printf 'No Lumen schedules configured.\n'
-    printf 'Add one with: lumen schedule add --project <slug> --cron "0 9 * * *"\n'
+    printf 'Add one with: lumen schedule add\n'
     return 0
   fi
-  printf '%sSCHEDULE                   PROJECT%s\n' "${BOLD}" "${RESET}"
+  printf '%s%-26s %-18s %s%s\n' "${BOLD}" "CRON" "PROJECT" "DESCRIPTION" "${RESET}"
   while IFS= read -r line; do
     local slug cron_fields
     slug="$(printf '%s' "${line}" | sed -n 's/.*# lumen-schedule:\([^ ]*\).*/\1/p')"
     cron_fields="$(printf '%s' "${line}" | awk '{print $1, $2, $3, $4, $5}')"
-    printf '%-26s %s\n' "${cron_fields}" "${slug}"
+    printf '%-26s %-18s %s\n' "${cron_fields}" "${slug}" "$(cron_label "${cron_fields}")"
   done <<< "${lines}"
 }
 
 cmd_schedule() {
   local sub="${1:-}"
+  if [[ -z "${sub}" ]]; then
+    cmd_schedule_list
+    return 0
+  fi
   shift || true
   case "${sub}" in
     add) cmd_schedule_add "$@" ;;

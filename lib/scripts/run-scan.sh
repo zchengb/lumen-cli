@@ -280,7 +280,6 @@ trap on_scan_exit EXIT
 printf '%s\n' "$$" > "${LOCK_DIR}/pid"
 date -u '+%Y-%m-%dT%H:%M:%SZ' > "${LOCK_DIR}/started_at"
 
-load_env_file "${LUMEN_HOME:-$HOME/.lumen}/env"
 load_env_file "${WORKSPACE_ROOT}/.env.common"
 load_env_file "${WORKSPACE_ROOT}/.env.local"
 

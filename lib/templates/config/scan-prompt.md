@@ -49,7 +49,7 @@ Environment loading order:
 3. existing process environment
 ```
 
-The Feishu webhook must be provided through the environment variable named by `config/common.json`, currently `FEISHU_WEBHOOK_URL`. Never store the real webhook URL in JSON, prompt files, reports, logs, PR descriptions, or Feishu card content.
+The Feishu webhook must be provided through `FEISHU_WEBHOOK_URL` in this workspace's `.env.local` file (set during `lumen init` or with `lumen config set-webhook <url> --project <slug>`). Never store the real webhook URL in JSON, prompt files, reports, logs, PR descriptions, or Feishu card content.
 
 ## Workspace Rules
 
@@ -426,7 +426,6 @@ Every reported finding must include:
 - Code snippet.
 - Suggestion.
 - Root cause (why the bug exists).
-- Validation notes (what was checked and what was skipped).
 - PR URL only when a High finding was fixed and a PR was actually created.
 
 A valid finding must have code evidence, concrete impact, and a realistic trigger.

@@ -78,39 +78,37 @@ Then:
 | `lumen scan --project <slug> [--dry-run]` | Run a scan; add `--dry-run` to mock the pipeline without the Cursor agent |
 | `lumen schedule add [--project <slug>] [--cron "<expr>"] [--dry-run]` | Schedule recurring scans via cron. Run without flags for an interactive project and schedule picker. |
 | `lumen schedule remove --project <slug>` | Remove a project's scheduled scan |
-| `lumen schedule list` | List all configured schedules |
+| `lumen schedule list` / `lumen schedule` | List all configured scan schedules |
 | `lumen watch --project <slug>` | Tail the latest scan log with readable formatting |
 | `lumen dashboard --project <slug> [--no-open]` | Refresh `dashboard-data.js` and open `dashboard.html`; pass `--no-open` to skip opening a browser |
 | `lumen doctor` | Check installed prerequisites (agent, git, node/python, gh, webhook) |
-| `lumen config set-webhook <url>` | Set a Feishu webhook used by all projects by default |
-| `lumen config show` / `lumen config unset-webhook` | Inspect or remove the global webhook config |
+| `lumen config set-webhook <url> [--project <slug>]` | Save the Feishu webhook in a workspace `.env.local` |
+| `lumen config show` / `lumen config unset-webhook` | Inspect or remove a workspace Feishu webhook |
 | `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled workspace templates (`scan-prompt.md`, report/dashboard templates). Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
 | `lumen help` | Show usage |
 
-### Feishu webhook: global vs per-project
+### Feishu webhook (per workspace)
 
-You can set the Feishu webhook once for all projects instead of repeating it in every workspace:
+Each workspace stores its own Feishu webhook in `<workspace>/.env.local`:
 
 ```bash
-lumen config set-webhook https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx
+lumen config set-webhook https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx --project mbpass
 ```
-
-This is stored in `~/.lumen/env` and used automatically by every scan and by `lumen doctor`, unless a specific project overrides it in its own `.env.local`.
 
 Resolution order (highest priority first):
 1. `FEISHU_WEBHOOK_URL` set in your current shell
-2. `<workspace>/.env.local` (per-project override, created by `lumen init`)
-3. `~/.lumen/env` (global default set with `lumen config set-webhook`)
+2. `<workspace>/.env.local` (set during `lumen init` or with `lumen config set-webhook`)
 
 ### Scheduled scans
 
 Lumen can run scans on a recurring schedule via cron:
 
 ```bash
-lumen schedule add --project mbpass --cron "0 9 * * *"     # daily at 09:00
-lumen schedule add --project mbpass --cron "0 */6 * * *"   # every 6 hours
-lumen schedule list
+lumen schedule add                                      # interactive picker
+lumen schedule add --project mbpass --cron "0 9 * * *"  # daily at 09:00
+lumen schedule list                                     # view configured jobs
+lumen schedule                                          # same as list
 lumen schedule remove --project mbpass
 ```
 
@@ -197,7 +195,8 @@ Every scan-related command resolves the workspace in this order:
 | git | Worktree-based repository scanning | Required |
 | Node.js **or** Python 3 | Rendering `dashboard-data.js` | Node preferred; falls back to Python 3 |
 | GitHub CLI (`gh`) | Automated PR creation for High findings | Scan still runs; findings reported without PRs |
-| `FEISHU_WEBHOOK_URL` (global config, per-project `.env.local`, or shell env) | Feishu scan summary notifications | Scan still runs; notification marked "not sent" |
+| `FEISHU_WEBHOOK_URL` in workspace `.env.local` (or shell env) | Feishu scan summary notifications | Scan still runs; notification marked "not sent" |
+| Google Chrome / Chromium / Edge | PDF export (uses system browser, no extra install) | HTML report still generated |
 
 Run `lumen doctor` after installing to check all of the above.
 
