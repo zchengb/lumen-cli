@@ -76,7 +76,7 @@ Then:
 | `lumen use [slug]` | Set or show the default project slug |
 | `lumen register [dir]` | Register an existing workspace (e.g. an `.auto-scan` folder) as a project |
 | `lumen scan --project <slug> [--dry-run]` | Run a scan; add `--dry-run` to mock the pipeline without the Cursor agent |
-| `lumen schedule add --project <slug> --cron "<expr>" [--dry-run]` | Schedule recurring scans via cron |
+| `lumen schedule add [--project <slug>] [--cron "<expr>"] [--dry-run]` | Schedule recurring scans via cron. Run without flags for an interactive project and schedule picker. |
 | `lumen schedule remove --project <slug>` | Remove a project's scheduled scan |
 | `lumen schedule list` | List all configured schedules |
 | `lumen watch --project <slug>` | Tail the latest scan log with readable formatting |
@@ -84,7 +84,7 @@ Then:
 | `lumen doctor` | Check installed prerequisites (agent, git, node/python, gh, webhook) |
 | `lumen config set-webhook <url>` | Set a Feishu webhook used by all projects by default |
 | `lumen config show` / `lumen config unset-webhook` | Inspect or remove the global webhook config |
-| `lumen upgrade [--sync-prompts] [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release. Add `--sync-prompts` to also overwrite this workspace's `config/scan-prompt.md`, `runtime-profiles.json`, `feishu-card-template.json`, and `dashboard.html` with the new bundled versions (old versions are backed up under `config/.template-backups/`). `common.json` and `repos.json` are never touched. |
+| `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled workspace templates (`scan-prompt.md`, report/dashboard templates). Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
 | `lumen help` | Show usage |
 

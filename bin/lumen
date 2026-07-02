@@ -9,6 +9,7 @@ PROJECTS_REGISTRY_JS="${LUMEN_HOME}/lib/scripts/projects-registry.js"
 LUMEN_GLOBAL_ENV_FILE="${LUMEN_HOME}/env"
 
 RESOLVED_WORKSPACE=""
+RESOLVED_PROJECT_SLUG=""
 RESOLVED_REMAINING_ARGS=()
 
 RED="$(printf '\033[31m')"
@@ -148,6 +149,7 @@ prompt_project_selection() {
 
   IFS=$'\t' read -r num id slug name workspace <<< "${lines[$((choice - 1))]}"
   RESOLVED_WORKSPACE="${workspace}"
+  RESOLVED_PROJECT_SLUG="${slug}"
   printf 'Using project: %s (lumen scan --project %s)\n' "${name}" "${slug}"
 }
 
@@ -284,8 +286,9 @@ Usage:
   lumen scan --project <slug> [--dry-run]
                                  Run a scan for a specific project
                                  Add --dry-run to mock the pipeline without the Cursor agent
-  lumen schedule add --project <slug> --cron "<cron-expr>" [--dry-run]
-                                 Schedule recurring scans via cron (e.g. "0 9 * * *" = daily at 09:00)
+  lumen schedule add [--project <slug>] [--cron "<cron-expr>"] [--dry-run]
+                                 Schedule recurring scans via cron (e.g. "0 9 * * *" = daily at 09:00).
+                                 Run without flags for an interactive project and schedule picker.
   lumen schedule remove --project <slug>
                                  Remove a project's scheduled scan
   lumen schedule list           List all configured schedules
@@ -298,15 +301,12 @@ Usage:
                                  Set a Feishu webhook used by all projects (global config)
   lumen config show             Print the global config file
   lumen config unset-webhook     Remove the global Feishu webhook
-  lumen upgrade [--sync-prompts] [--cli-only] [--project <slug>]
-                                 Upgrade the installed Lumen CLI to the latest release.
-                                 Add --sync-prompts to also overwrite this workspace's
-                                 config/scan-prompt.md, runtime-profiles.json,
-                                 feishu-card-template.json, and dashboard.html with the
-                                 versions bundled in the new release (existing versions are
-                                 backed up first). config/common.json and config/repos.json
-                                 are never touched. Add --cli-only to skip the prompt sync
-                                 tip. Use --project <slug> to target a specific workspace.
+  lumen upgrade [--cli-only] [--project <slug>]
+                                 Upgrade the installed Lumen CLI to the latest release and
+                                 refresh this workspace's bundled templates (scan-prompt.md,
+                                 runtime-profiles.json, feishu-card-template.json, dashboard.html).
+                                 Add --cli-only to upgrade only the CLI without touching workspace
+                                 templates. Use --project <slug> to target a specific workspace.
   lumen version                 Print the installed Lumen CLI version
   lumen help                    Show this help message
 
@@ -368,14 +368,14 @@ sync_workspace_templates() {
 }
 
 cmd_upgrade() {
-  local sync_prompts="0"
+  local sync_prompts="1"
   local cli_only="0"
   local passthrough_args=()
   local arg
   for arg in "$@"; do
     case "${arg}" in
       --sync-prompts) sync_prompts="1" ;;
-      --cli-only) cli_only="1" ;;
+      --cli-only) cli_only="1"; sync_prompts="0" ;;
       *) passthrough_args+=("${arg}") ;;
     esac
   done
@@ -405,11 +405,15 @@ cmd_upgrade() {
   fi
 
   if [[ "${sync_prompts}" == "1" ]]; then
-    resolve_command_workspace "${passthrough_args[@]+"${passthrough_args[@]}"}"
-    sync_workspace_templates "${RESOLVED_WORKSPACE}"
-  elif [[ "${cli_only}" == "0" ]]; then
-    printf '\nTip: run %slumen upgrade --sync-prompts%s (optionally with --project <slug>) to also refresh\n' "${BOLD}" "${RESET}"
-    printf 'this workspace'"'"'s config/scan-prompt.md and other bundled templates to match the new CLI version.\n'
+    if resolve_command_workspace "${passthrough_args[@]+"${passthrough_args[@]}"}" 2>/dev/null; then
+      sync_workspace_templates "${RESOLVED_WORKSPACE}"
+    elif [[ -t 0 && -t 1 ]]; then
+      printf '\n%sSelect a workspace to refresh bundled templates:%s\n' "${BOLD}" "${RESET}"
+      prompt_project_selection
+      sync_workspace_templates "${RESOLVED_WORKSPACE}"
+    else
+      warn "No workspace resolved. Run: lumen upgrade --project <slug> to refresh bundled templates."
+    fi
   fi
 }
 
@@ -486,6 +490,25 @@ cmd_doctor() {
   else
     warn "FEISHU_WEBHOOK_URL is not set. Set it once for all projects with: lumen config set-webhook <url>"
     printf '  Or set it per-project in .env.local inside that workspace.\n'
+  fi
+
+  local chrome_path=""
+  for candidate in \
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
+    if [[ -x "${candidate}" ]]; then
+      chrome_path="${candidate}"
+      break
+    fi
+  done
+  if [[ -n "${chrome_path}" ]]; then
+    ok "PDF engine available: Chrome headless"
+  elif command -v wkhtmltopdf >/dev/null 2>&1; then
+    ok "PDF engine available: wkhtmltopdf"
+  else
+    warn "No PDF engine detected (Chrome headless or wkhtmltopdf). HTML reports will still be generated, but PDF conversion may fail."
+    printf '  Install Google Chrome, or run: pip install weasyprint\n'
   fi
 }
 
@@ -1141,6 +1164,24 @@ write_crontab() {
   printf '%s\n' "${content}" | sed '/^[[:space:]]*$/d' | crontab -
 }
 
+prompt_schedule_cron() {
+  local choice=""
+  printf '\n%sChoose a scan schedule:%s\n' "${BOLD}" "${RESET}" >&2
+  printf '  1) Daily at 09:00 (recommended)\n' >&2
+  printf '  2) Weekdays at 09:00\n' >&2
+  printf '  3) Every 6 hours\n' >&2
+  printf '  4) Custom cron expression\n' >&2
+  read -r -p "Choose [1-4, default 1]: " choice || true
+  choice="${choice:-1}"
+  case "${choice}" in
+    1|"") printf '%s' "0 9 * * *" ;;
+    2) printf '%s' "0 9 * * 1-5" ;;
+    3) printf '%s' "0 */6 * * *" ;;
+    4) prompt "Enter a 5-field cron expression" "0 9 * * *" ;;
+    *) printf '%s' "0 9 * * *" ;;
+  esac
+}
+
 cmd_schedule_add() {
   local slug="" cron_expr="" dry_run="0"
   while [[ $# -gt 0 ]]; do
@@ -1153,9 +1194,19 @@ cmd_schedule_add() {
   done
 
   if [[ -z "${slug}" || -z "${cron_expr}" ]]; then
-    err "Usage: lumen schedule add --project <slug> --cron \"<5-field cron expression>\" [--dry-run]"
-    printf 'Example: lumen schedule add --project mbpass --cron "0 9 * * *"   (daily at 09:00)\n'
-    exit 1
+    if [[ ! -t 0 || ! -t 1 ]]; then
+      err "Usage: lumen schedule add --project <slug> --cron \"<5-field cron expression>\" [--dry-run]"
+      printf 'Example: lumen schedule add --project mbpass --cron "0 9 * * *"   (daily at 09:00)\n'
+      exit 1
+    fi
+    printf '\n%sConfigure a recurring scan schedule%s\n' "${BOLD}" "${RESET}"
+    if [[ -z "${slug}" ]]; then
+      prompt_project_selection
+      slug="${RESOLVED_PROJECT_SLUG}"
+    fi
+    if [[ -z "${cron_expr}" ]]; then
+      cron_expr="$(prompt_schedule_cron)"
+    fi
   fi
 
   if ! command -v crontab >/dev/null 2>&1; then
@@ -1266,10 +1317,11 @@ cmd_schedule() {
     list|ls) cmd_schedule_list "$@" ;;
     *)
       printf 'Usage:\n'
-      printf '  lumen schedule add --project <slug> --cron "<cron-expr>" [--dry-run]\n'
+      printf '  lumen schedule add [--project <slug>] [--cron "<cron-expr>"] [--dry-run]\n'
       printf '  lumen schedule remove --project <slug>\n'
       printf '  lumen schedule list\n'
       printf '\nExample (daily at 09:00): lumen schedule add --project mbpass --cron "0 9 * * *"\n'
+      printf 'Or run interactively: lumen schedule add\n'
       exit 1
       ;;
   esac

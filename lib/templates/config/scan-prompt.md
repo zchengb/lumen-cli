@@ -159,18 +159,19 @@ Maintain a persistent local issue registry at the path configured by `config/com
 
 The registry exists to prevent repeated reviews from producing inconsistent output for the same unresolved issue.
 
+Important: do **not** write or edit `state/issue-registry.json` yourself. Include findings only in `scan-result.json`. The post-processing script (`render-report-and-notify.py`) reconciles findings into the registry using a single canonical `ISSUE-*` id format.
+
 Before finalizing a finding:
 
-1. Compute a stable issue fingerprint.
-2. Look up the fingerprint in the issue registry.
-3. Reuse the existing issue id and status when the issue already exists.
-4. Create a new issue entry only when no existing fingerprint matches.
-5. Update `last_seen_at`, evidence, severity, and PR metadata when appropriate.
+1. Compute a stable issue fingerprint mentally (repository + file + normalized title + trigger).
+2. Reuse the same title, repository, file, and trigger wording when the issue still exists so reconciliation can match it across runs.
+3. Create a genuinely new finding entry only when the issue is new.
+4. Update evidence, severity, and PR metadata in the finding when appropriate.
 
 Fingerprint guidance:
 
 ```text
-repository + file path + normalized finding title + issue type + trigger hash
+repository + file path + normalized finding title + trigger hash
 ```
 
 Do not rely on line number alone, because line numbers may drift.
@@ -180,10 +181,19 @@ Supported local issue statuses:
 - `open`: confirmed and not yet handled.
 - `in_progress`: fix started but no PR is available yet.
 - `pr_open`: PR was created and is awaiting review or merge.
-- `resolved`: issue is no longer present or the PR was merged.
+- `resolved`: issue is no longer present in code or the fix was merged.
 - `accepted_risk`: team decided not to fix now.
 - `false_positive`: issue was reviewed and rejected.
 - `ignored`: intentionally excluded from future reporting.
+
+When a developer fixes an issue:
+
+1. On the next scan, inspect the relevant file/worktree again.
+2. If the vulnerable code is gone or correctly fixed, do **not** include it in `findings`.
+3. Record the resolution in `scan-result.json` under a `resolved_issues` array with the prior `issue_id`, repository, title, and resolution reason (for example `merged_pr`, `manual_fix`, or `no_longer_reproducible`).
+4. The post-processing script will move matching registry entries to `resolved`.
+
+If an issue is still present, include it again in `findings` even if it was reported before.
 
 Scan window rule:
 
@@ -348,14 +358,21 @@ Use:
 
 Generate the commit message in the same style as the repository's recent history.
 
-If the repository uses conventional commits, follow that style. Examples:
+Default Lumen commit subject format (use this when creating automated High-severity fix commits unless the repository history clearly requires a different pattern):
 
-- `fix: prevent invalid status transition`
-- `fix(auth): enforce ownership validation`
+```text
+[lumen] #<ticket> <type>: <short description>
+```
 
-If the repository uses ticket prefixes, bracketed tags, or another local pattern, follow that pattern instead.
+Rules for this format:
 
-Commit message rules:
+- Always include the `[lumen]` prefix so automated commits are easy to identify.
+- Use `<ticket>` from nearby commit history, branch names, or PR context when available (for example `#MBPAS-1338`).
+- If no ticket can be inferred, use the placeholder from `config/common.json` → `git.ticket_placeholder` (for example `#MBPAS-XXXX`) and keep the description specific.
+- Use conventional commit types such as `fix`, `refactor`, `security`, or `chore`.
+- Example: `[lumen] #MBPAS-1338 fix: enforce SYSTEM role on survey report endpoint`
+
+If the repository uses a clearly different local pattern in recent history, follow that pattern but still keep the `[lumen]` prefix at the start of the subject line.
 
 - Keep the subject concise.
 - Use English unless the repository history clearly uses another language.
@@ -408,6 +425,8 @@ Every reported finding must include:
 - File path with exact line range.
 - Code snippet.
 - Suggestion.
+- Root cause (why the bug exists).
+- Validation notes (what was checked and what was skipped).
 - PR URL only when a High finding was fixed and a PR was actually created.
 
 A valid finding must have code evidence, concrete impact, and a realistic trigger.
@@ -473,6 +492,7 @@ Write a structured JSON result with this shape:
     "resolved_issues": 0
   },
   "prs": [],
+  "resolved_issues": [],
   "failures": [],
   "validation_results": [],
   "feishu": {
@@ -500,6 +520,8 @@ Each finding must use:
   "line_range": "42-45",
   "code_snippet": "return userService.update(id, request);",
   "suggestion": "Validate ownership before the write operation.",
+  "root_cause": "The controller delegates directly to the service without checking the authenticated user owns the target record.",
+  "validation": "Skipped: lightweight review-only mode",
   "pr_url": "https://github.com/org/backend-service/pull/123"
 }
 ```

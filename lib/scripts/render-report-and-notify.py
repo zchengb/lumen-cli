@@ -11,6 +11,7 @@ import tempfile
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 
 SECRET_PATTERNS = [
@@ -73,23 +74,159 @@ def issue_fingerprint(finding: dict) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def issue_file_path(item: dict) -> str:
+    file_path = item.get("file", "")
+    if file_path:
+        return file_path
+    fingerprint = item.get("fingerprint", "")
+    if fingerprint and not re.fullmatch(r"[a-f0-9]{64}", fingerprint or ""):
+        parts = fingerprint.split(":")
+        if len(parts) >= 2:
+            return parts[1]
+    return ""
+
+
+def issue_match_key(item: dict) -> str:
+    repo = item.get("repository", "")
+    file_path = issue_file_path(item)
+    if repo and file_path:
+        return f"{repo}|{file_path}"
+    title = normalize(item.get("title", ""))
+    if repo and title:
+        return f"{repo}|{title}"
+    legacy = legacy_fingerprint_key(item.get("fingerprint", ""))
+    if legacy:
+        return legacy
+    return item.get("fingerprint") or item.get("id") or ""
+
+
+def legacy_fingerprint_key(fingerprint: str) -> str:
+    if not fingerprint or re.fullmatch(r"[a-f0-9]{64}", fingerprint or ""):
+        return ""
+    parts = fingerprint.split(":")
+    if len(parts) >= 3:
+        return f"{parts[0]}|{parts[1]}|{normalize(parts[2])}"
+    return ""
+
+
+def merge_issue_entries(primary: dict, secondary: dict) -> dict:
+    merged = dict(primary)
+    for field in [
+        "file",
+        "line_range",
+        "impact",
+        "trigger",
+        "suggestion",
+        "pr_url",
+        "pr_branch",
+        "root_cause",
+        "validation",
+    ]:
+        if not merged.get(field) and secondary.get(field):
+            merged[field] = secondary[field]
+    if secondary.get("first_seen_at") and (
+        not merged.get("first_seen_at") or secondary["first_seen_at"] < merged["first_seen_at"]
+    ):
+        merged["first_seen_at"] = secondary["first_seen_at"]
+    if secondary.get("last_seen_at") and (
+        not merged.get("last_seen_at") or secondary["last_seen_at"] > merged["last_seen_at"]
+    ):
+        merged["last_seen_at"] = secondary["last_seen_at"]
+    if secondary.get("status") == "pr_open" and merged.get("status") in {"open", "in_progress"}:
+        merged["status"] = "pr_open"
+    return merged
+
+
+def normalize_issue_id(issue: dict) -> str:
+    issue_id = issue.get("id", "")
+    if str(issue_id).startswith("ISSUE-"):
+        return issue_id
+    fingerprint = issue.get("fingerprint", "")
+    if re.fullmatch(r"[a-f0-9]{64}", fingerprint or ""):
+        return f"ISSUE-{fingerprint[:10]}"
+    key = issue_match_key(issue)
+    if key:
+        return f"ISSUE-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:10]}"
+    return f"ISSUE-{hashlib.sha256(str(issue_id).encode('utf-8')).hexdigest()[:10]}"
+
+
+def deduplicate_registry(issues: list) -> list:
+    groups = {}
+    for issue in issues:
+        key = issue_match_key(issue)
+        if not key:
+            key = issue.get("fingerprint") or issue.get("id") or str(id(issue))
+        groups.setdefault(key, []).append(issue)
+
+    merged_issues = []
+    for group in groups.values():
+        if len(group) == 1:
+            issue = dict(group[0])
+            issue["id"] = normalize_issue_id(issue)
+            merged_issues.append(issue)
+            continue
+
+        best = sorted(
+            group,
+            key=lambda item: (
+                1 if str(item.get("id", "")).startswith("ISSUE-") else 0,
+                len([field for field in item if item.get(field) not in (None, "")]),
+                item.get("last_seen_at", ""),
+            ),
+            reverse=True,
+        )[0]
+        combined = dict(best)
+        for other in group:
+            if other is best:
+                continue
+            combined = merge_issue_entries(combined, other)
+        combined["id"] = normalize_issue_id(combined)
+        fingerprint = issue_fingerprint(combined) if combined.get("repository") and combined.get("title") else combined.get("fingerprint")
+        if fingerprint:
+            combined["fingerprint"] = fingerprint
+        merged_issues.append(combined)
+    return merged_issues
+
+
+def build_issue_indexes(issues: list) -> Tuple[Dict[str, dict], Dict[str, dict]]:
+    by_fingerprint = {}
+    by_match_key = {}
+    for issue in issues:
+        fingerprint = issue.get("fingerprint")
+        if fingerprint:
+            by_fingerprint[fingerprint] = issue
+        key = issue_match_key(issue)
+        if key:
+            by_match_key[key] = issue
+    return by_fingerprint, by_match_key
+
+
+def find_existing_issue(by_fingerprint: dict, by_match_key: dict, finding: dict, fingerprint: str) -> Optional[dict]:
+    if fingerprint in by_fingerprint:
+        return by_fingerprint[fingerprint]
+    key = issue_match_key(finding)
+    if key and key in by_match_key:
+        return by_match_key[key]
+    return None
+
+
 def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = True) -> dict:
     registry = load_json(registry_path, {"schema_version": "1.0", "issues": []})
-    issues = registry.setdefault("issues", [])
-    by_fingerprint = {item["fingerprint"]: item for item in issues if item.get("fingerprint")}
+    issues = deduplicate_registry(registry.setdefault("issues", []))
+    by_fingerprint, by_match_key = build_issue_indexes(issues)
     now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     new_count = 0
-    existing_count = 0
+    matched_issue_ids = set()
 
     for finding in scan.get("findings", []):
         fingerprint = issue_fingerprint(finding)
-        existing = by_fingerprint.get(fingerprint)
+        existing = find_existing_issue(by_fingerprint, by_match_key, finding, fingerprint)
         status = "pr_open" if finding.get("pr_url") else "open"
         if existing:
-            existing_count += 1
             existing.update(
                 {
                     "last_seen_at": now,
+                    "fingerprint": fingerprint,
                     "title": redact(finding.get("title", "")),
                     "severity": finding.get("severity"),
                     "repository": finding.get("repository"),
@@ -98,13 +235,21 @@ def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = Tr
                     "impact": redact(finding.get("impact", "")),
                     "trigger": redact(finding.get("trigger", "")),
                     "suggestion": redact(finding.get("suggestion", "")),
+                    "root_cause": redact(finding.get("root_cause", "")),
+                    "validation": redact(finding.get("validation", "")),
                     "pr_url": finding.get("pr_url"),
                 }
             )
             if existing.get("status") in {"open", "in_progress"} and status == "pr_open":
                 existing["status"] = "pr_open"
+            existing["id"] = normalize_issue_id(existing)
             finding["issue_id"] = existing["id"]
             finding["issue_status"] = existing.get("status", status)
+            matched_issue_ids.add(existing["id"])
+            by_fingerprint[fingerprint] = existing
+            match_key = issue_match_key(existing)
+            if match_key:
+                by_match_key[match_key] = existing
         else:
             new_count += 1
             issue_id = f"ISSUE-{fingerprint[:10]}"
@@ -122,20 +267,45 @@ def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = Tr
                 "impact": redact(finding.get("impact", "")),
                 "trigger": redact(finding.get("trigger", "")),
                 "suggestion": redact(finding.get("suggestion", "")),
+                "root_cause": redact(finding.get("root_cause", "")),
+                "validation": redact(finding.get("validation", "")),
                 "pr_url": finding.get("pr_url"),
             }
             issues.append(entry)
             by_fingerprint[fingerprint] = entry
+            match_key = issue_match_key(entry)
+            if match_key:
+                by_match_key[match_key] = entry
             finding["issue_id"] = issue_id
             finding["issue_status"] = status
+            matched_issue_ids.add(issue_id)
 
+    registry["issues"] = deduplicate_registry(issues)
+
+    for resolved in scan.get("resolved_issues", []):
+        target_id = resolved.get("issue_id") or resolved.get("id")
+        for issue in registry["issues"]:
+            if issue.get("id") == target_id or (
+                issue.get("repository") == resolved.get("repository")
+                and normalize(issue.get("title", "")) == normalize(resolved.get("title", ""))
+            ):
+                issue["status"] = "resolved"
+                issue["resolved_at"] = now
+                issue["resolution_reason"] = redact(resolved.get("reason", "verified_fixed"))
+                issue["last_seen_at"] = now
+
+    registry["issues"] = deduplicate_registry(registry["issues"])
     summary = {
         "path": str(registry_path),
         "new_issues": new_count,
-        "existing_open_issues": sum(1 for i in issues if i.get("status") == "open"),
-        "stale_open_issues": sum(1 for i in issues if i.get("status") == "open" and i.get("last_seen_at") != now),
-        "pr_open_issues": sum(1 for i in issues if i.get("status") == "pr_open"),
-        "resolved_issues": sum(1 for i in issues if i.get("status") == "resolved"),
+        "existing_open_issues": sum(1 for i in registry["issues"] if i.get("status") == "open"),
+        "stale_open_issues": sum(
+            1
+            for i in registry["issues"]
+            if i.get("status") == "open" and i.get("last_seen_at") != now and i.get("id") not in matched_issue_ids
+        ),
+        "pr_open_issues": sum(1 for i in registry["issues"] if i.get("status") == "pr_open"),
+        "resolved_issues": sum(1 for i in registry["issues"] if i.get("status") == "resolved"),
     }
     registry["updated_at"] = now
     if persist:
@@ -266,9 +436,23 @@ def h(text) -> str:
     return html.escape(redact(text), quote=True)
 
 
+def render_optional_field(label: str, value) -> str:
+    if not value:
+        return ""
+    return f"<dt>{h(label)}</dt><dd>{h(value)}</dd>"
+
+
 def render_finding_html(finding: dict, index: int) -> str:
     pr = finding.get("pr_url")
     pr_html = f'<div><b>PR:</b> <a href="{h(pr)}">{h(pr)}</a></div>' if pr else ""
+    optional_fields = "".join(
+        render_optional_field(label, finding.get(field))
+        for label, field in [
+            ("Root cause", "root_cause"),
+            ("Validation", "validation"),
+            ("Rejected approaches", "rejected_approaches"),
+        ]
+    )
     return f"""
     <section class="finding">
       <div class="finding-head">
@@ -283,10 +467,31 @@ def render_finding_html(finding: dict, index: int) -> str:
         <dt>File</dt><dd><code>{h(finding.get('file', ''))}:{h(finding.get('line_range', ''))}</code></dd>
         <dt>Code</dt><dd><pre>{h(finding.get('code_snippet', ''))}</pre></dd>
         <dt>Suggestion</dt><dd>{h(finding.get('suggestion', ''))}</dd>
+        {optional_fields}
       </dl>
       {pr_html}
     </section>
     """
+
+
+def render_pr_rows(prs: list) -> str:
+    if not prs:
+        return '<tr><td colspan="4">No PRs were created in this run.</td></tr>'
+    return "\n".join(
+        f"<tr><td>{h(pr.get('repository', ''))}</td><td><code>{h(pr.get('branch', ''))}</code></td>"
+        f"<td><a href=\"{h(pr.get('url', ''))}\">{h(pr.get('url', ''))}</a></td>"
+        f"<td>{h(pr.get('push_note', pr.get('finding_title', '')))}</td></tr>"
+        for pr in prs
+    )
+
+
+def render_validation_rows(results: list) -> str:
+    if not results:
+        return '<tr><td colspan="3">No repository validation results recorded.</td></tr>'
+    return "\n".join(
+        f"<tr><td>{h(item.get('repository', ''))}</td><td>{h(item.get('status', ''))}</td><td>{h(item.get('reason', ''))}</td></tr>"
+        for item in results
+    )
 
 
 def write_html(scan: dict, registry: dict, output_path: Path) -> None:
@@ -296,7 +501,13 @@ def write_html(scan: dict, registry: dict, output_path: Path) -> None:
     if not findings_html:
         findings_html = '<p class="empty">No confirmed findings were detected in this scan window.</p>'
 
-    existing_open = [i for i in registry.get("issues", []) if i.get("status") in {"open", "pr_open", "in_progress"}]
+    current_issue_ids = {f.get("issue_id") for f in scan.get("findings", []) if f.get("issue_id")}
+    existing_open = [
+        i
+        for i in registry.get("issues", [])
+        if i.get("status") in {"open", "pr_open", "in_progress"}
+        and i.get("id") not in current_issue_ids
+    ]
     existing_rows = "\n".join(
         f"<tr><td>{h(i.get('id'))}</td><td>{h(i.get('status'))}</td><td>{h(i.get('severity'))}</td><td>{h(i.get('repository'))}</td><td>{h(i.get('title'))}</td><td>{h(i.get('last_seen_at'))}</td></tr>"
         for i in existing_open
@@ -378,18 +589,64 @@ def write_html(scan: dict, registry: dict, output_path: Path) -> None:
   </table>
 
   <h2>5. PR Summary</h2>
-  <p>{h(len(scan.get('prs', [])))} PR(s) created in this run.</p>
+  <table>
+    <tr><th>Repository</th><th>Branch</th><th>PR</th><th>Notes</th></tr>
+    {render_pr_rows(scan.get('prs', []))}
+  </table>
 
-  <h2>6. Others</h2>
-  <p>Local project validation was skipped by lightweight review-only policy.</p>
+  <h2>6. Repository Validation</h2>
+  <table>
+    <tr><th>Repository</th><th>Status</th><th>Reason</th></tr>
+    {render_validation_rows(scan.get('validation_results', []))}
+  </table>
 
-  <h2>7. Decisions</h2>
+  <h2>7. Others</h2>
+  <p>Local project validation was skipped by lightweight review-only policy unless noted above.</p>
+  <p>Repositories scanned: {h(scan.get('repositories_scanned', 0))} · Repositories failed: {h(scan.get('repositories_failed', 0))}</p>
+
+  <h2>8. Decisions</h2>
   <p>Only confirmed High severity issues are eligible for automated fixes and PRs. Medium and Low issues remain report-only unless policy changes.</p>
 </body>
 </html>
 """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(html_text, encoding="utf-8")
+
+
+def find_chrome_binary() -> Optional[str]:
+    candidates = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        shutil.which("google-chrome"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).exists():
+            return candidate
+    return None
+
+
+def convert_via_chrome(html_path: Path, pdf_path: Path) -> None:
+    chrome = find_chrome_binary()
+    if not chrome:
+        raise RuntimeError("Chrome/Chromium/Edge headless was not found")
+    file_url = html_path.resolve().as_uri()
+    subprocess.run(
+        [
+            chrome,
+            "--headless",
+            "--disable-gpu",
+            "--no-pdf-header-footer",
+            f"--print-to-pdf={pdf_path}",
+            file_url,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
 
 
 def convert_via_playwright(html_path: Path, pdf_path: Path) -> None:
@@ -446,10 +703,21 @@ def convert_via_wkhtmltopdf(html_path: Path, pdf_path: Path) -> None:
 
 
 PDF_ENGINES = {
+    "chrome": convert_via_chrome,
     "playwright": convert_via_playwright,
     "weasyprint": convert_via_weasyprint,
     "wkhtmltopdf": convert_via_wkhtmltopdf,
 }
+
+
+def resolve_pdf_engine_preference(common: dict) -> list:
+    configured = common.get("reporting", {}).get("pdf_engine_preference", [])
+    default = ["chrome", "playwright", "weasyprint", "wkhtmltopdf"]
+    preference = []
+    for engine in list(configured) + default:
+        if engine not in preference:
+            preference.append(engine)
+    return preference
 
 
 def convert_html_to_pdf(html_path: Path, pdf_path: Path, engine_preference: list) -> str:
@@ -495,7 +763,7 @@ def main() -> int:
     registry_path = state_dir / "issue-registry.json"
     common = load_json(workspace_root / "config" / "common.json", {})
     product_name = common.get("product", {}).get("name", "Lumen")
-    pdf_engine_preference = common.get("reporting", {}).get("pdf_engine_preference", ["playwright", "weasyprint", "wkhtmltopdf"])
+    pdf_engine_preference = resolve_pdf_engine_preference(common)
 
     registry = reconcile_issue_registry(scan, registry_path, persist=not dry_run)
 
