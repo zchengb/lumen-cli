@@ -114,6 +114,8 @@ lumen schedule remove --project mbpass
 
 The cron expression uses the standard 5-field format (`minute hour day-of-month month day-of-week`). Scheduled runs are appended to `crontab` with a `# lumen-schedule:<slug>` marker and log to `<workspace>/logs/schedule.log`. Add `--dry-run` to schedule mock runs (no Cursor agent, no PRs, no Feishu).
 
+Cron jobs run with a minimal environment. Lumen v1.9.1+ sets `PATH` automatically so `agent`, `python3`, and `gh` are found during scheduled scans. If you created a schedule before v1.9.1, re-run `lumen schedule add` with the same cron expression to refresh the crontab entry.
+
 ### Scan notifications
 
 Every `lumen scan` (manual or scheduled) sends a desktop notification when the scan starts and when it finishes or fails — on macOS via Notification Center (`osascript`), on Linux via `notify-send` if installed. No configuration needed.

@@ -2,6 +2,13 @@
 set -euo pipefail
 
 LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
+LUMEN_CLI_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+if [[ -f "${LUMEN_HOME}/lib/scripts/ensure-path.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LUMEN_HOME}/lib/scripts/ensure-path.sh"
+  ensure_lumen_path "${LUMEN_CLI_BIN}"
+fi
+
 LUMEN_LIB_DIR="${LUMEN_HOME}/lib/scripts"
 LUMEN_TEMPLATES_DIR="${LUMEN_HOME}/lib/templates"
 LUMEN_VERSION_FILE="${LUMEN_HOME}/VERSION"
@@ -1123,6 +1130,7 @@ cmd_scan() {
   else
     unset LUMEN_DRY_RUN 2>/dev/null || true
   fi
+  export LUMEN_CLI_BIN="${LUMEN_CLI_BIN}"
   bash "${LUMEN_LIB_DIR}/run-scan.sh" "${RESOLVED_WORKSPACE}"
 }
 
@@ -1269,8 +1277,16 @@ cmd_schedule_add() {
   local dry_run_flag=""
   [[ "${dry_run}" == "1" ]] && dry_run_flag=" --dry-run"
 
-  local cron_line
-  cron_line="${cron_expr} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" scan --project ${slug}${dry_run_flag} >> \"${log_file}\" 2>&1 $(schedule_marker "${slug}")"
+  local cron_path cron_line
+  if [[ -f "${LUMEN_HOME}/lib/scripts/ensure-path.sh" ]]; then
+    # shellcheck source=/dev/null
+    source "${LUMEN_HOME}/lib/scripts/ensure-path.sh"
+    cron_path="$(schedule_path_export "${lumen_bin}")"
+  else
+    cron_path="PATH=\"${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin\""
+  fi
+
+  cron_line="${cron_expr} ${cron_path} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" scan --project ${slug}${dry_run_flag} >> \"${log_file}\" 2>&1 $(schedule_marker "${slug}")"
 
   local existing filtered updated
   existing="$(read_crontab)"

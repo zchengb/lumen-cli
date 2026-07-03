@@ -4,6 +4,21 @@ set -euo pipefail
 # Usage: run-scan.sh <workspace-dir>
 WORKSPACE_ROOT="${1:?Usage: run-scan.sh <workspace-dir>}"
 LUMEN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
+
+if [[ -f "${LUMEN_LIB_DIR}/ensure-path.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LUMEN_LIB_DIR}/ensure-path.sh"
+  lumen_bin_hint=""
+  if [[ -n "${LUMEN_CLI_BIN:-}" && -x "${LUMEN_CLI_BIN}" ]]; then
+    lumen_bin_hint="${LUMEN_CLI_BIN}"
+  elif command -v lumen >/dev/null 2>&1; then
+    lumen_bin_hint="$(command -v lumen)"
+  elif [[ -n "${HOME:-}" && -x "${HOME}/.local/bin/lumen" ]]; then
+    lumen_bin_hint="${HOME}/.local/bin/lumen"
+  fi
+  ensure_lumen_path "${lumen_bin_hint}"
+fi
 
 PROMPT_FILE="${WORKSPACE_ROOT}/config/scan-prompt.md"
 COMMON_CONFIG="${WORKSPACE_ROOT}/config/common.json"
@@ -263,7 +278,7 @@ mkdir "${LOCK_DIR}"
 
 on_scan_exit() {
   local exit_code=$?
-  rmdir "${LOCK_DIR}" 2>/dev/null || true
+  rm -rf "${LOCK_DIR}" 2>/dev/null || true
   if [[ "${exit_code}" -eq 0 ]]; then
     notify_system "Lumen" "${SCAN_LABEL} finished: ${PROJECT_NAME}"
   else
