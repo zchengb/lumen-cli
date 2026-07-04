@@ -83,7 +83,8 @@ Then:
 | `lumen dashboard --project <slug> [--no-open]` | Refresh `dashboard-data.js` and open `dashboard.html`; pass `--no-open` to skip opening a browser |
 | `lumen doctor` | Check installed prerequisites (agent, git, python3, gh, webhook) |
 | `lumen config set-webhook <url> [--project <slug>]` | Save the Feishu webhook in a workspace `.env.local` |
-| `lumen config show` / `lumen config unset-webhook` | Inspect or remove a workspace Feishu webhook |
+| `lumen config set-scan-window <days> [--project <slug>]` | Set how many days of git history each scan inspects (`execution.scan_window_days`) |
+| `lumen config show` / `lumen config unset-webhook` | Show workspace settings or remove the Feishu webhook |
 | `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled templates (`config/prompts/`, `scan-prompt.md`, dashboard). Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
 | `lumen help` | Show usage |
@@ -94,11 +95,24 @@ Each workspace stores its own Feishu webhook in `<workspace>/.env.local`:
 
 ```bash
 lumen config set-webhook https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx --project mbpass
+lumen config set-scan-window 14 --project mbpass
+lumen config show --project mbpass
 ```
 
-Resolution order (highest priority first):
+Resolution order for Feishu webhook (highest priority first):
 1. `FEISHU_WEBHOOK_URL` set in your current shell
 2. `<workspace>/.env.local` (set during `lumen init` or with `lumen config set-webhook`)
+
+### Scan window
+
+Each workspace stores the scan window in `<workspace>/config/common.json` as `execution.scan_window_days` (default: `7`). The agent inspects commits and diffs from the last N days on each run.
+
+```bash
+lumen config set-scan-window 14 --project mbpass
+lumen config show --project mbpass
+```
+
+Valid range: **1–365** days. Open issues in the issue registry are still carried across scan windows regardless of this setting.
 
 ### Severity classification
 

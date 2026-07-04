@@ -325,8 +325,10 @@ Usage:
   lumen doctor                  Check that required and optional tools are installed
   lumen config set-webhook <url> [--project <slug>]
                                  Save the Feishu webhook in this workspace's .env.local
+  lumen config set-scan-window <days> [--project <slug>]
+                                 Set how many days of git history each scan inspects
   lumen config show [--project <slug>]
-                                 Show the Feishu webhook configured for a workspace
+                                 Show workspace settings (scan window, webhook, model)
   lumen config unset-webhook [--project <slug>]
                                  Remove the Feishu webhook from a workspace
   lumen upgrade [--cli-only] [--project <slug>]
@@ -567,6 +569,7 @@ write_workspace_webhook() {
 cmd_config() {
   local sub="${1:-}"
   shift || true
+  local config_py="${LUMEN_HOME}/lib/scripts/workspace_config.py"
 
   case "${sub}" in
     set-webhook)
@@ -593,8 +596,47 @@ cmd_config() {
       write_workspace_webhook "${RESOLVED_WORKSPACE}" "${url}"
       ok "Saved FEISHU_WEBHOOK_URL to ${RESOLVED_WORKSPACE}/.env.local"
       ;;
+    set-scan-window)
+      local days="" filtered_args=() arg
+      for arg in "$@"; do
+        case "${arg}" in
+          --project|-p|--workspace|--no-open) filtered_args+=("${arg}") ;;
+          --*) err "Unknown option: ${arg}"; exit 1 ;;
+          *)
+            if [[ -z "${days}" ]]; then
+              days="${arg}"
+            else
+              err "Unexpected argument: ${arg}"
+              exit 1
+            fi
+            ;;
+        esac
+      done
+      if [[ -z "${days}" ]]; then
+        err "Usage: lumen config set-scan-window <days> [--project <slug>]"
+        exit 1
+      fi
+      if ! [[ "${days}" =~ ^[0-9]+$ ]]; then
+        err "Scan window must be a positive integer (got: ${days})"
+        exit 1
+      fi
+      resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+      if [[ ! -f "${config_py}" ]]; then
+        err "Config helper not found: ${config_py}"
+        exit 1
+      fi
+      command -v python3 >/dev/null 2>&1 || { err "Python 3 is required for lumen config."; exit 1; }
+      if ! python3 "${config_py}" set-scan-window "${RESOLVED_WORKSPACE}" "${days}"; then
+        exit 1
+      fi
+      ok "Saved execution.scan_window_days=${days} to ${RESOLVED_WORKSPACE}/config/common.json"
+      ;;
     show)
       resolve_command_workspace "$@"
+      if [[ -f "${config_py}" ]] && command -v python3 >/dev/null 2>&1; then
+        python3 "${config_py}" show "${RESOLVED_WORKSPACE}"
+        return $?
+      fi
       local env_file="${RESOLVED_WORKSPACE}/.env.local"
       if [[ -f "${env_file}" ]]; then
         printf 'Workspace config: %s\n\n' "${env_file}"
@@ -618,6 +660,7 @@ cmd_config() {
     *)
       printf 'Usage:\n'
       printf '  lumen config set-webhook <url> [--project <slug>]\n'
+      printf '  lumen config set-scan-window <days> [--project <slug>]\n'
       printf '  lumen config show [--project <slug>]\n'
       printf '  lumen config unset-webhook [--project <slug>]\n'
       exit 1
