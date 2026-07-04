@@ -77,7 +77,14 @@
   "notifications": {
     "feishu_webhook_env": "FEISHU_WEBHOOK_URL",
     "send_exactly_one_card": true,
-    "include_pdf_path_in_card": false
+    "include_pdf_path_in_card": false,
+    "jira": {
+      "enabled": false,
+      "project_key": "MBPAS",
+      "issue_type": "Bug",
+      "severities": ["High", "Medium"],
+      "summary_prefix": "[Lumen]"
+    }
   },
   "git": {
     "branch_prefix": "auto-fix",

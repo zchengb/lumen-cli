@@ -114,6 +114,52 @@ lumen config show --project mbpass
 
 Valid range: **1–365** days. Open issues in the issue registry are still carried across scan windows regardless of this setting.
 
+### Jira integration (TWG CLI)
+
+Lumen can create Jira **Bug** work items for **High** and **Medium** findings after each scan, using the [Atlassian TWG CLI](https://developer.atlassian.com/cloud/twg-cli/).
+
+**1. Install and authenticate TWG CLI**
+
+```bash
+curl -fsSL https://teamwork-graph.atlassian.com/cli/install -o twg-install.sh
+bash twg-install.sh
+twg login
+twg doctor
+```
+
+**2. Enable Jira sync in your workspace**
+
+Edit `<workspace>/config/common.json`:
+
+```json
+"notifications": {
+  "jira": {
+    "enabled": true,
+    "project_key": "MBPAS",
+    "issue_type": "Bug",
+    "severities": ["High", "Medium"],
+    "summary_prefix": "[Lumen]"
+  }
+}
+```
+
+**3. Run a scan**
+
+After `scan-result.json` is written, Lumen calls:
+
+```bash
+twg jira workitem create --space MBPAS --type Bug ...
+```
+
+Rules:
+
+- Creates a ticket only for **new** registry issues (no duplicate Jira keys per `ISSUE-*` id)
+- **Low** findings are skipped
+- Auth is handled by `twg` (`~/.config/twg/auth.conf`) — no Jira token in `.env.local`
+- Failures are recorded in `scan-result.json` → `jira` and do not fail the scan
+
+Check setup with `lumen doctor`.
+
 ### Severity classification
 
 Findings use Lumen's three-tier operational standard: **High**, **Medium**, **Low**. This is not a CVSS score — it is a triage label for local code review, automated PR policy, and Feishu card color.

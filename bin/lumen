@@ -543,6 +543,32 @@ cmd_doctor() {
   else
     warn "No system browser found for PDF export. HTML reports still work; install Chrome for PDF."
   fi
+
+  if command -v twg >/dev/null 2>&1; then
+    ok "Atlassian TWG CLI (twg) found: $(command -v twg)"
+    if [[ -f "${HOME}/.config/twg/auth.conf" ]]; then
+      ok "twg authentication config found (~/.config/twg/auth.conf)."
+    else
+      warn "twg is installed but not authenticated. Run 'twg login' to enable Jira sync."
+      printf '  Docs: https://developer.atlassian.com/cloud/twg-cli/\n'
+    fi
+  else
+    warn "Atlassian TWG CLI (twg) not found. Jira issue sync will be skipped."
+    printf '  Install: bash <(curl -fsSL https://teamwork-graph.atlassian.com/cli/install)\n'
+  fi
+
+  if [[ -n "${workspace}" && -f "${workspace}/config/common.json" ]] && command -v python3 >/dev/null 2>&1; then
+    local jira_enabled=""
+    jira_enabled="$(python3 -c "import json
+try:
+    with open('${workspace}/config/common.json') as f:
+        print(json.load(f).get('notifications', {}).get('jira', {}).get('enabled', False))
+except Exception:
+    print('')" 2>/dev/null)"
+    if [[ "${jira_enabled}" == "True" ]]; then
+      ok "Jira sync is enabled in ${workspace}/config/common.json."
+    fi
+  fi
 }
 
 write_workspace_webhook() {

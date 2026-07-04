@@ -192,6 +192,13 @@ def format_report_json(payload: dict) -> str:
         lines.append(f"  Feishu: {feishu_status}")
         if payload.get("feishu_error"):
             lines.append(f"         {payload['feishu_error']}")
+    jira_status = payload.get("jira_status")
+    if jira_status and jira_status != "disabled":
+        created = payload.get("jira_created", 0)
+        failed = payload.get("jira_failed", 0)
+        lines.append(f"  Jira:  {jira_status} ({created} created, {failed} failed)")
+        if payload.get("jira_error"):
+            lines.append(f"         {payload['jira_error']}")
     dashboard_status = payload.get("dashboard_status")
     if dashboard_status and dashboard_status != "not_generated":
         lines.append(f"  Dashboard: {dashboard_status}")

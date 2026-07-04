@@ -10,7 +10,11 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from jira_sync import sync_jira_issues
 
 
 SECRET_PATTERNS = [
@@ -120,6 +124,9 @@ def merge_issue_entries(primary: dict, secondary: dict) -> dict:
         "pr_branch",
         "root_cause",
         "validation",
+        "jira_key",
+        "jira_url",
+        "jira_synced_at",
     ]:
         if not merged.get(field) and secondary.get(field):
             merged[field] = secondary[field]
@@ -237,13 +244,23 @@ def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = Tr
                     "root_cause": redact(finding.get("root_cause", "")),
                     "validation": redact(finding.get("validation", "")),
                     "pr_url": finding.get("pr_url"),
+                    "jira_key": existing.get("jira_key"),
+                    "jira_url": existing.get("jira_url"),
                 }
             )
+            if finding.get("jira_key"):
+                existing["jira_key"] = finding.get("jira_key")
+            if finding.get("jira_url"):
+                existing["jira_url"] = finding.get("jira_url")
             if existing.get("status") in {"open", "in_progress"} and status == "pr_open":
                 existing["status"] = "pr_open"
             existing["id"] = normalize_issue_id(existing)
             finding["issue_id"] = existing["id"]
             finding["issue_status"] = existing.get("status", status)
+            if existing.get("jira_key"):
+                finding["jira_key"] = existing.get("jira_key")
+            if existing.get("jira_url"):
+                finding["jira_url"] = existing.get("jira_url")
             matched_issue_ids.add(existing["id"])
             by_fingerprint[fingerprint] = existing
             match_key = issue_match_key(existing)
@@ -628,6 +645,14 @@ def main() -> int:
     pdf_engine_preference = resolve_pdf_engine_preference(common)
 
     registry = reconcile_issue_registry(scan, registry_path, persist=not dry_run)
+    scan["jira"] = sync_jira_issues(
+        scan,
+        registry,
+        registry_path,
+        common,
+        dry_run=dry_run,
+        persist=not dry_run,
+    )
 
     stamp = datetime.now().strftime("%Y-%m-%d")
     html_path = reports_dir / f"code-quality-security-scan-{stamp}.html"
@@ -673,6 +698,10 @@ def main() -> int:
         "dashboard_error": dashboard_error,
         "feishu_status": scan["feishu"]["status"],
         "feishu_error": scan["feishu"]["error"],
+        "jira_status": scan.get("jira", {}).get("status"),
+        "jira_created": scan.get("jira", {}).get("created", 0),
+        "jira_failed": scan.get("jira", {}).get("failed", 0),
+        "jira_error": "; ".join(scan.get("jira", {}).get("errors", [])[:1]) or None,
     }))
     return 0
 
