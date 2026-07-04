@@ -157,8 +157,26 @@ run_report_and_notify() {
   fi
 
   printf '\nGenerating report and sending Feishu notification from %s ...\n' "${result_file}"
-  LUMEN_WORKSPACE="${WORKSPACE_ROOT}" python3 "${report_script}" "${result_file}" | tee -a "${LOG_FILE}" || \
+  local report_output
+  report_output="$(
+    LUMEN_WORKSPACE="${WORKSPACE_ROOT}" python3 "${report_script}" "${result_file}" 2>&1
+  )" || {
+    printf '%s\n' "${report_output}" | tee -a "${LOG_FILE}" >&2
     printf 'Warning: report/notification step failed. See log for details.\n' >&2
+    return 1
+  }
+
+  if [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]] && command -v python3 >/dev/null 2>&1; then
+    while IFS= read -r report_line; do
+      if [[ "${report_line}" == "{"* ]]; then
+        python3 "${LUMEN_LIB_DIR}/format_scan_log.py" --report-json "${report_line}"
+      else
+        printf '%s\n' "${report_line}"
+      fi
+    done <<< "${report_output}" | tee -a "${LOG_FILE}"
+  else
+    printf '%s\n' "${report_output}" | tee -a "${LOG_FILE}"
+  fi
 }
 
 refresh_dashboard() {
