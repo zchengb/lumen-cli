@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "description": "Ordered scan prompt snippets. Composed at scan time by compose_scan_prompt.py.",
+  "snippets": [
+    "01-role-and-mission.md",
+    "02-pipeline.md",
+    "03-configuration.md",
+    "04-workspace-and-worktrees.md",
+    "05-review-only-mode.md",
+    "06-issue-registry.md",
+    "07-error-handling.md",
+    "08-github-pr-and-git.md",
+    "09-severity-guideline.md",
+    "10-findings-and-auto-fix.md",
+    "11-output-contract.md",
+    "12-secrets-and-safety.md",
+    "13-console-summary.md"
+  ]
+}

@@ -332,7 +332,8 @@ Usage:
   lumen upgrade [--cli-only] [--project <slug>]
                                  Upgrade the installed Lumen CLI to the latest release and
                                  refresh this workspace's bundled templates (scan-prompt.md,
-                                 runtime-profiles.json, feishu-card-template.json, dashboard.html).
+                                 config/prompts/, runtime-profiles.json, feishu-card-template.json,
+                                 dashboard.html).
                                  Add --cli-only to upgrade only the CLI without touching workspace
                                  templates. Use --project <slug> to target a specific workspace.
   lumen version                 Print the installed Lumen CLI version
@@ -364,6 +365,17 @@ cmd_version() {
   printf 'lumen %s\n' "$(lumen_version)"
 }
 
+sync_prompt_snippets() {
+  local workspace="$1"
+  local src_dir="${LUMEN_TEMPLATES_DIR}/config/prompts"
+  local dest_dir="${workspace}/config/prompts"
+  if [[ ! -d "${src_dir}" ]]; then
+    return 0
+  fi
+  mkdir -p "${dest_dir}"
+  cp -R "${src_dir}/." "${dest_dir}/"
+}
+
 sync_workspace_templates() {
   local workspace="$1"
   local stamp
@@ -381,6 +393,12 @@ sync_workspace_templates() {
     fi
   done
 
+  if [[ -d "${workspace}/config/prompts" ]]; then
+    mkdir -p "${backup_dir}/prompts"
+    cp -R "${workspace}/config/prompts/." "${backup_dir}/prompts/"
+  fi
+  sync_prompt_snippets "${workspace}"
+
   if [[ -f "${workspace}/dashboard.html" ]]; then
     cp "${workspace}/dashboard.html" "${backup_dir}/dashboard.html"
   fi
@@ -388,7 +406,7 @@ sync_workspace_templates() {
     cp "${LUMEN_TEMPLATES_DIR}/dashboard.html" "${workspace}/dashboard.html"
   fi
 
-  ok "Refreshed scan-prompt.md, runtime-profiles.json, feishu-card-template.json, and dashboard.html."
+  ok "Refreshed scan-prompt.md, config/prompts/, runtime-profiles.json, feishu-card-template.json, and dashboard.html."
   printf '  Workspace: %s\n' "${workspace}"
   printf '  Previous versions backed up to: %s\n' "${backup_dir}"
   printf '  config/common.json and config/repos.json were left untouched (they hold your project data).\n'
@@ -959,6 +977,7 @@ cmd_init() {
   cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${lumen_dir}/config/repos.example.json"
   cp "${LUMEN_TEMPLATES_DIR}/config/runtime-profiles.json" "${lumen_dir}/config/runtime-profiles.json"
   cp "${LUMEN_TEMPLATES_DIR}/config/scan-prompt.md" "${lumen_dir}/config/scan-prompt.md"
+  sync_prompt_snippets "${lumen_dir}"
   cp "${LUMEN_TEMPLATES_DIR}/config/feishu-card-template.json" "${lumen_dir}/config/feishu-card-template.json"
   cp "${LUMEN_TEMPLATES_DIR}/.env.common.example" "${lumen_dir}/.env.common.example"
   cp "${LUMEN_TEMPLATES_DIR}/.env.local.example" "${lumen_dir}/.env.local.example"

@@ -84,7 +84,7 @@ Then:
 | `lumen doctor` | Check installed prerequisites (agent, git, python3, gh, webhook) |
 | `lumen config set-webhook <url> [--project <slug>]` | Save the Feishu webhook in a workspace `.env.local` |
 | `lumen config show` / `lumen config unset-webhook` | Inspect or remove a workspace Feishu webhook |
-| `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled workspace templates (`scan-prompt.md`, report/dashboard templates). Use `--cli-only` to upgrade only the CLI. |
+| `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled templates (`config/prompts/`, `scan-prompt.md`, dashboard). Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
 | `lumen help` | Show usage |
 
@@ -99,6 +99,24 @@ lumen config set-webhook https://open.feishu.cn/open-apis/bot/v2/hook/xxxxx --pr
 Resolution order (highest priority first):
 1. `FEISHU_WEBHOOK_URL` set in your current shell
 2. `<workspace>/.env.local` (set during `lumen init` or with `lumen config set-webhook`)
+
+### Severity classification
+
+Findings use Lumen's three-tier operational standard: **High**, **Medium**, **Low**. This is not a CVSS score — it is a triage label for local code review, automated PR policy, and Feishu card color.
+
+The canonical rules live in `config/prompts/09-severity-guideline.md`:
+
+- **High** — confirmed issue with realistic production impact (security, data loss, auth bypass, critical-path failure). Eligible for automated PRs when the fix policy also passes.
+- **Medium** — confirmed but limited-impact bugs. Report only.
+- **Low** — minor or low-confidence items. Report only.
+
+The agent must have code evidence, impact, and a realistic trigger before assigning severity. When unsure, choose the lower tier.
+
+### Modular scan prompts
+
+The scan agent instructions are split into snippet files under `config/prompts/` (skill-style). `config/prompts/manifest.json` defines load order; `run-scan.sh` composes them at scan time via `compose_scan_prompt.py`.
+
+Edit individual snippets to customize one concern (for example severity rules) without maintaining one giant file. `config/scan-prompt.md` is a human-readable index.
 
 ### Scheduled scans
 
@@ -227,7 +245,10 @@ my-project/                 ← your project root (application code lives here)
       common.json           product name, execution mode, paths, retention
       repos.json            repositories to scan (edit this)
       runtime-profiles.json safety profiles per language/stack
-      scan-prompt.md        the agent's operating instructions
+      scan-prompt.md        prompt index (human-readable)
+      prompts/              modular agent instructions (composed at scan time)
+        manifest.json
+        09-severity-guideline.md
       feishu-card-template.json
     tmp/                    run metadata only
     worktrees/              one reusable git worktree per repository

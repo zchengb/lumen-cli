@@ -21,6 +21,7 @@ if [[ -f "${LUMEN_LIB_DIR}/ensure-path.sh" ]]; then
 fi
 
 PROMPT_FILE="${WORKSPACE_ROOT}/config/scan-prompt.md"
+COMPOSE_PROMPT_SCRIPT="${LUMEN_LIB_DIR}/compose_scan_prompt.py"
 COMMON_CONFIG="${WORKSPACE_ROOT}/config/common.json"
 
 model_from_config() {
@@ -211,12 +212,29 @@ run_dry_scan() {
   printf 'Open %s/dashboard.html to review the mock result.\n' "${WORKSPACE_ROOT}"
 }
 
+load_scan_prompt() {
+  if [[ -f "${COMPOSE_PROMPT_SCRIPT}" ]] && command -v python3 >/dev/null 2>&1; then
+    python3 "${COMPOSE_PROMPT_SCRIPT}" "${WORKSPACE_ROOT}"
+    return $?
+  fi
+  if [[ -f "${PROMPT_FILE}" ]]; then
+    cat "${PROMPT_FILE}"
+    return 0
+  fi
+  return 1
+}
+
 run_real_scan() {
   command -v agent >/dev/null 2>&1 || fail "Cursor CLI 'agent' was not found in PATH. Install it from https://cursor.com/cli before running a scan."
-  [[ -f "${PROMPT_FILE}" ]] || fail "Prompt file not found: ${PROMPT_FILE}. Run 'lumen init' in this workspace first."
+  local scan_prompt
+  scan_prompt="$(load_scan_prompt)" || fail "Scan prompt not found. Run 'lumen init' or 'lumen upgrade --project <slug>' in this workspace first."
 
   printf 'Lumen workspace: %s\n' "${WORKSPACE_ROOT}"
-  printf 'Prompt file: %s\n' "${PROMPT_FILE}"
+  if [[ -f "${WORKSPACE_ROOT}/config/prompts/manifest.json" ]]; then
+    printf 'Prompt source: config/prompts/manifest.json (composed snippets)\n'
+  else
+    printf 'Prompt file: %s\n' "${PROMPT_FILE}"
+  fi
   printf 'Cursor model: %s\n' "${MODEL}"
   printf 'Sandbox mode: %s\n' "${SANDBOX_MODE}"
   printf 'Output format: %s\n' "${OUTPUT_FORMAT}"
@@ -254,9 +272,9 @@ run_real_scan() {
 
   set +e
   if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
-    agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
+    agent "${agent_args[@]}" "${scan_prompt}" 2>&1 | tee "${LOG_FILE}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
   else
-    agent "${agent_args[@]}" "$(cat "${PROMPT_FILE}")" 2>&1 | tee "${LOG_FILE}"
+    agent "${agent_args[@]}" "${scan_prompt}" 2>&1 | tee "${LOG_FILE}"
   fi
   local agent_exit=${PIPESTATUS[0]}
   set -e
