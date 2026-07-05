@@ -17,6 +17,8 @@
     "impact": "Authenticated users can update another user's profile.",
     "trigger": "Authenticated user calls PATCH /api/users/{id} with another user ID.",
     "pr_url": "https://github.com/org/repo/pull/123",
+    "jira_key": "MBPAS-123",
+    "jira_url": "https://inspire.atlassian.net/browse/MBPAS-123",
     "file_with_line_range": "src/main/java/com/example/user/UserController.java:42-45",
     "code_snippet": "return userService.update(id, request);",
     "suggestion": "Validate ownership before the write operation."
@@ -32,6 +34,9 @@
     "Use Finding, not Bug.",
     "Render the PR line only for High findings with an actual PR URL.",
     "Omit the PR line for Medium and Low findings.",
+    "Render the Jira line when a finding has jira_key or jira_url (typically High/Medium findings after Jira sync).",
+    "Use a markdown link for Jira when jira_url or a browse URL can be resolved.",
+    "Show the full Jira browse URL on the Jira line (same style as the PR line), not only the issue key.",
     "Put File, Code Snippet, and Suggestion only inside the collapsed View detail panel.",
     "Use inline code snippets only. Do not use fenced code blocks.",
     "Escape markdown-sensitive user content before rendering.",
@@ -80,7 +85,7 @@
     "finding_with_pr": [
       {
         "tag": "markdown",
-        "content": "**Finding {{finding_index}} — {{finding_title}}**\n**Severity:** {{severity_icon}} {{severity}}\n**Repository:** `{{repository}}`\n**Impact:** {{impact}}\n**Trigger:** {{trigger}}\n**PR:** {{pr_url}}"
+        "content": "**Finding {{finding_index}} — {{finding_title}}**\n**Severity:** {{severity_icon}} {{severity}}\n**Repository:** `{{repository}}`\n**Impact:** {{impact}}\n**Trigger:** {{trigger}}\n**PR:** {{pr_url}}\n**Jira:** {{jira_url}}"
       },
       {
         "tag": "collapsible_panel",
@@ -100,6 +105,28 @@
       }
     ],
     "finding_without_pr": [
+      {
+        "tag": "markdown",
+        "content": "**Finding {{finding_index}} — {{finding_title}}**\n**Severity:** {{severity_icon}} {{severity}}\n**Repository:** `{{repository}}`\n**Impact:** {{impact}}\n**Trigger:** {{trigger}}\n**Jira:** {{jira_url}}"
+      },
+      {
+        "tag": "collapsible_panel",
+        "expanded": false,
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "View detail"
+          }
+        },
+        "elements": [
+          {
+            "tag": "markdown",
+            "content": "**File:** `{{file_with_line_range}}`\n**Code Snippet:** `{{code_snippet}}`\n**Suggestion:** {{suggestion}}"
+          }
+        ]
+      }
+    ],
+    "finding_without_pr_or_jira": [
       {
         "tag": "markdown",
         "content": "**Finding {{finding_index}} — {{finding_title}}**\n**Severity:** {{severity_icon}} {{severity}}\n**Repository:** `{{repository}}`\n**Impact:** {{impact}}\n**Trigger:** {{trigger}}"

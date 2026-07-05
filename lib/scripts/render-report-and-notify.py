@@ -10,6 +10,7 @@ import sys
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Dict, Optional, Tuple
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
@@ -367,7 +368,55 @@ def escape_markdown(text: str) -> str:
     )
 
 
-def build_feishu_card(scan: dict, product_name: str = "Lumen") -> dict:
+def jira_site_host(common: dict) -> str:
+    jira = (common.get("notifications") or {}).get("jira") or {}
+    site = str(jira.get("site", "")).strip()
+    if site:
+        if site.startswith("http://") or site.startswith("https://"):
+            return site.rstrip("/")
+        if "." in site:
+            return f"https://{site}".rstrip("/")
+        return f"https://{site}.atlassian.net"
+
+    auth_conf = Path.home() / ".config" / "twg" / "auth.conf"
+    if auth_conf.is_file():
+        for line in auth_conf.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("domain="):
+                domain = line.split("=", 1)[1].strip().strip('"')
+                if domain:
+                    if domain.startswith("http://") or domain.startswith("https://"):
+                        return domain.rstrip("/")
+                    return f"https://{domain}".rstrip("/")
+    return ""
+
+
+def jira_browse_url_for_finding(finding: dict, common: dict) -> str:
+    url = str(finding.get("jira_url", "")).strip()
+    if url:
+        return url
+
+    key = str(finding.get("jira_key", "")).strip()
+    if not key:
+        return ""
+
+    host = jira_site_host(common)
+    if not host:
+        return ""
+    return f"{host}/browse/{key}"
+
+
+def feishu_jira_line(finding: dict, common: dict) -> str:
+    key = str(finding.get("jira_key", "")).strip()
+    url = jira_browse_url_for_finding(finding, common)
+    if not key and not url:
+        return ""
+
+    if url:
+        return f"**Jira:** {url}"
+    return f"**Jira:** `{escape_markdown(key)}`"
+
+
+def build_feishu_card(scan: dict, product_name: str = "Lumen", common: Optional[dict] = None) -> dict:
     counts = severity_counts(scan.get("findings", []))
     elements = [
         {
@@ -405,6 +454,9 @@ def build_feishu_card(scan: dict, product_name: str = "Lumen") -> dict:
             ]
             if finding.get("severity") == "High" and finding.get("pr_url"):
                 lines.append(f"**PR:** {finding['pr_url']}")
+            jira_line = feishu_jira_line(finding, common or {})
+            if jira_line:
+                lines.append(jira_line)
             elements.append({"tag": "markdown", "content": "\n".join(lines)})
             elements.append(
                 {
@@ -730,7 +782,7 @@ def main() -> int:
         scan["feishu"] = {"status": "not_sent", "error": "FEISHU_WEBHOOK_URL is not set"}
     else:
         try:
-            card = build_feishu_card(scan, product_name)
+            card = build_feishu_card(scan, product_name, common)
             send_feishu(card, webhook_url)
             scan["feishu"] = {"status": "sent", "error": None}
         except Exception as exc:

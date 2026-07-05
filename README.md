@@ -191,6 +191,7 @@ Rules:
 - Auth is handled by `twg` (`~/.config/twg/auth.conf`) — no Jira token in `.env.local`
 - Failures are recorded in `scan-result.json` → `jira` and do not fail the scan
 - If a finding already has a Jira key and a PR is opened later, Lumen adds a PR link comment to the existing card
+- Feishu summary cards include a **Jira** link per finding when `jira_key` / `jira_url` is present (after Jira sync runs, before the card is sent)
 - Jira sync runs in deterministic Python after the scan agent exits — it does **not** rely on the TWG agent skill (see below)
 
 Check setup with `lumen doctor`.
