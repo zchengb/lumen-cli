@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
+"""Interactive repository picker for Lumen init."""
+
+from __future__ import annotations
+
 import json
-import os
 import sys
-import termios
-import tty
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from discover_repos import discover
-
-CONTINUE_ROW = 0
-MANUAL_ROW = 1
+from discover_repos import discover, parse_selection
 
 
 def parse_args(argv: list) -> tuple:
@@ -32,15 +30,6 @@ def parse_args(argv: list) -> tuple:
     return workspace_root, output_path
 
 
-def open_tty_input():
-    if sys.stdin.isatty():
-        return sys.stdin
-    try:
-        return open("/dev/tty", "rb", buffering=0)
-    except OSError:
-        return None
-
-
 def can_run_interactive() -> bool:
     if sys.stdin.isatty() or sys.stderr.isatty():
         return True
@@ -52,40 +41,13 @@ def can_run_interactive() -> bool:
         return False
 
 
-def format_repo_line(repo: dict, selected: bool, active: bool) -> str:
-    marker = "›" if active else " "
-    circle = "●" if selected else "○"
-    return f"{marker} {circle} {repo['name']}  ({repo['default_branch']}, {repo['runtime_profile']})"
-
-
-def format_footer_line(label: str, active: bool) -> str:
-    marker = "›" if active else " "
-    return f"{marker} {label}"
-
-
-def render(workspace_root: str, repos: list, selected: set, cursor: int, footer_cursor, status_message: str) -> None:
-    lines = [
-        f"Repositories under {workspace_root}",
-        "",
-    ]
-    for index, repo in enumerate(repos):
-        active = footer_cursor is None and cursor == index
-        lines.append(format_repo_line(repo, index in selected, active))
-    lines.append("")
-    count = len(selected)
-    noun = "repository" if count == 1 else "repositories"
-    continue_label = f"Continue with {count} selected {noun}"
-    lines.append(format_footer_line(continue_label, footer_cursor == CONTINUE_ROW))
-    lines.append(format_footer_line("Add repository manually", footer_cursor == MANUAL_ROW))
-    lines.append("")
-    lines.append("↑↓ move   Space toggle   Enter confirm   a select all   q cancel")
-    if status_message:
-        lines.append(status_message)
-    sys.stderr.write("\x1b[?25l\x1b[2J\x1b[H" + "\n".join(lines))
-
-
-def restore_terminal() -> None:
-    sys.stderr.write("\x1b[?25h\x1b[0J\n")
+def prompt_line(message: str) -> str:
+    sys.stderr.write(message)
+    sys.stderr.flush()
+    answer = sys.stdin.readline()
+    if answer is None:
+        return ""
+    return answer.strip()
 
 
 def write_result(result: list, output_path: str) -> None:
@@ -96,107 +58,71 @@ def write_result(result: list, output_path: str) -> None:
     sys.stdout.write(payload)
 
 
-def read_key(handle) -> str:
-    chunk = handle.read(1)
-    if not chunk:
-        return ""
-    if chunk in {b"\x1b"}:
-        rest = handle.read(2)
-        return (chunk + rest).decode("utf-8", errors="ignore")
-    return chunk.decode("utf-8", errors="ignore")
+def print_repo_menu(workspace_root: str, repos: list, selected: set) -> None:
+    sys.stderr.write(f"\nRepositories under {workspace_root}\n\n")
+    for index, repo in enumerate(repos, start=1):
+        mark = "x" if index - 1 in selected else " "
+        sys.stderr.write(
+            f"  [{mark}] {index}) {repo['name']} "
+            f"({repo['default_branch']}, {repo['runtime_profile']})\n"
+        )
+    count = len(selected)
+    noun = "repository" if count == 1 else "repositories"
+    sys.stderr.write(f"\nSelected: {count} {noun}\n\n")
+    sys.stderr.write("  1,3,5   toggle repositories by number\n")
+    sys.stderr.write("  all     select all\n")
+    sys.stderr.write("  clear   clear selection\n")
+    sys.stderr.write("  manual  add repository manually\n")
+    sys.stderr.write("  Enter   continue with selected repositories\n")
+    sys.stderr.write("  q       cancel\n\n")
+    sys.stderr.flush()
+
+
+def apply_toggle(selected: set, repos: list, answer: str) -> bool:
+    lowered = answer.strip().lower()
+    if lowered in {"all", "a"}:
+        selected.clear()
+        selected.update(range(len(repos)))
+        return True
+    if lowered in {"clear", "c", "none"}:
+        selected.clear()
+        return True
+
+    try:
+        indices = parse_selection(answer, len(repos))
+    except RuntimeError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return False
+
+    for index in indices:
+        zero_based = index - 1
+        if zero_based in selected:
+            selected.remove(zero_based)
+        else:
+            selected.add(zero_based)
+    return True
 
 
 def run_interactive(workspace_root: str, repos: list, output_path: str) -> int:
-    handle = open_tty_input()
-    if handle is None:
-        sys.stderr.write("Interactive repository selection requires a TTY.\n")
-        return 1
+    selected: set = set()
 
-    selected = set()
-    cursor = 0
-    footer_cursor = None
-    status_message = ""
-    raw_mode = sys.stdin.isatty()
-    old_settings = None
-    if raw_mode:
-        old_settings = termios.tcgetattr(sys.stdin)
-        tty.setraw(sys.stdin.fileno())
+    while True:
+        print_repo_menu(workspace_root, repos, selected)
+        answer = prompt_line("Selection: ")
 
-    try:
-        render(workspace_root, repos, selected, cursor, footer_cursor, status_message)
-        while True:
-            if raw_mode:
-                key = read_key(sys.stdin.buffer)
-            else:
-                key = read_key(handle)
-
-            status_message = ""
-
-            if key in {"\x03", "q"}:
-                return 130
-
-            if key == "a":
-                if len(selected) == len(repos):
-                    selected.clear()
-                else:
-                    selected.clear()
-                    selected.update(range(len(repos)))
-                render(workspace_root, repos, selected, cursor, footer_cursor, status_message)
+        if answer.lower() in {"q", "quit", "cancel"}:
+            return 130
+        if answer.lower() in {"manual", "m", "+"}:
+            return 2
+        if answer == "":
+            if not selected:
+                sys.stderr.write("Select at least one repository, or type manual to add one by URL.\n")
                 continue
+            result = [repos[index] for index in sorted(selected)]
+            write_result(result, output_path)
+            return 0
 
-            if key == "\x1b[A":
-                if footer_cursor is not None:
-                    if footer_cursor == MANUAL_ROW:
-                        footer_cursor = CONTINUE_ROW
-                    else:
-                        footer_cursor = None
-                        cursor = len(repos) - 1
-                elif cursor > 0:
-                    cursor -= 1
-                render(workspace_root, repos, selected, cursor, footer_cursor, status_message)
-                continue
-
-            if key == "\x1b[B":
-                if footer_cursor is not None:
-                    if footer_cursor == CONTINUE_ROW:
-                        footer_cursor = MANUAL_ROW
-                elif cursor < len(repos) - 1:
-                    cursor += 1
-                else:
-                    footer_cursor = CONTINUE_ROW
-                render(workspace_root, repos, selected, cursor, footer_cursor, status_message)
-                continue
-
-            if key == " ":
-                if footer_cursor is None:
-                    if cursor in selected:
-                        selected.remove(cursor)
-                    else:
-                        selected.add(cursor)
-                    render(workspace_root, repos, selected, cursor, footer_cursor, status_message)
-                continue
-
-            if key in {"\r", "\n"}:
-                if footer_cursor == MANUAL_ROW:
-                    return 2
-                if not selected:
-                    status_message = "Select at least one repository (Space to toggle), or choose manual entry."
-                    render(workspace_root, repos, selected, cursor, footer_cursor, status_message)
-                    continue
-                result = [repos[index] for index in sorted(selected)]
-                write_result(result, output_path)
-                return 0
-
-            if key.startswith("\x1b"):
-                continue
-    finally:
-        restore_terminal()
-        if raw_mode and old_settings is not None:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        if handle is not sys.stdin:
-            handle.close()
-
-    return 1
+        apply_toggle(selected, repos, answer)
 
 
 def usage() -> None:
