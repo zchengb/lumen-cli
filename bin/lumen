@@ -327,6 +327,9 @@ Usage:
                                  Save the Feishu webhook in this workspace's .env.local
   lumen config set-scan-window <days> [--project <slug>]
                                  Set how many days of git history each scan inspects
+  lumen config set-jira [--enable|--disable] [--project-key <key>]
+                                 [--board-id <id>] [--no-active-sprint] [--project <slug>]
+                                 Enable or update Jira sync (TWG CLI) for this workspace
   lumen config show [--project <slug>]
                                  Show workspace settings (scan window, webhook, model)
   lumen config unset-webhook [--project <slug>]
@@ -592,6 +595,56 @@ write_workspace_webhook() {
   fi
 }
 
+write_workspace_jira() {
+  local workspace="$1"
+  local mode="$2"
+  local project_key="$3"
+  local board_id="$4"
+  local assign_sprint="$5"
+  local board_id_set="${6:-0}"
+  local config_py="${LUMEN_HOME}/lib/scripts/workspace_config.py"
+  local args=(set-jira "${workspace}")
+
+  case "${mode}" in
+    enable)
+      args+=(--enable --project-key "${project_key}")
+      if [[ "${board_id_set}" == "1" ]]; then
+        args+=(--board-id "${board_id}")
+      elif [[ -n "${board_id}" ]]; then
+        args+=(--board-id "${board_id}")
+      fi
+      if [[ "${assign_sprint}" == "0" ]]; then
+        args+=(--no-active-sprint)
+      else
+        args+=(--assign-active-sprint)
+      fi
+      ;;
+    disable)
+      args+=(--disable)
+      ;;
+    update)
+      [[ -n "${project_key}" ]] && args+=(--project-key "${project_key}")
+      if [[ "${board_id_set}" == "1" ]]; then
+        args+=(--board-id "${board_id}")
+      elif [[ -n "${board_id}" ]]; then
+        args+=(--board-id "${board_id}")
+      fi
+      if [[ "${assign_sprint}" == "0" ]]; then
+        args+=(--no-active-sprint)
+      elif [[ "${assign_sprint}" == "1" ]]; then
+        args+=(--assign-active-sprint)
+      fi
+      ;;
+  esac
+
+  command -v python3 >/dev/null 2>&1 || { err "Python 3 is required for Jira config."; return 1; }
+  if [[ ! -f "${config_py}" ]]; then
+    err "Config helper not found: ${config_py}"
+    return 1
+  fi
+  python3 "${config_py}" "${args[@]}"
+}
+
 cmd_config() {
   local sub="${1:-}"
   shift || true
@@ -657,6 +710,86 @@ cmd_config() {
       fi
       ok "Saved execution.scan_window_days=${days} to ${RESOLVED_WORKSPACE}/config/common.json"
       ;;
+    set-jira)
+      local enable_flag="" disable_flag="" project_key="" board_id=""
+      local assign_sprint="" board_id_set="0" interactive="0" filtered_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --enable) enable_flag="1"; shift ;;
+          --disable) disable_flag="1"; shift ;;
+          --project-key)
+            project_key="${2:-}"
+            shift 2
+            ;;
+          --board-id)
+            board_id="${2:-}"
+            board_id_set="1"
+            shift 2
+            ;;
+          --no-active-sprint) assign_sprint="0"; shift ;;
+          --assign-active-sprint) assign_sprint="1"; shift ;;
+          --project|-p|--workspace|--no-open) filtered_args+=("$1"); shift ;;
+          --*) err "Unknown option: $1"; exit 1 ;;
+          *) filtered_args+=("$1"); shift ;;
+        esac
+      done
+      resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+
+      if [[ -z "${enable_flag}" && -z "${disable_flag}" && -z "${project_key}" && "${board_id_set}" == "0" && -z "${assign_sprint}" && -t 0 && -t 1 ]]; then
+        interactive="1"
+      fi
+
+      if [[ "${interactive}" == "1" ]]; then
+        if prompt_yn "Enable Jira Bug cards for High/Medium findings after each scan?" "n"; then
+          enable_flag="1"
+          if prompt_yn "Assign new bugs to the active sprint?" "y"; then
+            assign_sprint="1"
+          else
+            assign_sprint="0"
+          fi
+          pick_jira_project_with_twg "MBPAS" "${assign_sprint}"
+          project_key="${JIRA_PROJECT_KEY}"
+          board_id="${JIRA_BOARD_ID}"
+          board_id_set="${JIRA_BOARD_ID_SET}"
+        else
+          disable_flag="1"
+        fi
+      fi
+
+      if [[ -n "${enable_flag}" && -n "${disable_flag}" ]]; then
+        err "Use either --enable or --disable, not both."
+        exit 1
+      fi
+      if [[ -z "${enable_flag}" && -z "${disable_flag}" && -z "${project_key}" && "${board_id_set}" == "0" && -z "${assign_sprint}" ]]; then
+        err "Usage: lumen config set-jira [--enable|--disable] [--project-key <key>] [--board-id <id>] [--project <slug>]"
+        err "Run without flags in a terminal for interactive setup."
+        exit 1
+      fi
+
+      if [[ "${enable_flag}" == "1" ]]; then
+        if [[ -z "${project_key}" ]]; then
+          err "Jira project key is required. Use --project-key <key> or run interactively."
+          exit 1
+        fi
+        if [[ -z "${assign_sprint}" ]]; then
+          assign_sprint="1"
+        fi
+        if ! write_workspace_jira "${RESOLVED_WORKSPACE}" "enable" "${project_key}" "${board_id}" "${assign_sprint}" "${board_id_set}"; then
+          exit 1
+        fi
+        ok "Saved Jira settings to ${RESOLVED_WORKSPACE}/config/common.json"
+      elif [[ "${disable_flag}" == "1" ]]; then
+        if ! write_workspace_jira "${RESOLVED_WORKSPACE}" "disable" "" "" "1" "0"; then
+          exit 1
+        fi
+        ok "Disabled Jira sync in ${RESOLVED_WORKSPACE}/config/common.json"
+      else
+        if ! write_workspace_jira "${RESOLVED_WORKSPACE}" "update" "${project_key}" "${board_id}" "${assign_sprint}" "${board_id_set}"; then
+          exit 1
+        fi
+        ok "Updated Jira settings in ${RESOLVED_WORKSPACE}/config/common.json"
+      fi
+      ;;
     show)
       resolve_command_workspace "$@"
       if [[ -f "${config_py}" ]] && command -v python3 >/dev/null 2>&1; then
@@ -687,6 +820,7 @@ cmd_config() {
       printf 'Usage:\n'
       printf '  lumen config set-webhook <url> [--project <slug>]\n'
       printf '  lumen config set-scan-window <days> [--project <slug>]\n'
+      printf '  lumen config set-jira [--enable|--disable] [--project-key <key>] [--board-id <id>] [--project <slug>]\n'
       printf '  lumen config show [--project <slug>]\n'
       printf '  lumen config unset-webhook [--project <slug>]\n'
       exit 1
@@ -753,6 +887,143 @@ prompt_menu() {
     choice=1
   fi
   printf '%s' "${options[$((choice - 1))]}"
+}
+
+pick_jira_project_with_twg() {
+  local default_key="${1:-MBPAS}"
+  local assign_sprint="${2:-1}"
+  local select_script="${LUMEN_LIB_DIR}/select_jira_space.py"
+  local discover_script="${LUMEN_LIB_DIR}/discover_jira_spaces.py"
+  local select_tmp select_exit spaces_json space_count selection chosen_json assign_args=()
+
+  JIRA_PROJECT_KEY=""
+  JIRA_BOARD_ID=""
+  JIRA_BOARD_ID_SET="0"
+
+  if [[ "${assign_sprint}" == "1" ]]; then
+    assign_args=(--assign-active-sprint)
+  fi
+
+  if ! command -v twg >/dev/null 2>&1; then
+    warn "twg CLI not found. Install it and run: twg login"
+    JIRA_PROJECT_KEY="$(prompt "Jira project key" "${default_key}")"
+    JIRA_BOARD_ID="$(prompt "Jira board ID (leave blank to auto-detect)" "")"
+    [[ -n "${JIRA_BOARD_ID}" ]] && JIRA_BOARD_ID_SET="1"
+    return 0
+  fi
+
+  if [[ ! -f "${HOME}/.config/twg/auth.conf" ]]; then
+    warn "twg is not authenticated. Run: twg login"
+    JIRA_PROJECT_KEY="$(prompt "Jira project key" "${default_key}")"
+    JIRA_BOARD_ID="$(prompt "Jira board ID (leave blank to auto-detect)" "")"
+    [[ -n "${JIRA_BOARD_ID}" ]] && JIRA_BOARD_ID_SET="1"
+    return 0
+  fi
+
+  if [[ ! -f "${select_script}" ]] || ! command -v python3 >/dev/null 2>&1; then
+    warn "Jira project picker is unavailable. Falling back to manual entry."
+    JIRA_PROJECT_KEY="$(prompt "Jira project key" "${default_key}")"
+    JIRA_BOARD_ID="$(prompt "Jira board ID (leave blank to auto-detect)" "")"
+    [[ -n "${JIRA_BOARD_ID}" ]] && JIRA_BOARD_ID_SET="1"
+    return 0
+  fi
+
+  if [[ -t 0 && -t 1 ]]; then
+    select_tmp="$(mktemp)"
+    set +e
+    python3 "${select_script}" --default-key "${default_key}" "${assign_args[@]}" --output "${select_tmp}"
+    select_exit=$?
+    set -e
+    if [[ "${select_exit}" == "0" ]]; then
+      JIRA_PROJECT_KEY="$(python3 -c "import json; print(json.load(open('${select_tmp}')).get('project_key',''))")"
+      JIRA_BOARD_ID="$(python3 -c "import json; print(json.load(open('${select_tmp}')).get('board_id',''))")"
+      if [[ -n "${JIRA_BOARD_ID}" ]]; then
+        JIRA_BOARD_ID_SET="1"
+      fi
+      rm -f "${select_tmp}"
+      ok "Selected Jira project ${JIRA_PROJECT_KEY}."
+      return 0
+    fi
+    rm -f "${select_tmp:-}"
+    if [[ "${select_exit}" == "130" ]]; then
+      printf '\nAborted.\n'
+      exit 130
+    fi
+  fi
+
+  if [[ ! -f "${discover_script}" ]]; then
+    JIRA_PROJECT_KEY="$(prompt "Jira project key" "${default_key}")"
+    JIRA_BOARD_ID="$(prompt "Jira board ID (leave blank to auto-detect)" "")"
+    [[ -n "${JIRA_BOARD_ID}" ]] && JIRA_BOARD_ID_SET="1"
+    return 0
+  fi
+
+  spaces_json="$(python3 "${discover_script}" list 2>/dev/null || true)"
+  space_count="$(json_array_length "${spaces_json}")"
+  if [[ "${space_count}" == "0" ]]; then
+    warn "Could not load Jira project spaces from twg."
+    JIRA_PROJECT_KEY="$(prompt "Jira project key" "${default_key}")"
+    JIRA_BOARD_ID="$(prompt "Jira board ID (leave blank to auto-detect)" "")"
+    [[ -n "${JIRA_BOARD_ID}" ]] && JIRA_BOARD_ID_SET="1"
+    return 0
+  fi
+
+  printf '\n%sJira project spaces%s\n' "${BOLD}" "${RESET}"
+  python3 -c "import json,sys
+for index, space in enumerate(json.loads(sys.argv[1]), start=1):
+    print(f'  {index}) {space[\"key\"]} — {space[\"name\"]}')" "${spaces_json}"
+  printf '\nEnter a project number or key, or type %smanual%s to enter a key:\n' "${BOLD}" "${RESET}"
+  while true; do
+    read -r -p "Selection: " selection || true
+    [[ -n "${selection}" ]] && break
+    printf 'Select a Jira project.\n'
+  done
+
+  if [[ "${selection}" == "manual" ]]; then
+    JIRA_PROJECT_KEY="$(prompt "Jira project key" "${default_key}")"
+    JIRA_BOARD_ID="$(prompt "Jira board ID (leave blank to auto-detect)" "")"
+    [[ -n "${JIRA_BOARD_ID}" ]] && JIRA_BOARD_ID_SET="1"
+    return 0
+  fi
+
+  if ! chosen_json="$(python3 "${discover_script}" select "${selection}" 2>/dev/null)"; then
+    err "Invalid Jira project selection: ${selection}"
+    exit 1
+  fi
+
+  JIRA_PROJECT_KEY="$(python3 -c "import json,sys; print(json.loads(sys.argv[1])[0]['key'])" "${chosen_json}")"
+  if [[ "${assign_sprint}" == "1" && -f "${LUMEN_LIB_DIR}/jira_spaces.py" ]]; then
+    JIRA_BOARD_ID="$(python3 -c "import sys
+sys.path.insert(0, '${LUMEN_LIB_DIR}')
+from jira_spaces import choose_default_board, list_jira_boards
+boards = list_jira_boards('${JIRA_PROJECT_KEY}')
+print(choose_default_board(boards) or '')" 2>/dev/null || true)"
+    [[ -n "${JIRA_BOARD_ID}" ]] && JIRA_BOARD_ID_SET="1"
+  fi
+  ok "Selected Jira project ${JIRA_PROJECT_KEY}."
+  return 0
+}
+
+collect_jira_settings_interactively() {
+  local default_key="${1:-MBPAS}"
+
+  JIRA_PROJECT_KEY=""
+  JIRA_BOARD_ID=""
+  JIRA_BOARD_ID_SET="0"
+  JIRA_ASSIGN_SPRINT="1"
+
+  if ! prompt_yn "Create Jira Bug cards for High/Medium findings after each scan?" "n"; then
+    return 1
+  fi
+
+  if prompt_yn "Assign new bugs to the active sprint?" "y"; then
+    JIRA_ASSIGN_SPRINT="1"
+  else
+    JIRA_ASSIGN_SPRINT="0"
+  fi
+
+  pick_jira_project_with_twg "${default_key}" "${JIRA_ASSIGN_SPRINT}"
+  return 0
 }
 
 REPOS=()
@@ -1075,9 +1346,10 @@ Next steps:
   1. Edit ${LUMEN_DIR_NAME}/config/repos.json to list the repositories to scan.
   2. Edit ${LUMEN_DIR_NAME}/config/common.json to set project.display_name, project.workspace_root, and execution.model.
   3. Copy ${LUMEN_DIR_NAME}/.env.local.example to ${LUMEN_DIR_NAME}/.env.local and set FEISHU_WEBHOOK_URL if you want Feishu notifications.
-  4. Run: lumen doctor
-  5. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  6. Open ${LUMEN_DIR_NAME}/dashboard.html in a browser to view results.
+  4. Optional: enable Jira sync with lumen config set-jira --enable --project-key <KEY> --project <slug>
+  5. Run: lumen doctor
+  6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
+  7. Open ${LUMEN_DIR_NAME}/dashboard.html in a browser to view results.
 EOF
     return 0
   fi
@@ -1093,6 +1365,15 @@ EOF
     model="$(prompt "Enter the exact Cursor model name" "composer-2.5")"
   fi
   webhook="$(prompt "Feishu webhook URL (leave blank to skip notifications)" "")"
+
+  local jira_enabled="0" jira_project_key="" jira_board_id="" jira_assign_sprint="1" jira_board_id_set="0"
+  if collect_jira_settings_interactively "MBPAS"; then
+    jira_enabled="1"
+    jira_project_key="${JIRA_PROJECT_KEY}"
+    jira_board_id="${JIRA_BOARD_ID}"
+    jira_board_id_set="${JIRA_BOARD_ID_SET}"
+    jira_assign_sprint="${JIRA_ASSIGN_SPRINT}"
+  fi
 
   REPOS=()
   collect_repositories_interactively "${workspace_root}"
@@ -1125,16 +1406,25 @@ EOF
     ok ".env.local created with your Feishu webhook."
   fi
 
+  if [[ "${jira_enabled}" == "1" ]]; then
+    if write_workspace_jira "${lumen_dir}" "enable" "${jira_project_key}" "${jira_board_id}" "${jira_assign_sprint}" "${jira_board_id_set}"; then
+      ok "Jira sync enabled (project ${jira_project_key})."
+    else
+      warn "Jira settings were not saved. Run: lumen config set-jira --project <slug>"
+    fi
+  fi
+
   ok "Workspace configured with ${#REPOS[@]} repositor$([ "${#REPOS[@]}" = "1" ] && echo y || echo ies)."
   try_register_project "${lumen_dir}" "${display_name}"
   cat <<EOF
 
 Next steps:
   1. Review ${LUMEN_DIR_NAME}/config/repos.json and ${LUMEN_DIR_NAME}/config/common.json — edit anytime.
-  2. Run: lumen list
-  3. Run: lumen doctor
-  4. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  5. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
+  2. If Jira sync is enabled, install TWG CLI and run: twg login
+  3. Run: lumen list
+  4. Run: lumen doctor
+  5. Run: lumen scan --project <slug>   (see slugs with: lumen list)
+  6. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
 EOF
 }
 

@@ -81,6 +81,8 @@
     "jira": {
       "enabled": false,
       "project_key": "MBPAS",
+      "board_id": "",
+      "assign_to_active_sprint": true,
       "issue_type": "Bug",
       "severities": ["High", "Medium"],
       "summary_prefix": "[Lumen]"

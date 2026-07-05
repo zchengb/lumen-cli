@@ -69,6 +69,62 @@ def mask_webhook(url: str) -> str:
     return f"{url[:12]}...{url[-4:]}"
 
 
+def jira_config(common: dict) -> dict:
+    notifications = common.get("notifications", {})
+    config = notifications.get("jira", {})
+    if not isinstance(config, dict):
+        return {}
+    return config
+
+
+def default_jira_config() -> dict:
+    return {
+        "enabled": False,
+        "project_key": "MBPAS",
+        "board_id": "",
+        "assign_to_active_sprint": True,
+        "issue_type": "Bug",
+        "severities": ["High", "Medium"],
+        "summary_prefix": "[Lumen]",
+    }
+
+
+def merge_jira_defaults(config: dict) -> dict:
+    merged = default_jira_config()
+    merged.update(config)
+    return merged
+
+
+def set_jira_config(
+    workspace: Path,
+    *,
+    enabled: bool | None = None,
+    project_key: str | None = None,
+    board_id: str | None = None,
+    assign_to_active_sprint: bool | None = None,
+) -> dict:
+    common = load_common(workspace)
+    notifications = common.setdefault("notifications", {})
+    current = jira_config(common)
+    jira = merge_jira_defaults(current)
+    notifications["jira"] = jira
+
+    if enabled is not None:
+        jira["enabled"] = enabled
+    if project_key is not None:
+        jira["project_key"] = project_key.strip()
+    if board_id is not None:
+        jira["board_id"] = board_id.strip()
+    if assign_to_active_sprint is not None:
+        jira["assign_to_active_sprint"] = assign_to_active_sprint
+
+    if jira.get("enabled") and not str(jira.get("project_key", "")).strip():
+        raise ValueError("project_key is required when Jira sync is enabled")
+
+    save_common(workspace, common)
+    return jira
+
+
 def cmd_show(workspace: Path) -> int:
     common_path = common_json_path(workspace)
     print(f"Workspace: {workspace}")
@@ -99,6 +155,85 @@ def cmd_show(workspace: Path) -> int:
         print(f"FEISHU_WEBHOOK_URL: {mask_webhook(webhook)}  ({env_file})")
     else:
         print(f"FEISHU_WEBHOOK_URL: (not set)  ({env_file})")
+
+    jira = merge_jira_defaults(jira_config(common))
+    print()
+    print(f"notifications.jira.enabled: {jira.get('enabled', False)}")
+    if jira.get("enabled"):
+        print(f"notifications.jira.project_key: {jira.get('project_key', '')}")
+        board_id = str(jira.get("board_id", "")).strip()
+        print(f"notifications.jira.board_id: {board_id or '(auto-detect)'}")
+        print(f"notifications.jira.assign_to_active_sprint: {jira.get('assign_to_active_sprint', True)}")
+        print(f"notifications.jira.issue_type: {jira.get('issue_type', 'Bug')}")
+    return 0
+
+
+def cmd_set_jira(workspace: Path, args: argparse.Namespace) -> int:
+    if args.enable and args.disable:
+        print("Error: use either --enable or --disable, not both.", file=sys.stderr)
+        return 1
+
+    enabled: bool | None = None
+    if args.enable:
+        enabled = True
+    elif args.disable:
+        enabled = False
+
+    project_key = args.project_key
+    board_id = args.board_id
+    has_board_id = "--board-id" in sys.argv
+    assign_to_active_sprint: bool | None = None
+    if args.no_active_sprint:
+        assign_to_active_sprint = False
+    elif args.assign_active_sprint:
+        assign_to_active_sprint = True
+
+    if (
+        enabled is None
+        and project_key is None
+        and not has_board_id
+        and assign_to_active_sprint is None
+    ):
+        print(
+            "Error: provide --enable, --disable, --project-key, --board-id, or sprint flags.",
+            file=sys.stderr,
+        )
+        return 1
+
+    if enabled and not project_key:
+        existing = merge_jira_defaults(jira_config(load_common(workspace)))
+        project_key = str(existing.get("project_key", "")).strip() or None
+        if not project_key:
+            print("Error: --project-key is required when enabling Jira sync.", file=sys.stderr)
+            return 1
+
+    try:
+        jira = set_jira_config(
+            workspace,
+            enabled=enabled,
+            project_key=project_key,
+            board_id=board_id if has_board_id else None,
+            assign_to_active_sprint=assign_to_active_sprint,
+        )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if jira.get("enabled"):
+        board = str(jira.get("board_id", "")).strip() or "auto-detect"
+        print(
+            f"Jira sync enabled: project={jira.get('project_key')} "
+            f"board={board} active_sprint={jira.get('assign_to_active_sprint', True)}"
+        )
+    elif enabled is False:
+        print("Jira sync disabled.")
+    else:
+        board = str(jira.get("board_id", "")).strip() or "auto-detect"
+        print(
+            f"Jira settings updated: enabled={jira.get('enabled')} "
+            f"project={jira.get('project_key')} board={board} "
+            f"active_sprint={jira.get('assign_to_active_sprint', True)}"
+        )
     return 0
 
 
@@ -116,6 +251,23 @@ def main() -> int:
     set_parser.add_argument("workspace")
     set_parser.add_argument("days", type=int)
 
+    jira_parser = subparsers.add_parser("set-jira", help="Enable or update Jira sync settings")
+    jira_parser.add_argument("workspace")
+    jira_parser.add_argument("--enable", action="store_true", help="Enable Jira sync")
+    jira_parser.add_argument("--disable", action="store_true", help="Disable Jira sync")
+    jira_parser.add_argument("--project-key", help="Jira project key (e.g. MBPAS)")
+    jira_parser.add_argument("--board-id", help="Jira board ID for active sprint resolution")
+    jira_parser.add_argument(
+        "--no-active-sprint",
+        action="store_true",
+        help="Do not assign new bugs to the active sprint",
+    )
+    jira_parser.add_argument(
+        "--assign-active-sprint",
+        action="store_true",
+        help="Assign new bugs to the active sprint",
+    )
+
     args = parser.parse_args()
     workspace = Path(args.workspace).expanduser().resolve()
 
@@ -129,6 +281,8 @@ def main() -> int:
             days = set_scan_window_days(workspace, args.days)
             print(days)
             return 0
+        if args.command == "set-jira":
+            return cmd_set_jira(workspace, args)
     except FileNotFoundError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

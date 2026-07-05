@@ -3,8 +3,9 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional, Tuple
 
 
 def load_json(path: Path, default):
@@ -85,6 +86,258 @@ def rel(root: Path, path) -> str:
         return value
 
 
+def existing_rel(root: Path, path) -> str:
+    if not path:
+        return ""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = (root / candidate).resolve()
+    if candidate.is_file():
+        return rel(root, candidate)
+    return ""
+
+
+def run_stamp_from_path(path: Path) -> str:
+    stem = path.stem
+    if stem.startswith("scan-result-"):
+        return stem.replace("scan-result-", "", 1)
+    return ""
+
+
+def date_stamp_from_scan(data: dict) -> str:
+    for value in (data.get("finished_at"), data.get("started_at")):
+        if value and len(str(value)) >= 10:
+            return str(value)[:10]
+    return ""
+
+
+def resolve_report_artifacts(
+    root: Path,
+    reports_dir: Path,
+    result_path: Path,
+    data: dict,
+) -> Tuple[str, str, str]:
+    report = data.get("report") if isinstance(data.get("report"), dict) else {}
+
+    html = existing_rel(root, report.get("html_path"))
+    pdf = existing_rel(root, report.get("pdf_path"))
+
+    stamps: list[str] = []
+    run_stamp = run_stamp_from_path(result_path)
+    if run_stamp:
+        stamps.append(run_stamp)
+    date_stamp = date_stamp_from_scan(data)
+    if date_stamp:
+        stamps.append(date_stamp)
+
+    for stamp in stamps:
+        if not html:
+            html = existing_rel(root, reports_dir / f"code-quality-security-scan-{stamp}.html")
+        if not pdf:
+            pdf = existing_rel(root, reports_dir / f"code-quality-security-scan-{stamp}.pdf")
+
+    report_status = str(report.get("status", "")).strip()
+    if not report_status:
+        if html and pdf:
+            report_status = "generated"
+        elif html:
+            report_status = "html_only"
+        else:
+            report_status = "not_generated"
+
+    return html, pdf, report_status
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def process_alive(pid_text: str) -> bool:
+    pid_text = str(pid_text or "").strip()
+    if not pid_text.isdigit():
+        return False
+    pid = int(pid_text)
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def parse_iso_timestamp(value: str):
+    if not value:
+        return None
+    try:
+        normalized = str(value).replace("Z", "+00:00")
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
+def format_duration(seconds: int) -> str:
+    if seconds < 0:
+        seconds = 0
+    if seconds < 60:
+        return "< 1m"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes}m"
+    hours = minutes // 60
+    remaining = minutes % 60
+    if remaining:
+        return f"{hours}h {remaining}m"
+    return f"{hours}h"
+
+
+def duration_between(start_value: str, end_value: str) -> str:
+    start = parse_iso_timestamp(start_value)
+    end = parse_iso_timestamp(end_value)
+    if not start or not end:
+        return "—"
+    return format_duration(int((end - start).total_seconds()))
+
+
+def infer_phase_from_log(log_path: Path) -> str:
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-400:]
+    except OSError:
+        return "Running"
+
+    text = "\n".join(lines).lower()
+    if "dashboard:" in text and "generated" in text:
+        return "Finishing"
+    if "generating report and sending feishu" in text:
+        return "Report & notify"
+    if "lumen scan agent finished" in text:
+        return "Report & notify"
+    if "scan status:" in text or "writing scan-result" in text or "write results" in text:
+        return "Write results"
+    if "auto-fix pr" in text or "creating an auto-fix" in text or "auto-fix/" in text:
+        return "Auto-fix PR"
+    if "fetching recent commits" in text or "scan window" in text or "scanning recent" in text:
+        return "Scan repositories"
+    if "starting lumen scan agent" in text:
+        return "Scan agent"
+    if "setup" in text or "worktree" in text:
+        return "Setup"
+    return "Scan agent"
+
+
+def read_active_run(root: Path, state_dir: Path, logs_dir: Path) -> Optional[dict]:
+    lock_dir = state_dir / "run.lock"
+    if not lock_dir.is_dir():
+        return None
+
+    pid = read_text(lock_dir / "pid")
+    started_at = read_text(lock_dir / "started_at")
+    if not pid or not process_alive(pid):
+        return None
+
+    latest_log = None
+    if logs_dir.is_dir():
+        logs = sorted(logs_dir.glob("run-*.log"), key=lambda item: item.stat().st_mtime, reverse=True)
+        if logs:
+            latest_log = logs[0]
+
+    started = parse_iso_timestamp(started_at)
+    elapsed = format_duration(int((datetime.now(timezone.utc) - started).total_seconds())) if started else "—"
+
+    return {
+        "status": "running",
+        "pid": pid,
+        "started_at": started_at,
+        "elapsed": elapsed,
+        "phase": infer_phase_from_log(latest_log) if latest_log else "Running",
+        "log": rel(root, latest_log) if latest_log else "",
+    }
+
+
+def run_outcome(status: str) -> str:
+    if status == "failed":
+        return "failed"
+    if status in {"completed_clean", "completed_with_findings"}:
+        return "success"
+    return "other"
+
+
+def compute_run_stats(runs: list) -> dict:
+    now = datetime.now(timezone.utc)
+    windows = {
+        "24h": now - timedelta(hours=24),
+        "7d": now - timedelta(days=7),
+    }
+    stats = {
+        "success_24h": 0,
+        "failed_24h": 0,
+        "success_7d": 0,
+        "failed_7d": 0,
+    }
+    for run in runs:
+        finished = parse_iso_timestamp(run.get("finished_at") or run.get("started_at") or "")
+        if not finished:
+            continue
+        outcome = run_outcome(str(run.get("status", "")))
+        if outcome == "other":
+            continue
+        for key, window_start in windows.items():
+            if finished < window_start:
+                continue
+            if outcome == "success":
+                stats[f"success_{key}"] += 1
+            elif outcome == "failed":
+                stats[f"failed_{key}"] += 1
+    return stats
+
+
+def issue_for_dashboard(issue: dict) -> dict:
+    return {
+        "id": issue.get("id", ""),
+        "status": issue.get("status", ""),
+        "severity": issue.get("severity", ""),
+        "repository": issue.get("repository", ""),
+        "title": issue.get("title", ""),
+        "file": issue.get("file", ""),
+        "line_range": issue.get("line_range", ""),
+        "impact": issue.get("impact", ""),
+        "trigger": issue.get("trigger", ""),
+        "suggestion": issue.get("suggestion", ""),
+        "root_cause": issue.get("root_cause", ""),
+        "validation": issue.get("validation", ""),
+        "first_seen_at": issue.get("first_seen_at", ""),
+        "last_seen_at": issue.get("last_seen_at", ""),
+        "resolved_at": issue.get("resolved_at", ""),
+        "resolution_reason": issue.get("resolution_reason", ""),
+        "pr_url": issue.get("pr_url"),
+        "jira_key": issue.get("jira_key"),
+        "jira_url": issue.get("jira_url"),
+    }
+
+
+def is_dry_run(data: dict) -> bool:
+    return bool(data.get("dry_run"))
+
+
+def trend_points(runs: list, limit: int = 10) -> list:
+    points = []
+    for run in runs[:limit]:
+        label = (run.get("finished_at") or run.get("started_at") or "")[:10]
+        points.append(
+            {
+                "label": label,
+                "high": run.get("high", 0),
+                "medium": run.get("medium", 0),
+                "low": run.get("low", 0),
+                "total": run.get("high", 0) + run.get("medium", 0) + run.get("low", 0),
+            }
+        )
+    return list(reversed(points))
+
+
 def main() -> int:
     workspace_arg = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("LUMEN_WORKSPACE", ".")
     root = Path(workspace_arg).resolve()
@@ -93,14 +346,16 @@ def main() -> int:
     registry = load_json(root / "state" / "issue-registry.json", {"issues": []})
     product = common.get("product", {})
     results_dir = root / common.get("paths", {}).get("results_dir", "results")
+    reports_dir = root / common.get("paths", {}).get("reports_dir", "reports")
     logs_dir = root / common.get("paths", {}).get("logs_dir", "logs")
+    state_dir = root / common.get("paths", {}).get("state_dir", "state")
     data_path = root / "dashboard-data.js"
 
     runs = []
     latest_run = None
     latest_path = results_dir / "scan-result.json"
     latest_data = load_json(latest_path, {})
-    if latest_data:
+    if latest_data and not is_dry_run(latest_data):
         latest_run = {
             "id": latest_path.stem,
             "finished_at": latest_data.get("finished_at", ""),
@@ -110,10 +365,10 @@ def main() -> int:
 
     for path in sorted(results_dir.glob("scan-result-*.json"), reverse=True):
         data = load_json(path, {})
-        if not data:
+        if not data or is_dry_run(data):
             continue
         counts = severity_counts(data.get("findings", []))
-        report = data.get("report", {})
+        html_path, pdf_path, report_status = resolve_report_artifacts(root, reports_dir, path, data)
         run = {
             "id": path.stem,
             "started_at": data.get("started_at", ""),
@@ -124,11 +379,14 @@ def main() -> int:
             "medium": counts["Medium"],
             "low": counts["Low"],
             "prs": len(data.get("prs", [])),
-            "html": rel(root, report.get("html_path")),
-            "pdf": rel(root, report.get("pdf_path")),
+            "html": html_path,
+            "pdf": pdf_path,
+            "report_status": report_status,
             "json": rel(root, path),
             "feishu": data.get("feishu", {}).get("status", ""),
+            "jira": data.get("jira", {}).get("status", ""),
             "failures": len(data.get("failures", [])),
+            "duration": duration_between(data.get("started_at", ""), data.get("finished_at", "")),
             "findings": data.get("findings", []),
         }
         runs.append(run)
@@ -140,7 +398,7 @@ def main() -> int:
                 "findings": run["findings"],
             }
 
-    issues = deduplicate_issues(registry.get("issues", []))
+    issues = [issue_for_dashboard(item) for item in deduplicate_issues(registry.get("issues", []))]
     issue_counts = {}
     for issue in issues:
         status = issue.get("status", "unknown")
@@ -148,8 +406,12 @@ def main() -> int:
 
     logs = [
         {"name": path.name, "href": rel(root, path)}
-        for path in sorted(logs_dir.glob("*.log"), reverse=True)[:10]
+        for path in sorted(logs_dir.glob("run-*.log"), key=lambda item: item.stat().st_mtime, reverse=True)[:10]
     ]
+
+    active_run = read_active_run(root, state_dir, logs_dir)
+    run_stats = compute_run_stats(runs)
+    project = common.get("project", {})
 
     payload = {
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
@@ -158,9 +420,15 @@ def main() -> int:
             "tagline": product.get("tagline", "Illuminate code health across your repositories"),
             "codename": product.get("codename", "lumen"),
         },
+        "project": {
+            "display_name": project.get("display_name", ""),
+        },
         "config": common,
         "repositories": repos.get("repositories", []),
         "runs": runs,
+        "run_stats": run_stats,
+        "trend": trend_points(runs),
+        "active_run": active_run,
         "latest_run": latest_run,
         "issues": issues,
         "issue_counts": issue_counts,

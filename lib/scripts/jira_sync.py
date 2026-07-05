@@ -51,6 +51,234 @@ def twg_ready() -> Tuple[bool, str]:
     return True, ""
 
 
+def run_twg(args: List[str]) -> Tuple[int, str]:
+    binary = twg_binary()
+    if not binary:
+        raise RuntimeError("twg CLI not found in PATH")
+    completed = subprocess.run(
+        [binary, *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
+    return completed.returncode, output
+
+
+def parse_twg_json(output: str) -> Optional[Any]:
+    text = output.strip()
+    if not text:
+        return None
+
+    stdout_path = extract_output_file_path(text, "stdout:")
+    if stdout_path:
+        path = Path(stdout_path)
+        if path.is_file():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = None
+            if isinstance(payload, (dict, list)):
+                return payload
+
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line.startswith(("{", "[")):
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, (dict, list)):
+            return payload
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, (dict, list)) else None
+
+
+def extract_output_file_path(output: str, prefix: str) -> Optional[str]:
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped[len(prefix) :].strip().strip('"')
+    return None
+
+
+def site_args(config: dict) -> List[str]:
+    site = str(config.get("site", "")).strip()
+    if site:
+        return ["--site", site]
+    return []
+
+
+def assign_to_active_sprint_enabled(config: dict) -> bool:
+    if "assign_to_active_sprint" in config:
+        return bool(config.get("assign_to_active_sprint"))
+    return bool(str(config.get("board_id", "")).strip())
+
+
+def resolve_board_id(config: dict) -> Optional[str]:
+    board_id = str(config.get("board_id", "")).strip()
+    if board_id:
+        return board_id
+
+    project_key = str(config.get("project_key", "")).strip()
+    if not project_key:
+        return None
+
+    jql = f'project = {project_key} AND sprint in openSprints() ORDER BY updated DESC'
+    returncode, output = run_twg(
+        [
+            "jira",
+            "workitem",
+            "query",
+            "--jql",
+            jql,
+            "--limit",
+            "1",
+            "-o",
+            "json",
+            *site_args(config),
+        ]
+    )
+    if returncode != 0:
+        return None
+
+    payload = parse_twg_json(output)
+    issues = ((payload or {}).get("data") or {}).get("issues") or []
+    if not issues:
+        return None
+
+    issue_key = str((issues[0] or {}).get("key", "")).strip()
+    if not issue_key:
+        return None
+
+    returncode, output = run_twg(
+        [
+            "jira",
+            "workitem",
+            "get",
+            issue_key,
+            "--fields",
+            "sprint,customfield_10020",
+            "-o",
+            "json",
+            *site_args(config),
+        ]
+    )
+    if returncode != 0:
+        return None
+
+    payload = parse_twg_json(output)
+    items = (payload or {}).get("data") or []
+    if not isinstance(items, list) or not items:
+        return None
+
+    issue = items[0] if isinstance(items[0], dict) else {}
+    sprint_field = issue.get("customfield_10020") or issue.get("sprint")
+    if not isinstance(sprint_field, list) or not sprint_field:
+        return None
+
+    active = next(
+        (item for item in sprint_field if isinstance(item, dict) and item.get("state") == "active"),
+        sprint_field[0] if isinstance(sprint_field[0], dict) else None,
+    )
+    if not isinstance(active, dict):
+        return None
+
+    board = active.get("boardId")
+    return str(board).strip() if board is not None else None
+
+
+def resolve_active_sprint(config: dict) -> Tuple[Optional[str], Optional[str]]:
+    board_id = resolve_board_id(config)
+    if not board_id:
+        return None, None
+
+    returncode, output = run_twg(
+        [
+            "jira",
+            "sprint",
+            "snapshot",
+            "--board-id",
+            board_id,
+            "-o",
+            "json",
+            *site_args(config),
+        ]
+    )
+    if returncode != 0:
+        raise RuntimeError(truncate_error(output or f"twg sprint snapshot failed with status {returncode}"))
+
+    payload = parse_twg_json(output)
+    data = (payload or {}).get("data") or {}
+    sprint = data.get("sprint") if isinstance(data.get("sprint"), dict) else {}
+    sprint_id = sprint.get("id")
+    if sprint_id is None:
+        selected = (data.get("activeSprints") or {}).get("selectedId")
+        sprint_id = selected
+
+    if sprint_id is None:
+        return None, None
+
+    sprint_name = str(sprint.get("name", "")).strip() or None
+    return str(sprint_id), sprint_name
+
+
+def assign_workitem_to_sprint(issue_key: str, sprint_id: str, config: dict) -> None:
+    returncode, output = run_twg(
+        [
+            "jira",
+            "workitem",
+            "update",
+            "--id",
+            issue_key,
+            "--sprint",
+            sprint_id,
+            "-o",
+            "json",
+            *site_args(config),
+        ]
+    )
+    if returncode != 0:
+        raise RuntimeError(truncate_error(output or f"twg workitem update failed with status {returncode}"))
+
+
+def add_pr_link_to_jira(
+    jira_key: str,
+    pr_url: str,
+    config: dict,
+    registry_issue: dict,
+) -> bool:
+    if registry_issue.get("jira_pr_url") == pr_url:
+        return False
+
+    comment = f"Pull request opened: [{pr_url}]({pr_url})"
+    returncode, output = run_twg(
+        [
+            "jira",
+            "workitem",
+            "update",
+            "--id",
+            jira_key,
+            "--comment",
+            comment,
+            "--comment-format",
+            "markdown",
+            "-o",
+            "json",
+            *site_args(config),
+        ]
+    )
+    if returncode != 0:
+        raise RuntimeError(truncate_error(output or f"twg workitem update failed with status {returncode}"))
+
+    registry_issue["jira_pr_url"] = pr_url
+    return True
+
+
 def build_summary(finding: dict, config: dict) -> str:
     prefix = str(config.get("summary_prefix", "[Lumen]")).strip()
     title = str(finding.get("title", "Untitled finding")).strip()
@@ -59,7 +287,15 @@ def build_summary(finding: dict, config: dict) -> str:
     return title
 
 
-def build_description(finding: dict, issue_id: str) -> str:
+def finding_pr_url(finding: dict, registry_issue: Optional[dict] = None) -> Optional[str]:
+    for source in (finding, registry_issue or {}):
+        url = str(source.get("pr_url", "")).strip()
+        if url:
+            return url
+    return None
+
+
+def build_description(finding: dict, issue_id: str, registry_issue: Optional[dict] = None) -> str:
     lines = [
         f"**Lumen issue:** `{issue_id}`",
         f"**Severity:** {finding.get('severity', 'Unknown')}",
@@ -83,9 +319,9 @@ def build_description(finding: dict, issue_id: str) -> str:
     validation = str(finding.get("validation", "")).strip()
     if validation:
         lines.extend(["", "## Validation", validation])
-    pr_url = finding.get("pr_url")
+    pr_url = finding_pr_url(finding, registry_issue)
     if pr_url:
-        lines.extend(["", "## Pull request", str(pr_url)])
+        lines.extend(["", "## Pull request", f"[Open pull request]({pr_url})", "", pr_url])
     code = str(finding.get("code_snippet", "")).strip()
     if code:
         lines.extend(["", "## Code snippet", "```", code, "```"])
@@ -186,7 +422,13 @@ def jira_browse_url(key: str, payload: Any) -> Optional[str]:
     return None
 
 
-def create_workitem(finding: dict, issue_id: str, config: dict) -> Tuple[str, Optional[str]]:
+def create_workitem(
+    finding: dict,
+    issue_id: str,
+    config: dict,
+    sprint_id: Optional[str] = None,
+    registry_issue: Optional[dict] = None,
+) -> Tuple[str, Optional[str]]:
     ready, reason = twg_ready()
     if not ready:
         raise RuntimeError(reason)
@@ -196,11 +438,8 @@ def create_workitem(finding: dict, issue_id: str, config: dict) -> Tuple[str, Op
         raise RuntimeError("notifications.jira.project_key is not set in config/common.json")
 
     issue_type = str(config.get("issue_type", "Bug")).strip() or "Bug"
-    binary = twg_binary()
-    assert binary is not None
 
     command = [
-        binary,
         "jira",
         "workitem",
         "create",
@@ -211,7 +450,7 @@ def create_workitem(finding: dict, issue_id: str, config: dict) -> Tuple[str, Op
         "--summary",
         build_summary(finding, config),
         "--description",
-        build_description(finding, issue_id),
+        build_description(finding, issue_id, registry_issue),
         "--description-format",
         "markdown",
         "--labels",
@@ -224,23 +463,23 @@ def create_workitem(finding: dict, issue_id: str, config: dict) -> Tuple[str, Op
     if priority:
         command.extend(["--priority", priority])
 
-    site = str(config.get("site", "")).strip()
-    if site:
-        command.extend(["--site", site])
+    command.extend(site_args(config))
 
-    completed = subprocess.run(
-        command,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    output = (completed.stdout or "") + ("\n" + completed.stderr if completed.stderr else "")
-    if completed.returncode != 0:
-        raise RuntimeError(truncate_error(output or f"twg exited with status {completed.returncode}"))
+    returncode, output = run_twg(command)
+    if returncode != 0:
+        raise RuntimeError(truncate_error(output or f"twg exited with status {returncode}"))
 
     key, url = parse_issue_key(output)
     if not key:
         raise RuntimeError(f"Could not parse Jira issue key from twg output: {truncate_error(output)}")
+
+    if sprint_id:
+        assign_workitem_to_sprint(key, sprint_id, config)
+
+    pr_url = finding_pr_url(finding, registry_issue)
+    if pr_url and registry_issue is not None:
+        registry_issue["jira_pr_url"] = pr_url
+
     return key, url
 
 
@@ -273,6 +512,7 @@ def sync_jira_issues(
         "status": "disabled",
         "created": 0,
         "skipped": 0,
+        "updated": 0,
         "failed": 0,
         "errors": [],
     }
@@ -293,6 +533,16 @@ def sync_jira_issues(
     allowed = set(allowed_severities(config))
     indexed = index_registry_issues(registry)
 
+    sprint_id: Optional[str] = None
+    if assign_to_active_sprint_enabled(config):
+        sprint_id, _ = resolve_active_sprint(config)
+        if not sprint_id:
+            summary["status"] = "not_configured"
+            summary["errors"].append(
+                "No active sprint found. Set notifications.jira.board_id or ensure the project has an open sprint."
+            )
+            return summary
+
     for finding in scan.get("findings", []):
         severity = str(finding.get("severity", ""))
         if severity not in allowed:
@@ -306,11 +556,25 @@ def sync_jira_issues(
         if registry_issue and registry_issue.get("jira_key"):
             finding["jira_key"] = registry_issue.get("jira_key")
             finding["jira_url"] = registry_issue.get("jira_url")
+            pr_url = finding_pr_url(finding, registry_issue)
+            if pr_url:
+                try:
+                    if add_pr_link_to_jira(registry_issue["jira_key"], pr_url, config, registry_issue):
+                        summary["updated"] += 1
+                except Exception as exc:
+                    summary["failed"] += 1
+                    summary["errors"].append(f"{issue_id}: {exc}")
             summary["skipped"] += 1
             continue
 
         try:
-            jira_key, jira_url = create_workitem(finding, issue_id, config)
+            jira_key, jira_url = create_workitem(
+                finding,
+                issue_id,
+                config,
+                sprint_id=sprint_id,
+                registry_issue=registry_issue,
+            )
         except Exception as exc:
             summary["failed"] += 1
             summary["errors"].append(f"{issue_id}: {exc}")
@@ -329,7 +593,7 @@ def sync_jira_issues(
 
     if summary["failed"] > 0:
         summary["status"] = "completed_with_failures"
-    elif summary["created"] > 0:
+    elif summary["created"] > 0 or summary["updated"] > 0:
         summary["status"] = "synced"
     else:
         summary["status"] = "noop"

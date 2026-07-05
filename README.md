@@ -129,13 +129,27 @@ twg doctor
 
 **2. Enable Jira sync in your workspace**
 
-Edit `<workspace>/config/common.json`:
+During `lumen init`, you can enable Jira interactively. Lumen calls `twg spaces query` to list your visible Jira projects and lets you pick one (similar to repository selection). If sprint assignment is enabled, it also resolves the board via `twg jira board query`.
+
+```bash
+lumen config set-jira --enable --project-key MBPAS --board-id 186 --project mbpass
+```
+
+Or run interactively (lists Jira projects via `twg spaces query`, then prompts for active sprint assignment):
+
+```bash
+lumen config set-jira --project mbpass
+```
+
+You can also edit `<workspace>/config/common.json` directly:
 
 ```json
 "notifications": {
   "jira": {
     "enabled": true,
     "project_key": "MBPAS",
+    "board_id": "186",
+    "assign_to_active_sprint": true,
     "issue_type": "Bug",
     "severities": ["High", "Medium"],
     "summary_prefix": "[Lumen]"
@@ -143,12 +157,31 @@ Edit `<workspace>/config/common.json`:
 }
 ```
 
+**Project space vs sprint board**
+
+- `project_key` — Jira project key passed to `twg jira workitem create --space` (e.g. `MBPAS`).
+- `board_id` — numeric Scrum/Kanban board ID used to resolve the active sprint. This is **not** the project key.
+- `assign_to_active_sprint` — when `true` (default when `board_id` is set), Lumen assigns each new bug to the board's active sprint after create.
+
+Find your board ID from any issue already in the current sprint:
+
+```bash
+twg jira workitem get MBPAS-1504 --fields sprint -o json
+# → data[0].customfield_10020[0].boardId  (e.g. 186)
+
+twg jira sprint snapshot --board-id 186 -o json
+# → data.sprint.id  (active sprint id)
+```
+
+If `board_id` is omitted but `assign_to_active_sprint` is `true`, Lumen tries to infer the board from an issue in `openSprints()` for that project.
+
 **3. Run a scan**
 
 After `scan-result.json` is written, Lumen calls:
 
 ```bash
 twg jira workitem create --space MBPAS --type Bug ...
+twg jira workitem update --id MBPAS-123 --sprint <active-sprint-id>
 ```
 
 Rules:
@@ -157,8 +190,14 @@ Rules:
 - **Low** findings are skipped
 - Auth is handled by `twg` (`~/.config/twg/auth.conf`) — no Jira token in `.env.local`
 - Failures are recorded in `scan-result.json` → `jira` and do not fail the scan
+- If a finding already has a Jira key and a PR is opened later, Lumen adds a PR link comment to the existing card
+- Jira sync runs in deterministic Python after the scan agent exits — it does **not** rely on the TWG agent skill (see below)
 
 Check setup with `lumen doctor`.
+
+**TWG skill vs Lumen Jira sync**
+
+`twg` ships an agent skill (`~/.agents/skills/twg`) for interactive assistants (Cursor, Codex, etc.) that need to route natural-language requests to typed `twg` commands. Lumen's post-scan pipeline has no LLM at that step, so `jira_sync.py` calls the same `twg` CLI directly. Do not move Jira creation into the scan agent prompt — that would risk duplicate tickets, the same way Feishu/PDF are kept out of the agent.
 
 ### Severity classification
 

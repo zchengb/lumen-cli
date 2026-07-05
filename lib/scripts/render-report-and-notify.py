@@ -598,9 +598,53 @@ def convert_via_chrome(html_path: Path, pdf_path: Path) -> None:
 
 def resolve_pdf_engine_preference(common: dict) -> list:
     configured = common.get("reporting", {}).get("pdf_engine_preference", [])
+    if "chrome" in configured:
+        return ["chrome"]
     if configured:
-        return [engine for engine in configured if engine == "chrome"]
+        return ["chrome"]
     return ["chrome"]
+
+
+def report_run_stamp(result_path: Path, scan: dict) -> str:
+    stem = result_path.stem
+    if stem.startswith("scan-result-"):
+        return stem.replace("scan-result-", "", 1)
+
+    for value in (scan.get("finished_at"), scan.get("started_at")):
+        if not value:
+            continue
+        try:
+            normalized = str(value).replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            return parsed.strftime("%Y%m%d-%H%M%S")
+        except ValueError:
+            continue
+
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def sync_archived_scan_results(workspace_root: Path, scan: dict) -> None:
+    results_dir = workspace_root / "results"
+    if not results_dir.is_dir():
+        return
+
+    started_at = scan.get("started_at")
+    report = scan.get("report")
+    if not started_at or not isinstance(report, dict):
+        return
+
+    for path in results_dir.glob("scan-result-*.json"):
+        data = load_json(path, {})
+        if data.get("started_at") != started_at:
+            continue
+        data["report"] = report
+        if scan.get("feishu"):
+            data["feishu"] = scan["feishu"]
+        if scan.get("jira"):
+            data["jira"] = scan["jira"]
+        if scan.get("finished_at"):
+            data["finished_at"] = scan["finished_at"]
+        write_json(path, data)
 
 
 def convert_html_to_pdf(html_path: Path, pdf_path: Path, engine_preference: list) -> str:
@@ -654,14 +698,28 @@ def main() -> int:
         persist=not dry_run,
     )
 
-    stamp = datetime.now().strftime("%Y-%m-%d")
-    html_path = reports_dir / f"code-quality-security-scan-{stamp}.html"
-    pdf_path = reports_dir / f"code-quality-security-scan-{stamp}.pdf"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    run_stamp = report_run_stamp(result_path, scan)
+    html_path = reports_dir / f"code-quality-security-scan-{run_stamp}.html"
+    pdf_path = reports_dir / f"code-quality-security-scan-{run_stamp}.pdf"
 
     write_html(scan, html_path)
     try:
         engine_used = convert_html_to_pdf(html_path, pdf_path, pdf_engine_preference)
-        scan["report"] = {"html_path": str(html_path), "pdf_path": str(pdf_path), "status": "generated", "engine": engine_used}
+        if pdf_path.is_file():
+            scan["report"] = {
+                "html_path": str(html_path),
+                "pdf_path": str(pdf_path),
+                "status": "generated",
+                "engine": engine_used,
+            }
+        else:
+            scan["report"] = {
+                "html_path": str(html_path),
+                "pdf_path": None,
+                "status": "pdf_failed",
+                "error": "PDF file was not created by the browser exporter.",
+            }
     except Exception as exc:
         scan["report"] = {"html_path": str(html_path), "pdf_path": None, "status": "pdf_failed", "error": redact(str(exc))}
 
@@ -680,6 +738,7 @@ def main() -> int:
 
     scan["finished_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     write_json(result_path, scan)
+    sync_archived_scan_results(workspace_root, scan)
     dashboard_status = "not_generated"
     dashboard_error = None
     dashboard_script = workspace_root / "scripts" / "render-dashboard.sh"
@@ -700,6 +759,7 @@ def main() -> int:
         "feishu_error": scan["feishu"]["error"],
         "jira_status": scan.get("jira", {}).get("status"),
         "jira_created": scan.get("jira", {}).get("created", 0),
+        "jira_updated": scan.get("jira", {}).get("updated", 0),
         "jira_failed": scan.get("jira", {}).get("failed", 0),
         "jira_error": "; ".join(scan.get("jira", {}).get("errors", [])[:1]) or None,
     }))

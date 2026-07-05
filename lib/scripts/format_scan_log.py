@@ -195,8 +195,13 @@ def format_report_json(payload: dict) -> str:
     jira_status = payload.get("jira_status")
     if jira_status and jira_status != "disabled":
         created = payload.get("jira_created", 0)
+        updated = payload.get("jira_updated", 0)
         failed = payload.get("jira_failed", 0)
-        lines.append(f"  Jira:  {jira_status} ({created} created, {failed} failed)")
+        parts = [f"{created} created"]
+        if updated:
+            parts.append(f"{updated} updated")
+        parts.append(f"{failed} failed")
+        lines.append(f"  Jira:  {jira_status} ({', '.join(parts)})")
         if payload.get("jira_error"):
             lines.append(f"         {payload['jira_error']}")
     dashboard_status = payload.get("dashboard_status")
