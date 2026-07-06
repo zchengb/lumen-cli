@@ -1,0 +1,11 @@
+{
+  "jiraKey": "__JIRA_KEY__",
+  "title": "Mini Web Welcome Banner",
+  "jiraUrl": "",
+  "businessStatus": "ready",
+  "technicalStatus": "approved",
+  "deliveryStatus": "not_started",
+  "linkedRepos": ["mini-lumen-web"],
+  "updatedAt": "__TODAY__",
+  "logs": []
+}

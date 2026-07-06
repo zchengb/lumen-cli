@@ -322,6 +322,10 @@ Usage:
   lumen dashboard --project <slug> [--no-open]
                                  Refresh dashboard-data.js and open dashboard.html in your browser
                                  Pass --no-open to only refresh the data without opening a browser
+  lumen set-up-docs [dir] [--name <name>] [--key <key>] [--force]
+                                 Initialize a delivery docs project with templates and examples
+  lumen delivery init-docs [dir] [--project-name <name>] [--example-key <key>] [--force]
+                                 Advanced alias for set-up-docs
   lumen doctor                  Check that required and optional tools are installed
   lumen config set-webhook <url> [--project <slug>]
                                  Save the Feishu webhook in this workspace's .env.local
@@ -1765,6 +1769,74 @@ cmd_schedule() {
   esac
 }
 
+
+cmd_delivery_init_docs() {
+  local target_dir="delivery-docs"
+  local project_name="Delivery Docs"
+  local example_key="DEMO-001"
+  local force="0"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project-name|--name)
+        project_name="${2:-}"
+        shift 2
+        ;;
+      --example-key|--key)
+        example_key="${2:-}"
+        shift 2
+        ;;
+      --force)
+        force="1"
+        shift
+        ;;
+      --*)
+        err "Unknown option: $1"
+        exit 1
+        ;;
+      *)
+        target_dir="$1"
+        shift
+        ;;
+    esac
+  done
+
+  local init_py="${LUMEN_HOME}/lib/scripts/init_delivery_docs.py"
+  if [[ ! -f "${init_py}" ]]; then
+    err "Delivery docs initializer not found: ${init_py}"
+    exit 1
+  fi
+  command -v python3 >/dev/null 2>&1 || { err "Python 3 is required for delivery docs initialization."; exit 1; }
+
+  local args=(--target "${target_dir}" --project-name "${project_name}" --example-key "${example_key}")
+  [[ "${force}" == "1" ]] && args+=(--force)
+  python3 "${init_py}" "${args[@]}"
+}
+
+cmd_set_up_docs() {
+  cmd_delivery_init_docs "$@"
+}
+
+cmd_delivery() {
+  local sub="${1:-}"
+  shift || true
+  case "${sub}" in
+    init-docs) cmd_delivery_init_docs "$@" ;;
+    ""|help|-h|--help)
+      printf 'Usage:\n'
+      printf '  lumen set-up-docs [dir] [--name <name>] [--key <key>] [--force]\n'
+      printf '  lumen delivery init-docs [dir] [--project-name <name>] [--example-key <key>] [--force]\n'
+      printf '\nExample:\n'
+      printf '  lumen set-up-docs ~/Projects/demo-docs --name "Demo Delivery Docs" --key DEMO-001\n'
+      ;;
+    *)
+      err "Unknown delivery command: ${sub}"
+      printf 'Run: lumen delivery help\n'
+      exit 1
+      ;;
+  esac
+}
+
 main() {
   local command="${1:-help}"
   shift || true
@@ -1776,6 +1848,8 @@ main() {
     register) cmd_register "$@" ;;
     scan) cmd_scan "$@" ;;
     schedule) cmd_schedule "$@" ;;
+    set-up-docs|setup-docs) cmd_set_up_docs "$@" ;;
+    delivery) cmd_delivery "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
     watch) cmd_watch "$@" ;;
     doctor) cmd_doctor "$@" ;;

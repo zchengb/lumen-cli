@@ -1,0 +1,46 @@
+{
+  "schema_version": "1.0",
+  "template_name": "lumen-delivery-progress",
+  "description": "Feishu interactive card template for Lumen delivery progress notifications.",
+  "events": [
+    "delivery.started",
+    "delivery.blocked",
+    "delivery.failed",
+    "delivery.pr.created",
+    "delivery.dev_done",
+    "delivery.change_recorded",
+    "delivery.refactor_recorded"
+  ],
+  "variables": {
+    "event_title": "{{event_title}}",
+    "jira_key": "{{jira_key}}",
+    "summary": "{{summary}}",
+    "status": "{{status}}",
+    "triggered_by": "{{triggered_by}}",
+    "current_step": "{{current_step}}",
+    "repos": "{{repos}}",
+    "branch": "{{branch}}",
+    "verification_summary": "{{verification_summary}}",
+    "change_records": "{{change_records}}",
+    "refactor_records": "{{refactor_records}}",
+    "jira_url": "{{jira_url}}",
+    "docs_url": "{{docs_url}}",
+    "dashboard_url": "{{dashboard_url}}",
+    "logs_url": "{{logs_url}}"
+  },
+  "card_preview": {
+    "title": "{{event_title}}",
+    "subtitle": "{{jira_key}} · {{summary}}",
+    "sections": [
+      "Status: {{status}}",
+      "Triggered By: {{triggered_by}}",
+      "Current Step: {{current_step}}",
+      "Repos: {{repos}}",
+      "Branch: {{branch}}",
+      "Verification: {{verification_summary}}",
+      "CR: {{change_records}}",
+      "RF: {{refactor_records}}"
+    ],
+    "actions": ["JIRA", "Docs", "Dashboard", "Logs"]
+  }
+}
