@@ -232,7 +232,7 @@ lumen schedule remove --project mbpass
 
 The cron expression uses the standard 5-field format (`minute hour day-of-month month day-of-week`). Scheduled runs are appended to `crontab` with a `# lumen-schedule:<slug>` marker and log to `<workspace>/logs/schedule.log`. Add `--dry-run` to schedule mock runs (no Cursor agent, no PRs, no Feishu).
 
-Cron jobs run with a minimal environment. Lumen v1.9.1+ sets `PATH` automatically so `agent`, `python3`, and `gh` are found during scheduled scans. If you created a schedule before v1.9.1, re-run `lumen schedule add` with the same cron expression to refresh the crontab entry.
+Cron jobs run with a minimal environment. Lumen sets a short `PATH` in crontab so `agent`, `python3`, and `gh` are found during scheduled scans. If scheduled scans fail silently on macOS, upgrade to v1.12.1+ and re-run `lumen schedule add` with the same cron expression to refresh the crontab entry (older versions could write a PATH line long enough for cron to truncate).
 
 ### Scan notifications
 

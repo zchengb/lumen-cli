@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-ensure_lumen_path() {
+build_lumen_path() {
   local lumen_bin="${1:-}"
   local bin_dirs=()
   local seen="" result="" dir tool_dir entry
@@ -14,8 +14,6 @@ ensure_lumen_path() {
     bin_dirs+=("${HOME}/.local/bin")
   fi
   bin_dirs+=("/usr/local/bin" "/opt/homebrew/bin")
-
-  export PATH="$(IFS=:; printf '%s' "${bin_dirs[*]}"):${PATH:-/usr/bin:/bin}"
 
   if command -v agent >/dev/null 2>&1; then
     tool_dir="$(cd "$(dirname "$(command -v agent)")" && pwd)"
@@ -43,11 +41,21 @@ ensure_lumen_path() {
     fi
   done
 
-  export PATH="${result}:${PATH:-/usr/bin:/bin}"
+  printf '%s' "${result}"
+}
+
+ensure_lumen_path() {
+  local lumen_bin="${1:-}"
+  local minimal
+  minimal="$(build_lumen_path "${lumen_bin}")"
+  export PATH="${minimal}:${PATH:-/usr/bin:/bin}"
 }
 
 schedule_path_export() {
   local lumen_bin="${1:-}"
-  ensure_lumen_path "${lumen_bin}"
-  printf 'PATH="%s"' "${PATH}"
+  local saved_path="${PATH:-/usr/bin:/bin}"
+  PATH="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"
+  [[ -n "${HOME:-}" ]] && PATH="${HOME}/.local/bin:${PATH}"
+  printf 'PATH="%s"' "$(build_lumen_path "${lumen_bin}")"
+  PATH="${saved_path}"
 }
