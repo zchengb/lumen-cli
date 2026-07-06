@@ -52,21 +52,36 @@ def set_scan_window_days(workspace: Path, days: int) -> int:
     return days
 
 
-def read_webhook_url(workspace: Path) -> str | None:
+def read_env_var(workspace: Path, key: str) -> str | None:
     env_file = workspace / ".env.local"
     if not env_file.is_file():
         return None
+    pattern = re.compile(
+        rf'^{re.escape(key)}=(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
+    )
     for line in env_file.read_text(encoding="utf-8").splitlines():
-        match = re.match(r'^FEISHU_WEBHOOK_URL=(?:"([^"]*)"|\'([^\']*)\'|(\S+))', line.strip())
+        match = pattern.match(line.strip())
         if match:
             return next(group for group in match.groups() if group is not None)
     return None
 
 
-def mask_webhook(url: str) -> str:
-    if len(url) <= 16:
+def read_webhook_url(workspace: Path) -> str | None:
+    return read_env_var(workspace, "FEISHU_WEBHOOK_URL")
+
+
+def read_cursor_api_key(workspace: Path) -> str | None:
+    return read_env_var(workspace, "CURSOR_API_KEY")
+
+
+def mask_secret(value: str) -> str:
+    if len(value) <= 8:
         return "[set]"
-    return f"{url[:12]}...{url[-4:]}"
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def mask_webhook(url: str) -> str:
+    return mask_secret(url)
 
 
 def jira_config(common: dict) -> dict:
@@ -149,12 +164,17 @@ def cmd_show(workspace: Path) -> int:
         print(f"execution.model: {model}")
 
     webhook = read_webhook_url(workspace)
+    cursor_api_key = read_cursor_api_key(workspace)
     env_file = workspace / ".env.local"
     print()
     if webhook:
         print(f"FEISHU_WEBHOOK_URL: {mask_webhook(webhook)}  ({env_file})")
     else:
         print(f"FEISHU_WEBHOOK_URL: (not set)  ({env_file})")
+    if cursor_api_key:
+        print(f"CURSOR_API_KEY: {mask_secret(cursor_api_key)}  ({env_file})")
+    else:
+        print(f"CURSOR_API_KEY: (not set)  ({env_file})")
 
     jira = merge_jira_defaults(jira_config(common))
     print()

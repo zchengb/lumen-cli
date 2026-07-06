@@ -329,6 +329,8 @@ Usage:
   lumen doctor                  Check that required and optional tools are installed
   lumen config set-webhook <url> [--project <slug>]
                                  Save the Feishu webhook in this workspace's .env.local
+  lumen config set-cursor-api-key <key> [--project <slug>]
+                                 Save CURSOR_API_KEY in this workspace's .env.local (for scheduled scans)
   lumen config set-scan-window <days> [--project <slug>]
                                  Set how many days of git history each scan inspects
   lumen config set-jira [--enable|--disable] [--project-key <key>]
@@ -338,6 +340,8 @@ Usage:
                                  Show workspace settings (scan window, webhook, model)
   lumen config unset-webhook [--project <slug>]
                                  Remove the Feishu webhook from a workspace
+  lumen config unset-cursor-api-key [--project <slug>]
+                                 Remove CURSOR_API_KEY from a workspace
   lumen upgrade [--cli-only] [--project <slug>]
                                  Upgrade the installed Lumen CLI to the latest release and
                                  refresh this workspace's bundled templates (scan-prompt.md,
@@ -576,26 +580,58 @@ except Exception:
       ok "Jira sync is enabled in ${workspace}/config/common.json."
     fi
   fi
+
+  if command -v crontab >/dev/null 2>&1 && crontab -l 2>/dev/null | grep -q '# lumen-schedule:'; then
+    if [[ -n "${workspace}" ]]; then
+      load_env_file_if_present "${workspace}/.env.local"
+    fi
+    if [[ -n "${CURSOR_API_KEY:-}" ]]; then
+      ok "CURSOR_API_KEY is set for scheduled scans."
+    else
+      warn "CURSOR_API_KEY is not set. Scheduled scans will fail under cron."
+      printf '  Add it during lumen init or: lumen config set-cursor-api-key <key> --project <slug>\n'
+    fi
+  elif [[ -n "${workspace}" ]]; then
+    load_env_file_if_present "${workspace}/.env.local"
+    if [[ -n "${CURSOR_API_KEY:-}" ]]; then
+      ok "CURSOR_API_KEY is set in ${workspace}/.env.local."
+    fi
+  fi
 }
 
 write_workspace_webhook() {
+  set_env_local_var "$1" "FEISHU_WEBHOOK_URL" "$2"
+}
+
+write_workspace_cursor_api_key() {
+  set_env_local_var "$1" "CURSOR_API_KEY" "$2"
+}
+
+ensure_env_local_file() {
   local workspace="$1"
-  local url="$2"
   local env_file="${workspace}/.env.local"
   local example_file="${workspace}/.env.local.example"
-
-  if [[ ! -f "${env_file}" && -f "${example_file}" ]]; then
-    cp "${example_file}" "${env_file}"
-  fi
-  if [[ ! -f "${env_file}" ]]; then
-    printf 'FEISHU_WEBHOOK_URL="%s"\n' "$(sed_escape_replacement "${url}")" > "${env_file}"
+  if [[ -f "${env_file}" ]]; then
     return 0
   fi
-  if grep -q '^FEISHU_WEBHOOK_URL=' "${env_file}" 2>/dev/null; then
-    sed -i.bak "s#^FEISHU_WEBHOOK_URL=.*#FEISHU_WEBHOOK_URL=\"$(sed_escape_replacement "${url}")\"#" "${env_file}"
+  if [[ -f "${example_file}" ]]; then
+    cp "${example_file}" "${env_file}"
+  else
+    printf '# Local secrets and machine-specific values.\n# .env.local must never be committed.\n\n' > "${env_file}"
+  fi
+}
+
+set_env_local_var() {
+  local workspace="$1"
+  local key="$2"
+  local value="$3"
+  local env_file="${workspace}/.env.local"
+  ensure_env_local_file "${workspace}"
+  if grep -q "^${key}=" "${env_file}" 2>/dev/null; then
+    sed -i.bak "s#^${key}=.*#${key}=\"$(sed_escape_replacement "${value}")\"#" "${env_file}"
     rm -f "${env_file}.bak"
   else
-    printf '\nFEISHU_WEBHOOK_URL="%s"\n' "$(sed_escape_replacement "${url}")" >> "${env_file}"
+    printf '%s="%s"\n' "${key}" "$(sed_escape_replacement "${value}")" >> "${env_file}"
   fi
 }
 
@@ -678,6 +714,30 @@ cmd_config() {
       resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
       write_workspace_webhook "${RESOLVED_WORKSPACE}" "${url}"
       ok "Saved FEISHU_WEBHOOK_URL to ${RESOLVED_WORKSPACE}/.env.local"
+      ;;
+    set-cursor-api-key)
+      local api_key="" filtered_args=() arg
+      for arg in "$@"; do
+        case "${arg}" in
+          --project|-p|--workspace|--no-open) filtered_args+=("${arg}") ;;
+          --*) err "Unknown option: ${arg}"; exit 1 ;;
+          *)
+            if [[ -z "${api_key}" ]]; then
+              api_key="${arg}"
+            else
+              err "Unexpected argument: ${arg}"
+              exit 1
+            fi
+            ;;
+        esac
+      done
+      if [[ -z "${api_key}" ]]; then
+        err "Usage: lumen config set-cursor-api-key <key> [--project <slug>]"
+        exit 1
+      fi
+      resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+      write_workspace_cursor_api_key "${RESOLVED_WORKSPACE}" "${api_key}"
+      ok "Saved CURSOR_API_KEY to ${RESOLVED_WORKSPACE}/.env.local"
       ;;
     set-scan-window)
       local days="" filtered_args=() arg
@@ -820,13 +880,26 @@ cmd_config() {
         warn "No .env.local found for this workspace."
       fi
       ;;
+    unset-cursor-api-key)
+      resolve_command_workspace "$@"
+      local env_file="${RESOLVED_WORKSPACE}/.env.local"
+      if [[ -f "${env_file}" ]]; then
+        sed -i.bak '/^CURSOR_API_KEY=/d' "${env_file}"
+        rm -f "${env_file}.bak"
+        ok "Removed CURSOR_API_KEY from ${env_file}"
+      else
+        warn "No .env.local found for this workspace."
+      fi
+      ;;
     *)
       printf 'Usage:\n'
       printf '  lumen config set-webhook <url> [--project <slug>]\n'
+      printf '  lumen config set-cursor-api-key <key> [--project <slug>]\n'
       printf '  lumen config set-scan-window <days> [--project <slug>]\n'
       printf '  lumen config set-jira [--enable|--disable] [--project-key <key>] [--board-id <id>] [--project <slug>]\n'
       printf '  lumen config show [--project <slug>]\n'
       printf '  lumen config unset-webhook [--project <slug>]\n'
+      printf '  lumen config unset-cursor-api-key [--project <slug>]\n'
       exit 1
       ;;
   esac
@@ -859,6 +932,14 @@ prompt() {
   if [[ -z "${answer}" ]]; then
     answer="${default_value}"
   fi
+  printf '%s' "${answer}"
+}
+
+prompt_secret() {
+  local message="$1"
+  local answer=""
+  read -r -s -p "${message} (input hidden, Enter to skip): " answer || true
+  printf '\n' >&2
   printf '%s' "${answer}"
 }
 
@@ -1349,7 +1430,7 @@ cmd_init() {
 Next steps:
   1. Edit ${LUMEN_DIR_NAME}/config/repos.json to list the repositories to scan.
   2. Edit ${LUMEN_DIR_NAME}/config/common.json to set project.display_name, project.workspace_root, and execution.model.
-  3. Copy ${LUMEN_DIR_NAME}/.env.local.example to ${LUMEN_DIR_NAME}/.env.local and set FEISHU_WEBHOOK_URL if you want Feishu notifications.
+  3. Copy ${LUMEN_DIR_NAME}/.env.local.example to ${LUMEN_DIR_NAME}/.env.local and set FEISHU_WEBHOOK_URL and/or CURSOR_API_KEY (required for scheduled scans).
   4. Optional: enable Jira sync with lumen config set-jira --enable --project-key <KEY> --project <slug>
   5. Run: lumen doctor
   6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
@@ -1360,7 +1441,7 @@ EOF
 
   printf '\n%sLet'"'"'s configure this workspace.%s\n' "${BOLD}" "${RESET}"
 
-  local display_name workspace_root scan_window model webhook
+  local display_name workspace_root scan_window model webhook cursor_api_key env_written="0"
   display_name="$(prompt "Project display name" "$(basename "${target}")")"
   workspace_root="$(prompt "Where do your repositories live locally? (project root)" "${target}")"
   scan_window="$(prompt "Scan window in days" "7")"
@@ -1369,6 +1450,7 @@ EOF
     model="$(prompt "Enter the exact Cursor model name" "composer-2.5")"
   fi
   webhook="$(prompt "Feishu webhook URL (leave blank to skip notifications)" "")"
+  cursor_api_key="$(prompt_secret "Cursor API key from Dashboard > API Keys")"
 
   local jira_enabled="0" jira_project_key="" jira_board_id="" jira_assign_sprint="1" jira_board_id_set="0"
   if collect_jira_settings_interactively "MBPAS"; then
@@ -1405,9 +1487,15 @@ EOF
   } > "${lumen_dir}/config/repos.json"
 
   if [[ -n "${webhook}" ]]; then
-    sed "s#FEISHU_WEBHOOK_URL=\"\"#FEISHU_WEBHOOK_URL=\"$(sed_escape_replacement "${webhook}")\"#" \
-      "${LUMEN_TEMPLATES_DIR}/.env.local.example" > "${lumen_dir}/.env.local"
-    ok ".env.local created with your Feishu webhook."
+    write_workspace_webhook "${lumen_dir}" "${webhook}"
+    env_written="1"
+  fi
+  if [[ -n "${cursor_api_key}" ]]; then
+    write_workspace_cursor_api_key "${lumen_dir}" "${cursor_api_key}"
+    env_written="1"
+  fi
+  if [[ "${env_written}" == "1" ]]; then
+    ok ".env.local created with your workspace secrets."
   fi
 
   if [[ "${jira_enabled}" == "1" ]]; then
@@ -1425,10 +1513,11 @@ EOF
 Next steps:
   1. Review ${LUMEN_DIR_NAME}/config/repos.json and ${LUMEN_DIR_NAME}/config/common.json — edit anytime.
   2. If Jira sync is enabled, install TWG CLI and run: twg login
-  3. Run: lumen list
-  4. Run: lumen doctor
-  5. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  6. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
+  3. For scheduled scans, ensure CURSOR_API_KEY is set in ${LUMEN_DIR_NAME}/.env.local
+  4. Run: lumen list
+  5. Run: lumen doctor
+  6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
+  7. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
 EOF
 }
 
@@ -1659,16 +1748,18 @@ cmd_schedule_add() {
   local dry_run_flag=""
   [[ "${dry_run}" == "1" ]] && dry_run_flag=" --dry-run"
 
-  local cron_path cron_line
+  local cron_path cron_env cron_line
   if [[ -f "${LUMEN_HOME}/lib/scripts/ensure-path.sh" ]]; then
     # shellcheck source=/dev/null
     source "${LUMEN_HOME}/lib/scripts/ensure-path.sh"
     cron_path="$(schedule_path_export "${lumen_bin}")"
+    cron_env="$(schedule_env_export)"
   else
     cron_path="PATH=\"${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin\""
+    cron_env="HOME=\"${HOME}\" SHELL=\"/bin/sh\" USER=\"${USER:-$(id -un)}\" LOGNAME=\"${LOGNAME:-${USER:-$(id -un)}}\""
   fi
 
-  cron_line="${cron_expr} ${cron_path} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" scan --project ${slug}${dry_run_flag} >> \"${log_file}\" 2>&1 $(schedule_marker "${slug}")"
+  cron_line="${cron_expr} ${cron_path} ${cron_env} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" scan --project ${slug}${dry_run_flag} >> \"${log_file}\" 2>&1 $(schedule_marker "${slug}")"
 
   local existing filtered updated
   existing="$(read_crontab)"
@@ -1678,6 +1769,13 @@ cmd_schedule_add() {
 
   ok "Scheduled scans for '${slug}': ${cron_expr}$([ "${dry_run}" == "1" ] && echo ' (dry-run)')"
   printf 'Log file: %s\n' "${log_file}"
+  if [[ "${dry_run}" != "1" ]]; then
+    load_env_file_if_present "${workspace}/.env.local"
+    if [[ -z "${CURSOR_API_KEY:-}" ]]; then
+      warn "Scheduled scans need CURSOR_API_KEY in ${workspace}/.env.local"
+      printf '  Set it during lumen init or: lumen config set-cursor-api-key <key> --project %s\n' "${slug}"
+    fi
+  fi
   printf 'Run %slumen schedule list%s to review all schedules.\n' "${BOLD}" "${RESET}"
 }
 

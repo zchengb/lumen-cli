@@ -59,3 +59,11 @@ schedule_path_export() {
   printf 'PATH="%s"' "$(build_lumen_path "${lumen_bin}")"
   PATH="${saved_path}"
 }
+
+schedule_env_export() {
+  local home_dir="${HOME:-}"
+  local user_name="${USER:-${LOGNAME:-$(id -un 2>/dev/null || true)}}"
+  [[ -n "${home_dir}" ]] || home_dir="$(eval printf '~%s' "${user_name}")"
+  printf 'HOME="%s" SHELL="/bin/sh" USER="%s" LOGNAME="%s"' \
+    "${home_dir}" "${user_name}" "${user_name}"
+}

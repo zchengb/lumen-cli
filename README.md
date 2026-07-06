@@ -55,6 +55,7 @@ This creates a `.lumen/` folder inside your project root with all scan configura
 - Project display name and where your repositories live locally
 - Scan window (days) and which Cursor model to use
 - Your Feishu webhook URL (optional — written to `.lumen/.env.local` for this project only)
+- Your Cursor API key (optional — written to `.lumen/.env.local` as `CURSOR_API_KEY` for scheduled/cron scans)
 - Repositories to scan: Lumen scans your project root for local git repositories and opens an interactive checklist (`○` / `●`). Use ↑↓ to move, **Space** to toggle a repository, **Enter** to confirm, `a` to select all, and choose **Continue** when done. You can also add repositories manually by clone URL or local path
 
 You can add, remove, or edit repositories and settings at any time by editing `.lumen/config/repos.json` and `.lumen/config/common.json` directly. If `lumen init` was interrupted, run `lumen init` again — it detects the incomplete `.lumen` folder, removes it, and starts fresh. To skip the prompts and get the raw templates instead (e.g. for scripting), run `lumen init --yes` or pipe input from a non-interactive shell.
@@ -83,8 +84,10 @@ Then:
 | `lumen dashboard --project <slug> [--no-open]` | Refresh `dashboard-data.js` and open `dashboard.html`; pass `--no-open` to skip opening a browser |
 | `lumen doctor` | Check installed prerequisites (agent, git, python3, gh, webhook) |
 | `lumen config set-webhook <url> [--project <slug>]` | Save the Feishu webhook in a workspace `.env.local` |
+| `lumen config set-cursor-api-key <key> [--project <slug>]` | Save `CURSOR_API_KEY` in a workspace `.env.local` (for scheduled scans) |
 | `lumen config set-scan-window <days> [--project <slug>]` | Set how many days of git history each scan inspects (`execution.scan_window_days`) |
 | `lumen config show` / `lumen config unset-webhook` | Show workspace settings or remove the Feishu webhook |
+| `lumen config unset-cursor-api-key [--project <slug>]` | Remove `CURSOR_API_KEY` from a workspace |
 | `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled templates (`config/prompts/`, `scan-prompt.md`, dashboard). Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
 | `lumen help` | Show usage |
@@ -232,7 +235,7 @@ lumen schedule remove --project mbpass
 
 The cron expression uses the standard 5-field format (`minute hour day-of-month month day-of-week`). Scheduled runs are appended to `crontab` with a `# lumen-schedule:<slug>` marker and log to `<workspace>/logs/schedule.log`. Add `--dry-run` to schedule mock runs (no Cursor agent, no PRs, no Feishu).
 
-Cron jobs run with a minimal environment. Lumen sets a short `PATH` in crontab so `agent`, `python3`, and `gh` are found during scheduled scans. If scheduled scans fail silently on macOS, upgrade to v1.12.1+ and re-run `lumen schedule add` with the same cron expression to refresh the crontab entry (older versions could write a PATH line long enough for cron to truncate).
+Cron jobs run with a minimal environment. Lumen sets a short `PATH`, `HOME`, and `SHELL` in crontab. Scheduled scans also need **`CURSOR_API_KEY`** in `<workspace>/.env.local` — interactive `agent login` tokens are not available to cron on macOS. Get a key from **Cursor Settings > API Keys**. If scheduled scans fail silently, upgrade to v1.12.1+ and re-run `lumen schedule add` with the same cron expression to refresh the crontab entry (older versions could write a PATH line long enough for cron to truncate).
 
 ### Scan notifications
 

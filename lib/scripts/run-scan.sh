@@ -244,6 +244,12 @@ load_scan_prompt() {
 
 run_real_scan() {
   command -v agent >/dev/null 2>&1 || fail "Cursor CLI 'agent' was not found in PATH. Install it from https://cursor.com/cli before running a scan."
+  if [[ -z "${CURSOR_API_KEY:-}" ]] && ! agent status >/dev/null 2>&1; then
+    fail "Cursor agent is not authenticated for non-interactive runs. Add CURSOR_API_KEY to ${WORKSPACE_ROOT}/.env.local (Cursor Settings > API Keys), then re-run the scan."
+  fi
+  if [[ -z "${CURSOR_API_KEY:-}" && ! -t 0 ]]; then
+    fail "Scheduled scans require CURSOR_API_KEY in ${WORKSPACE_ROOT}/.env.local. Interactive 'agent login' tokens are not available to cron. Add the key from Cursor Settings > API Keys."
+  fi
   local scan_prompt
   scan_prompt="$(load_scan_prompt)" || fail "Scan prompt not found. Run 'lumen init' or 'lumen upgrade --project <slug>' in this workspace first."
 
