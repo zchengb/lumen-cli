@@ -17,7 +17,14 @@ Do not create extra decision, question, change, refactor, or evidence files unle
 
 The Business Loop may run in Codex, Cursor, or another compatible Agent. The tool is not important; the contract is.
 
-The Business Loop turns unclear business input into a clear `story.md`. During the Business Loop, the Agent should:
+The Business Loop turns unclear business input into a clear `story.md`. Before starting the Business Loop, the Agent should refresh the workspace context:
+
+- Pull the docs repo (`xxxx-docs`) first.
+- Pull every configured code repository in the workspace that may be used as context.
+- Use safe git sync: check `git status` first, then run `git pull --ff-only` only when the repo has no local uncommitted changes.
+- If any repo has local uncommitted changes or cannot fast-forward, stop and ask the user how to proceed. Do not stash, reset, checkout, or overwrite user work automatically.
+
+During the Business Loop, the Agent should:
 
 1. Read the existing `story.md` and `metadata.json`.
 2. Inspect relevant repository context if available.
