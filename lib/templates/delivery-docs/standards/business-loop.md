@@ -28,6 +28,12 @@ The Business Loop turns early business input into a clear, implementation-ready 
 10. Ask whether to create or bind a JIRA Story.
 11. If confirmed, create or bind JIRA and write the result to `metadata.json`.
 
+## Language
+
+Use the primary language of the user's business input for `story.md`. Do not force English, Chinese, or any fixed language. Keep product names, domain terms, JIRA keys, code identifiers, API names, field names, and configuration names in their original form.
+
+JIRA Story content created from `story.md` should use the same primary language as `story.md`.
+
 ## Progressive Q&A
 
 A Business Loop question must be concise and answerable. Prefer interactive Q&A if supported by the environment. Otherwise use a text menu.

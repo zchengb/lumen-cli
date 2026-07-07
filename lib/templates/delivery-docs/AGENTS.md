@@ -110,6 +110,12 @@ C. Not decided yet; mark the story blocked
 D. Other: describe your answer
 ```
 
+## Language Rule
+
+Write `story.md` in the primary language of the user's business input by default. Do not force English or any other fixed language. Keep the story internally consistent in one main language unless the user explicitly asks otherwise. Preserve product names, domain terms, JIRA keys, code identifiers, API names, field names, and configuration names in their original form.
+
+When creating or updating a JIRA Story from `story.md`, use the same primary language as `story.md`.
+
 ## Story Rules
 
 `story.md` must be business-readable. It should contain only:
