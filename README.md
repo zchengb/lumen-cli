@@ -235,7 +235,7 @@ lumen schedule remove --project mbpass
 
 The cron expression uses the standard 5-field format (`minute hour day-of-month month day-of-week`). Scheduled runs are appended to `crontab` with a `# lumen-schedule:<slug>` marker and log to `<workspace>/logs/schedule.log`. Add `--dry-run` to schedule mock runs (no Cursor agent, no PRs, no Feishu).
 
-Cron jobs run with a minimal environment. Lumen sets a short `PATH`, `HOME`, and `SHELL` in crontab. Scheduled scans also need **`CURSOR_API_KEY`** in `<workspace>/.env.local` — interactive `agent login` tokens are not available to cron on macOS. Get a key from **Cursor Settings > API Keys**. If scheduled scans fail silently, upgrade to v1.12.1+ and re-run `lumen schedule add` with the same cron expression to refresh the crontab entry (older versions could write a PATH line long enough for cron to truncate).
+Cron jobs run with a minimal environment. Lumen sets a short `PATH`, `HOME`, `SHELL`, and `AGENT_CLI_CREDENTIAL_STORE=file` in crontab (the last avoids macOS Keychain access, which cron cannot use). Scheduled scans also need **`CURSOR_API_KEY`** in `<workspace>/.env.local` — interactive `agent login` tokens are not available to cron on macOS. Get a key from **Cursor Settings > API Keys**. If scheduled scans fail silently, upgrade to v1.12.1+ and re-run `lumen schedule add` with the same cron expression to refresh the crontab entry (older versions could write a PATH line long enough for cron to truncate).
 
 ### Scan notifications
 

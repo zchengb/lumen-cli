@@ -64,6 +64,6 @@ schedule_env_export() {
   local home_dir="${HOME:-}"
   local user_name="${USER:-${LOGNAME:-$(id -un 2>/dev/null || true)}}"
   [[ -n "${home_dir}" ]] || home_dir="$(eval printf '~%s' "${user_name}")"
-  printf 'HOME="%s" SHELL="/bin/sh" USER="%s" LOGNAME="%s"' \
+  printf 'HOME="%s" SHELL="/bin/sh" USER="%s" LOGNAME="%s" AGENT_CLI_CREDENTIAL_STORE="file"' \
     "${home_dir}" "${user_name}" "${user_name}"
 }

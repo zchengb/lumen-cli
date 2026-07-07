@@ -336,6 +336,10 @@ date -u '+%Y-%m-%dT%H:%M:%SZ' > "${LOCK_DIR}/started_at"
 load_env_file "${WORKSPACE_ROOT}/.env.common"
 load_env_file "${WORKSPACE_ROOT}/.env.local"
 
+if [[ -n "${CURSOR_API_KEY:-}" ]] || [[ ! -t 0 ]]; then
+  export AGENT_CLI_CREDENTIAL_STORE=file
+fi
+
 notify_system "Lumen" "${SCAN_LABEL} started: ${PROJECT_NAME}"
 
 if [[ "${DRY_RUN}" == "1" || "${DRY_RUN}" == "true" || "${DRY_RUN}" == "yes" ]]; then
