@@ -8,7 +8,7 @@ This repository stores lightweight Lumen Delivery documents for business explora
 stories/
   <JIRA-KEY>-<slug>/
     story.md
-    plan.md
+    technical-plan.md
     metadata.json
     assets/
 standards/
@@ -16,14 +16,14 @@ standards/
   technical-loop.md
 templates/
   story.md
-  plan.md
+  technical-plan.md
 notifications/
   feishu-delivery-card-template.json
 ```
 
 ## Principles
 
-- Humans mainly read and edit `story.md` and `plan.md`.
+- Humans mainly read and edit `story.md` and `technical-plan.md`.
 - Status lives in `metadata.json`.
 - Images live in each story's `assets/` folder.
 - Business changes are reviewed through Git diff.

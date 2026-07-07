@@ -7,5 +7,6 @@
   "deliveryStatus": "not_started",
   "linkedRepos": ["mini-lumen-web"],
   "updatedAt": "__TODAY__",
+  "technicalPlanFile": "technical-plan.md",
   "logs": []
 }

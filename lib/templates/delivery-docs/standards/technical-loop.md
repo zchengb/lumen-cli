@@ -11,7 +11,7 @@ The Technical Loop turns a business-ready story into an approved technical plan.
 
 ## Outputs
 
-- `plan.md`
+- `technical-plan.md`
 - Updated `metadata.json.technicalStatus` through Lumen or explicit status update
 
 ## Rules

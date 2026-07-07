@@ -7,9 +7,9 @@ This repository is the source of truth for business stories and technical delive
 Each story is intentionally lightweight:
 
 - `story.md` - business truth, maintained by humans with Agent help
-- `plan.md` - technical delivery plan, maintained during the technical loop
+- `technical-plan.md` - technical delivery plan, maintained during the technical loop
 - `metadata.json` - status and machine-readable index, maintained by Lumen or explicit status commands
-- `assets/` - images referenced by `story.md` or `plan.md`
+- `assets/` - images referenced by `story.md` or `technical-plan.md`
 
 Do not create extra decision, question, change, refactor, or evidence files unless explicitly requested. Git diff, commits, PRs, JIRA comments, and Lumen logs are the default audit trail.
 
@@ -92,17 +92,17 @@ Valid `businessStatus` values:
 
 ## Technical Loop
 
-The Technical Loop reads `story.md` and produces `plan.md`. Do not implement code until:
+The Technical Loop reads `story.md` and produces `technical-plan.md`. Do not implement code until:
 
 - `metadata.json.businessStatus` is `ready`
-- `plan.md` exists
+- `technical-plan.md` exists
 - `metadata.json.technicalStatus` is `approved`
 
 ## Change Handling
 
 Business changes are reflected directly in `story.md` and reviewed through Git diff. Do not create separate CR files by default.
 
-Refactors are discussed in the development tool and reviewed through code diff or PR description. Do not create separate RF files by default. If a refactor changes architecture or public API behavior, record it in `plan.md` under `Refactoring Notes`.
+Refactors are discussed in the development tool and reviewed through code diff or PR description. Do not create separate RF files by default. If a refactor changes architecture or public API behavior, record it in `technical-plan.md` under `Refactoring Notes`.
 
 ## Agent Response Format
 

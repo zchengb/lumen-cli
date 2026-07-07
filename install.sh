@@ -20,6 +20,9 @@ echo "${BOLD}Installing Lumen CLI...${RESET}"
 mkdir -p "${LUMEN_HOME}/lib"
 mkdir -p "${BIN_DIR}"
 
+# Lumen owns these library directories. Remove them before copying so
+# deleted templates from older versions do not survive upgrades.
+rm -rf "${LUMEN_HOME}/lib/scripts" "${LUMEN_HOME}/lib/templates"
 cp -R "${SCRIPT_DIR}/lib/scripts" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/templates" "${LUMEN_HOME}/lib/"
 cp "${SCRIPT_DIR}/VERSION" "${LUMEN_HOME}/VERSION"

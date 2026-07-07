@@ -1869,7 +1869,7 @@ cmd_schedule() {
 
 
 cmd_delivery_init_docs() {
-  local target_dir="delivery-docs"
+  local target_dir=""
   local project_name="Delivery Docs"
   local example_key="DEMO-001"
   local force="0"
@@ -1898,6 +1898,15 @@ cmd_delivery_init_docs() {
         ;;
     esac
   done
+
+  if [[ -z "${target_dir}" ]]; then
+    if [[ -t 0 && -t 1 ]]; then
+      read -r -p "Docs folder [delivery-docs]: " target_dir || true
+      target_dir="${target_dir:-delivery-docs}"
+    else
+      target_dir="delivery-docs"
+    fi
+  fi
 
   local init_py="${LUMEN_HOME}/lib/scripts/init_delivery_docs.py"
   if [[ ! -f "${init_py}" ]]; then
