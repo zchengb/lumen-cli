@@ -3,3 +3,5 @@ build/
 *.tmp
 .test-lumen-bin/
 .test-lumen-home/
+
+.idea/
