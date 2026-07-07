@@ -25,6 +25,8 @@ The Business Loop turns early business input into a clear, implementation-ready 
 7. Agent updates Acceptance Criteria and Business Rules when needed.
 8. Agent repeats only if another high-impact ambiguity remains.
 9. When clear, mark `businessStatus` as `ready`.
+10. Ask whether to create or bind a JIRA Story.
+11. If confirmed, create or bind JIRA and write the result to `metadata.json`.
 
 ## Progressive Q&A
 
@@ -50,6 +52,32 @@ Rules:
 - Always allow a custom answer.
 - Do not ask users to fill blank templates.
 - Record the final answer in `story.md`, not the entire chat history.
+
+## JIRA Publishing
+
+The docs story is the starting point. JIRA should be created or bound after the story is business-ready, not before.
+
+Ask the user:
+
+```text
+The story looks business-ready. Should I create or bind a JIRA Story for it?
+
+A. Create a new JIRA Story (Recommended)
+B. Bind to an existing JIRA issue
+C. Not now; keep it in docs only
+D. Other: describe what to do
+```
+
+Behavior:
+
+- Do not create JIRA without explicit confirmation.
+- Prefer Atlassian/JIRA MCP when available.
+- If Atlassian/JIRA MCP is not available, use `twg-cli` / `twg jira` fallback.
+- Discover required JIRA fields before creation.
+- Create issue type `Story` by default.
+- Use `story.md` as the source for JIRA summary and description.
+- After create or bind, update `metadata.json` with the JIRA key, URL, issue type, and publish time.
+- Verify by reading the JIRA issue back.
 
 ## Readiness
 

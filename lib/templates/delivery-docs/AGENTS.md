@@ -26,6 +26,34 @@ The Business Loop turns unclear business input into a clear `story.md`. During t
 5. Update `Background and User Story`, `Acceptance Criteria`, `Business Rules`, and `Out of Scope` as needed.
 6. Reference images from `assets/` using relative Markdown links.
 7. Never modify application code.
+8. When the story becomes clear, ask whether to publish it to JIRA as a Story.
+
+## JIRA Publication Rule
+
+Docs are created first. JIRA is created or bound only after the business story is clear enough for confirmation.
+
+When `businessStatus` is ready or the user confirms the story is ready, the Agent should ask one explicit question:
+
+```text
+The story looks business-ready. Should I create or bind a JIRA Story for it?
+
+A. Create a new JIRA Story (Recommended)
+B. Bind to an existing JIRA issue
+C. Not now; keep it in docs only
+D. Other: describe what to do
+```
+
+Rules:
+
+- Do not create a JIRA issue without explicit user confirmation.
+- Prefer Atlassian/JIRA MCP when available in the active Agent environment.
+- If Atlassian/JIRA MCP is unavailable, use `twg-cli` / `twg jira` as the fallback.
+- Before creating, discover required fields for the target JIRA project and Story issue type.
+- Create issue type `Story` unless the user chooses another type.
+- Use `story.md` as the source for summary and description; do not paste raw chat history.
+- After creation or binding, update `metadata.json.jiraKey`, `metadata.json.jiraUrl`, `metadata.json.jiraIssueType`, and `metadata.json.jiraPublishedAt`.
+- Add a short JIRA comment linking back to this docs story when supported.
+- Verify the created or bound JIRA issue by reading it back and report the key and URL.
 
 ## Progressive Questioning Rule
 
@@ -71,6 +99,8 @@ If an edge case matters, express it as an Acceptance Criterion or Business Rule.
 
 `metadata.json` is the status file. It contains:
 
+- `storyId`
+- `jiraKey` / `jiraUrl` / `jiraIssueType`
 - `businessStatus`
 - `technicalStatus`
 - `deliveryStatus`

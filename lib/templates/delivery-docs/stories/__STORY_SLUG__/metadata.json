@@ -1,7 +1,10 @@
 {
-  "jiraKey": "__JIRA_KEY__",
+  "storyId": "__JIRA_KEY__",
   "title": "Mini Web Welcome Banner",
+  "jiraKey": "",
   "jiraUrl": "",
+  "jiraIssueType": "Story",
+  "jiraPublishedAt": "",
   "businessStatus": "ready",
   "technicalStatus": "approved",
   "deliveryStatus": "not_started",
