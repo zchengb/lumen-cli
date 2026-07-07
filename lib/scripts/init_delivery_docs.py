@@ -13,7 +13,10 @@ def template_root() -> Path:
 
 
 def story_slug(example_key: str) -> str:
-    return f"{example_key}-mini-web-welcome".replace("_", "-")
+    # The example story has no real JIRA issue yet, so its folder should not
+    # pretend to have a JIRA-like key prefix. Keep the example key only in
+    # metadata as the local story id.
+    return "mini-web-welcome"
 
 
 def render_text(text: str, values: dict[str, str]) -> str:

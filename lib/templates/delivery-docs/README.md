@@ -6,7 +6,8 @@ This repository stores lightweight Lumen Delivery documents for business explora
 
 ```text
 stories/
-  <JIRA-KEY>-<slug>/
+  <slug>/                  # before JIRA exists
+  <JIRA-KEY>-<slug>/       # after JIRA is created or bound
     story.md
     technical-plan.md
     metadata.json
@@ -27,4 +28,5 @@ notifications/
 - Status lives in `metadata.json`.
 - Images live in each story's `assets/` folder.
 - Business changes are reviewed through Git diff.
+- Story folders use a plain business slug before JIRA publication and `<JIRA-KEY>-<slug>` after JIRA is created or bound.
 - Runtime evidence lives in Lumen logs, not in this docs repo by default.

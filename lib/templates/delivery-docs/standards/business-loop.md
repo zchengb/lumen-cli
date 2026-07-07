@@ -102,8 +102,8 @@ Behavior:
   - Docs link or docs path
 - After create or bind, update `metadata.json` with the JIRA key, URL, issue type, and publish time.
 - Also update `jiraUrl` in the YAML front matter of `story.md`.
-- Before JIRA exists, keep the `story.md` H1 as `# <Story Title>` without a local story id prefix.
-- After create or bind, update the H1 to `# <JIRA-KEY> <Story Title>` using the real JIRA key.
+- Before JIRA exists, keep the `story.md` H1 as `# <Story Title>` without a local story id prefix, and do not use a fake JIRA-like prefix in the story folder name.
+- After create or bind, update the H1 to `# <JIRA-KEY> <Story Title>` and rename the story folder to `<JIRA-KEY>-<slug>` using the real JIRA key when it can be done safely.
 - Verify by reading the JIRA issue back.
 
 ## Readiness

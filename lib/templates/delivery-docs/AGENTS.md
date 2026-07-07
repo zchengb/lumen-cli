@@ -61,8 +61,8 @@ Rules:
 - Write the JIRA description in a standard Agile Story format.
 - After creation or binding, update `metadata.json.jiraKey`, `metadata.json.jiraUrl`, `metadata.json.jiraIssueType`, and `metadata.json.jiraPublishedAt`.
 - Also update `jiraUrl` in the YAML front matter of `story.md`.
-- Before a JIRA issue exists, do not prefix the `story.md` H1 with a local story id. Use `# <Story Title>` only.
-- After a JIRA issue is created or bound, update the `story.md` H1 to `# <JIRA-KEY> <Story Title>` using the real JIRA key.
+- Before a JIRA issue exists, do not prefix the `story.md` H1 or story folder name with a local story id that looks like a JIRA key. Use `# <Story Title>` for the H1 and a plain business slug for the folder name when possible.
+- After a JIRA issue is created or bound, update the `story.md` H1 to `# <JIRA-KEY> <Story Title>` using the real JIRA key. Rename the story folder to `<JIRA-KEY>-<slug>` when it can be done without overwriting an existing folder.
 - Add a short JIRA comment linking back to this docs story when supported.
 - Verify the created or bound JIRA issue by reading it back and report the key and URL.
 
@@ -138,7 +138,7 @@ When creating or updating a JIRA Story from `story.md`, use the same primary lan
 
 Do not put delivery status in `story.md`. Do not put technical implementation details in `story.md`. Do not put raw chat history in `story.md`.
 
-Title rule: before JIRA publication, the H1 must be `# <Story Title>` without any local story id prefix. After JIRA publication or binding, the H1 may become `# <JIRA-KEY> <Story Title>` using the real JIRA key.
+Title and folder rule: before JIRA publication, the H1 must be `# <Story Title>` without any local story id prefix, and the story folder should not use a fake JIRA-like prefix. After JIRA publication or binding, the H1 may become `# <JIRA-KEY> <Story Title>` and the story folder should become `<JIRA-KEY>-<slug>` using the real JIRA key.
 
 If an edge case matters, express it as an Acceptance Criterion or Business Rule. Do not maintain a separate Edge Cases section by default.
 
