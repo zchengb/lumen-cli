@@ -1,5 +1,7 @@
 # <JIRA-KEY> <Story Title>
 
+JIRA: Not published yet
+
 ## Background and User Story
 
 Describe the business background and user need in a short, readable form.

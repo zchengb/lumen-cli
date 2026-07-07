@@ -51,9 +51,38 @@ Rules:
 - Before creating, discover required fields for the target JIRA project and Story issue type.
 - Create issue type `Story` unless the user chooses another type.
 - Use `story.md` as the source for summary and description; do not paste raw chat history.
+- Write the JIRA description in a standard Agile Story format.
 - After creation or binding, update `metadata.json.jiraKey`, `metadata.json.jiraUrl`, `metadata.json.jiraIssueType`, and `metadata.json.jiraPublishedAt`.
+- Also update the `JIRA:` line near the top of `story.md` with the created or bound issue link.
 - Add a short JIRA comment linking back to this docs story when supported.
 - Verify the created or bound JIRA issue by reading it back and report the key and URL.
+
+JIRA Story description format:
+
+```markdown
+## User Story
+As a <user>,
+I want <capability>,
+so that <business value>.
+
+## Business Context
+<short background from story.md>
+
+## Acceptance Criteria
+<copy the ACs in Given/When/Then form>
+
+## Business Rules
+<copy confirmed business rules>
+
+## Clarifications
+<copy only confirmed Q&A that materially affects scope>
+
+## Out of Scope
+<copy explicit exclusions>
+
+## Docs
+<relative docs path or repository URL when available>
+```
 
 ## Progressive Questioning Rule
 
@@ -85,6 +114,7 @@ D. Other: describe your answer
 
 `story.md` must be business-readable. It should contain only:
 
+- JIRA link
 - Background and User Story
 - Acceptance Criteria
 - Business Rules

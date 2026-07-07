@@ -76,7 +76,16 @@ Behavior:
 - Discover required JIRA fields before creation.
 - Create issue type `Story` by default.
 - Use `story.md` as the source for JIRA summary and description.
+- Write the JIRA description in standard Agile Story format:
+  - User Story
+  - Business Context
+  - Acceptance Criteria in Given/When/Then form
+  - Business Rules
+  - Clarifications that materially affect scope
+  - Out of Scope
+  - Docs link or docs path
 - After create or bind, update `metadata.json` with the JIRA key, URL, issue type, and publish time.
+- Also update the `JIRA:` line near the top of `story.md` with the issue link.
 - Verify by reading the JIRA issue back.
 
 ## Readiness
