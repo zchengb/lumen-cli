@@ -3,7 +3,7 @@ title: "Mini Web Welcome Banner"
 jiraUrl: ""
 ---
 
-# __JIRA_KEY__ Mini Web Welcome Banner
+# Mini Web Welcome Banner
 
 ## Background
 

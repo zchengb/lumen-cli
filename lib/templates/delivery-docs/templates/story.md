@@ -3,7 +3,7 @@ title: "<Story Title>"
 jiraUrl: ""
 ---
 
-# <STORY-ID> <Story Title>
+# <Story Title>
 
 ## Background
 
