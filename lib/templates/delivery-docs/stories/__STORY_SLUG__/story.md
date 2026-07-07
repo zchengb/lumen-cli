@@ -1,6 +1,13 @@
-# __JIRA_KEY__ Mini Web Welcome Banner
+---
+storyId: "__JIRA_KEY__"
+title: "Mini Web Welcome Banner"
+jiraKey: ""
+jiraUrl: ""
+jiraIssueType: "Story"
+jiraPublishedAt: ""
+---
 
-JIRA: Not published yet
+# __JIRA_KEY__ Mini Web Welcome Banner
 
 ## Background and User Story
 

@@ -85,7 +85,7 @@ Behavior:
   - Out of Scope
   - Docs link or docs path
 - After create or bind, update `metadata.json` with the JIRA key, URL, issue type, and publish time.
-- Also update the `JIRA:` line near the top of `story.md` with the issue link.
+- Also update the YAML front matter in `story.md` with the JIRA key, URL, issue type, and publish time.
 - Verify by reading the JIRA issue back.
 
 ## Readiness

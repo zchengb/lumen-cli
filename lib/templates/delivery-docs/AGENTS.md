@@ -53,7 +53,7 @@ Rules:
 - Use `story.md` as the source for summary and description; do not paste raw chat history.
 - Write the JIRA description in a standard Agile Story format.
 - After creation or binding, update `metadata.json.jiraKey`, `metadata.json.jiraUrl`, `metadata.json.jiraIssueType`, and `metadata.json.jiraPublishedAt`.
-- Also update the `JIRA:` line near the top of `story.md` with the created or bound issue link.
+- Also update the YAML front matter in `story.md` with `jiraKey`, `jiraUrl`, `jiraIssueType`, and `jiraPublishedAt`.
 - Add a short JIRA comment linking back to this docs story when supported.
 - Verify the created or bound JIRA issue by reading it back and report the key and URL.
 
@@ -114,7 +114,7 @@ D. Other: describe your answer
 
 `story.md` must be business-readable. It should contain only:
 
-- JIRA link
+- YAML front matter metadata, including JIRA link fields
 - Background and User Story
 - Acceptance Criteria
 - Business Rules

@@ -1,6 +1,13 @@
-# <JIRA-KEY> <Story Title>
+---
+storyId: "<STORY-ID>"
+title: "<Story Title>"
+jiraKey: ""
+jiraUrl: ""
+jiraIssueType: "Story"
+jiraPublishedAt: ""
+---
 
-JIRA: Not published yet
+# <STORY-ID> <Story Title>
 
 ## Background and User Story
 
