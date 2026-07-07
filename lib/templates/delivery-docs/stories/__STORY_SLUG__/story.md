@@ -1,15 +1,11 @@
 ---
-storyId: "__JIRA_KEY__"
 title: "Mini Web Welcome Banner"
-jiraKey: ""
 jiraUrl: ""
-jiraIssueType: "Story"
-jiraPublishedAt: ""
 ---
 
 # __JIRA_KEY__ Mini Web Welcome Banner
 
-## Background and User Story
+## Background
 
 The mini web app needs a simple home page banner so visitors can quickly understand what this demo application is for.
 
@@ -59,7 +55,3 @@ Then the banner works without backend services.
 - Database persistence
 - Jenkins integration
 - Mobile native build
-
-## Images
-
-No images are required for this demo. If needed, place images in `assets/` and reference them with relative Markdown links.

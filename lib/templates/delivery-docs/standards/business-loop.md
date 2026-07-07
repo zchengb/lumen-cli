@@ -7,7 +7,7 @@ The Business Loop turns early business input into a clear, implementation-ready 
 - Initial business text or JIRA description
 - Existing `story.md` if present
 - Relevant code/repository context when useful
-- Optional screenshots or sketches placed under `assets/`
+- Optional screenshots or sketches placed under `assets/` and referenced inline where they are discussed
 
 ## Outputs
 
@@ -85,7 +85,7 @@ Behavior:
   - Out of Scope
   - Docs link or docs path
 - After create or bind, update `metadata.json` with the JIRA key, URL, issue type, and publish time.
-- Also update the YAML front matter in `story.md` with the JIRA key, URL, issue type, and publish time.
+- Also update `jiraUrl` in the YAML front matter of `story.md`.
 - Verify by reading the JIRA issue back.
 
 ## Readiness

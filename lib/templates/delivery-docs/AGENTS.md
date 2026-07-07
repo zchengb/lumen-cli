@@ -23,8 +23,8 @@ The Business Loop turns unclear business input into a clear `story.md`. During t
 2. Inspect relevant repository context if available.
 3. Ask focused questions for unclear business points.
 4. Record clarified question-answer pairs in `story.md` under `Clarifications`.
-5. Update `Background and User Story`, `Acceptance Criteria`, `Business Rules`, and `Out of Scope` as needed.
-6. Reference images from `assets/` using relative Markdown links.
+5. Update `Background`, `Acceptance Criteria`, `Business Rules`, and `Out of Scope` as needed.
+6. Place image files under `assets/` when needed, and reference them inline in the relevant section using relative Markdown links.
 7. Never modify application code.
 8. When the story becomes clear, ask whether to publish it to JIRA as a Story.
 
@@ -53,7 +53,7 @@ Rules:
 - Use `story.md` as the source for summary and description; do not paste raw chat history.
 - Write the JIRA description in a standard Agile Story format.
 - After creation or binding, update `metadata.json.jiraKey`, `metadata.json.jiraUrl`, `metadata.json.jiraIssueType`, and `metadata.json.jiraPublishedAt`.
-- Also update the YAML front matter in `story.md` with `jiraKey`, `jiraUrl`, `jiraIssueType`, and `jiraPublishedAt`.
+- Also update `jiraUrl` in the YAML front matter of `story.md`.
 - Add a short JIRA comment linking back to this docs story when supported.
 - Verify the created or bound JIRA issue by reading it back and report the key and URL.
 
@@ -114,8 +114,8 @@ D. Other: describe your answer
 
 `story.md` must be business-readable. It should contain only:
 
-- YAML front matter metadata, including JIRA link fields
-- Background and User Story
+- YAML front matter metadata with `title` and `jiraUrl`
+- Background
 - Acceptance Criteria
 - Business Rules
 - Clarifications

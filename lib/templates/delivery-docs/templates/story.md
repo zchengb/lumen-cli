@@ -1,15 +1,11 @@
 ---
-storyId: "<STORY-ID>"
 title: "<Story Title>"
-jiraKey: ""
 jiraUrl: ""
-jiraIssueType: "Story"
-jiraPublishedAt: ""
 ---
 
 # <STORY-ID> <Story Title>
 
-## Background and User Story
+## Background
 
 Describe the business background and user need in a short, readable form.
 
@@ -39,10 +35,3 @@ Then ...
 
 - TBD
 
-## Images
-
-Add images to `assets/` and reference them here when needed.
-
-```markdown
-![Description](assets/example.png)
-```
