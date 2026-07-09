@@ -5,7 +5,7 @@ Write a structured JSON result with this shape:
 ```json
 {
   "scan_status": "completed",
-  "scan_window": "Last 7 Days",
+  "scan_window": "Last <N> Days",
   "started_at": "ISO-8601 timestamp",
   "finished_at": "ISO-8601 timestamp",
   "repositories_scanned": 0,

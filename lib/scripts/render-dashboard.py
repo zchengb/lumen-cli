@@ -312,10 +312,23 @@ def issue_for_dashboard(issue: dict) -> dict:
         "last_seen_at": issue.get("last_seen_at", ""),
         "resolved_at": issue.get("resolved_at", ""),
         "resolution_reason": issue.get("resolution_reason", ""),
+        "stale": bool(issue.get("stale")),
+        "ignored_at": issue.get("ignored_at", ""),
         "pr_url": issue.get("pr_url"),
         "jira_key": issue.get("jira_key"),
         "jira_url": issue.get("jira_url"),
     }
+
+
+def get_scan_window_days(common: dict) -> int:
+    execution = common.get("execution", {})
+    if not isinstance(execution, dict):
+        return 7
+    try:
+        days = int(execution.get("scan_window_days", 7))
+    except (TypeError, ValueError):
+        return 7
+    return max(days, 1)
 
 
 def is_dry_run(data: dict) -> bool:
@@ -415,6 +428,8 @@ def main() -> int:
 
     payload = {
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "workspace_root": str(root),
+        "scan_window_days": get_scan_window_days(common),
         "product": {
             "name": product.get("name", "Lumen"),
             "tagline": product.get("tagline", "Illuminate code health across your repositories"),

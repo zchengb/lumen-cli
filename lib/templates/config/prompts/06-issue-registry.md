@@ -42,14 +42,23 @@ If an issue is still present, include it again in `findings` even if it was repo
 
 Scan window rule:
 
-The configured scan window controls which recent changes are newly inspected. It must not remove unresolved issues from the local registry.
+The configured `execution.scan_window_days` in `config/common.json` controls which recent changes are newly inspected.
 
-If an issue is older than the scan window and still unresolved, keep it in the registry and include it in the report as an existing open issue. Mark it as stale when it has not been seen for the configured stale threshold. Do not silently ignore unresolved issues only because they are older than 7 days.
+Rules:
+
+1. Only inspect commits, diffs, and changed files within the configured scan window.
+2. Only include issues in `findings` when they are tied to code changed within the scan window, or when you re-verified the vulnerable code during this run inside that window.
+3. Do **not** copy old registry issues into `findings` only because they remain unresolved.
+4. Do **not** report issues from commits older than the configured scan window.
+5. The registry may still retain older unresolved issues, but they belong in `issue_registry` summary counts — not in this run's `findings` array.
+6. When an older open issue is still present and you re-verified it from a file touched in the scan window, you may include it once with accurate evidence.
+
+Set `scan_window` in the result JSON to `Last <N> Days`, where `<N>` is `execution.scan_window_days`.
 
 Report issue counts separately:
 
-- New findings in this run.
-- Existing open issues.
-- Stale open issues.
+- New findings in this run (within scan window).
+- Existing open issues carried in registry summary only.
+- Stale open issues not seen in this run.
 - PR-open issues.
 - Resolved or closed issues.

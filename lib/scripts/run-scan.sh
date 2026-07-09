@@ -242,6 +242,18 @@ load_scan_prompt() {
   return 1
 }
 
+refresh_scan_worktrees() {
+  local mode="${1:-refresh}"
+  local script="${LUMEN_LIB_DIR}/prepare_scan_worktrees.py"
+  [[ -f "${script}" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  printf '\n[scan] %s scan worktrees...\n' "${mode}"
+  python3 "${script}" "${mode}" "${WORKSPACE_ROOT}" 2>&1 | tee -a "${LOG_FILE}" || {
+    printf 'Warning: scan worktree %s failed. See log for details.\n' "${mode}" >&2
+    return 1
+  }
+}
+
 run_real_scan() {
   command -v agent >/dev/null 2>&1 || fail "Cursor CLI 'agent' was not found in PATH. Install it from https://cursor.com/cli before running a scan."
   if [[ -z "${CURSOR_API_KEY:-}" ]] && ! agent status >/dev/null 2>&1; then
@@ -252,6 +264,8 @@ run_real_scan() {
   fi
   local scan_prompt
   scan_prompt="$(load_scan_prompt)" || fail "Scan prompt not found. Run 'lumen init' or 'lumen upgrade --project <slug>' in this workspace first."
+
+  refresh_scan_worktrees refresh || true
 
   printf 'Lumen workspace: %s\n' "${WORKSPACE_ROOT}"
   if [[ -f "${WORKSPACE_ROOT}/config/prompts/manifest.json" ]]; then
@@ -309,6 +323,7 @@ run_real_scan() {
   fi
 
   printf '\nLumen scan agent finished at %s UTC.\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
+  refresh_scan_worktrees refresh || true
   run_report_and_notify || true
   refresh_dashboard
 }

@@ -72,21 +72,22 @@ Use:
 
 Generate the commit message in the same style as the repository's recent history.
 
-Default Lumen commit subject format (use this when creating automated High-severity fix commits unless the repository history clearly requires a different pattern):
+Default Lumen commit subject format (use this for all delivery and automated fix commits):
 
 ```text
-[lumen] #<ticket> <type>: <short description>
+[lumen] #{JIRA_NUMBER} {chore|docs|feat|fix|refactor|style|test}: {COMMIT_MESSAGE}
 ```
 
 Rules for this format:
 
 - Always include the `[lumen]` prefix so automated commits are easy to identify.
-- Use `<ticket>` from nearby commit history, branch names, or PR context when available (for example `#MBPAS-1338`).
-- If no ticket can be inferred, use the placeholder from `config/common.json` → `git.ticket_placeholder` (for example `#MBPAS-XXXX`) and keep the description specific.
-- Use conventional commit types such as `fix`, `refactor`, `security`, or `chore`.
-- Example: `[lumen] #MBPAS-1338 fix: enforce SYSTEM role on survey report endpoint`
+- When repository history uses an author name prefix (for example `[xiaobin]`), replace it with `[lumen]` for Lumen-created commits.
+- Use the JIRA key from story context, branch names, or nearby commit history for `{JIRA_NUMBER}` (for example `MBPAS-1369`).
+- If no JIRA number can be inferred, use `N/A` (for example `[lumen] #N/A feat: ...`).
+- Commit in small, incremental steps; keep each message concise and clear.
+- Example: `[lumen] #MBPAS-1369 refactor: refactor missing-contact dialog.`
 
-If the repository uses a clearly different local pattern in recent history, follow that pattern but still keep the `[lumen]` prefix at the start of the subject line.
+If the repository uses a clearly different local pattern in recent history, follow the type and description style but still use the `[lumen] #...` prefix and format above.
 
 - Keep the subject concise.
 - Use English unless the repository history clearly uses another language.

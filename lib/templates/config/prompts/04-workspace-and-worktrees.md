@@ -12,15 +12,19 @@ Use a stable reusable worktree path for each repository:
 <worktrees_dir>/<repo-name>
 ```
 
-Do not create a fresh full repository checkout for every run. Each configured repository should have at most one reusable auto-scan worktree unless a later implementation explicitly supports multiple isolated lanes.
+Before every scan, run the worktree preparation script:
 
-Before reusing a stable worktree:
+```bash
+python3 <lumen-lib>/prepare_scan_worktrees.py refresh <workspace-root>
+```
 
-1. Confirm it belongs to the expected source repository.
-2. Confirm there are no uncommitted auto-scan changes.
-3. If an old auto-fix branch remains, record it and avoid overwriting it.
-4. Update the default branch before review.
+The script removes stale worktrees, recreates them from the latest default branch, and fetches only commits since the configured scan window using `git fetch --shallow-since=<date>`. The scan wrapper runs this before and after the agent when possible.
 
-If the stable worktree is dirty, do not reset it automatically. Record the blocker and skip that repository unless the dirty state is clearly from an abandoned auto-scan branch and cleanup is explicitly configured.
+Rules:
 
-Run directories under `<tmp_dir>/run-*` are for metadata and transient logs only, not full repository copies. Old run directories may be cleaned according to `config/common.json` retention rules. Never run destructive cleanup against original repository directories.
+1. Do not create a fresh full repository checkout outside the configured worktrees directory.
+2. Each configured repository should have at most one reusable auto-scan worktree.
+3. If the refresh script fails for a repository, record the failure and skip that repository.
+4. Never run destructive cleanup against original repository directories.
+
+Run directories under `<tmp_dir>/run-*` are for metadata and transient logs only, not full repository copies.

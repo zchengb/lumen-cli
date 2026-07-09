@@ -18,8 +18,8 @@ The Business Loop turns early business input into a clear, implementation-ready 
 
 Before starting the Business Loop, refresh the workspace context:
 
-1. Pull the docs repo (`xxxx-docs`) first.
-2. Pull every configured code repository in the workspace that may be used as context.
+1. Pull this docs repository first.
+2. Pull every configured code repository under `repos/` that may be used as context.
 3. For each repo, check `git status` before pulling.
 4. Run `git pull --ff-only` only when the repo has no local uncommitted changes.
 5. If a repo has local uncommitted changes, diverged history, or cannot fast-forward, stop and ask the user how to proceed. Do not stash, reset, checkout, or overwrite user work automatically.

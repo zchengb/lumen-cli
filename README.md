@@ -90,7 +90,43 @@ Then:
 | `lumen config unset-cursor-api-key [--project <slug>]` | Remove `CURSOR_API_KEY` from a workspace |
 | `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled templates (`config/prompts/`, `scan-prompt.md`, dashboard). Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
+| `lumen set-up-docs [dir] [--name <name>] [--key <key>] [--force]` | Initialize a delivery docs repository for Business / Technical / Development loops |
+| `lumen delivery init-docs ...` | Alias for `lumen set-up-docs` |
 | `lumen help` | Show usage |
+
+## Delivery Docs (Business → Technical → Development)
+
+Lumen also ships a **delivery docs** template for story-driven development with Codex, Cursor, or another Agent.
+
+```bash
+lumen set-up-docs ~/Projects/mbpass-docs --name "MBPass Delivery Docs"
+```
+
+This creates a docs repository with:
+
+| Loop | Standard file | Output |
+|---|---|---|
+| Business Loop | `standards/business-loop.md` | `story.md` |
+| Technical Loop | `standards/technical-loop.md` | detailed `technical-plan.md` |
+| Development Loop | `standards/development-loop.md` + Lumen CLI coding guideline | code changes and PR via `lumen delivery run` |
+
+Typical flow:
+
+1. **Business Loop** — clarify requirements in `story.md`, optionally publish to Jira.
+2. **Technical Loop** — inspect repositories and write a file-level `technical-plan.md`.
+3. **Development Loop** — run `lumen delivery run <docs-dir> --story <slug>` to implement the approved plan with the Lumen coding guideline.
+
+```bash
+lumen delivery run ~/Projects/MBPass/mbpass-docs --story MBPAS-1505
+```
+
+The docs repo `AGENTS.md` is the primary agent contract. Status lives in each story's `metadata.json`.
+
+To refresh templates in an existing docs repo:
+
+```bash
+lumen set-up-docs ~/Projects/mbpass-docs --force
+```
 
 ### Feishu webhook (per workspace)
 

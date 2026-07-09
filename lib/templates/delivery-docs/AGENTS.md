@@ -1,8 +1,10 @@
 # __PROJECT_NAME__ Agent Guide
 
-This repository is the source of truth for business stories and technical delivery plans.
+This repository is the source of truth for business stories and technical delivery plans. It is also the delivery workspace root.
 
 ## Repository Model
+
+Business stories live under `stories/`. Linked code repositories live under `repos/` and are gitignored by this docs project.
 
 Each story is intentionally lightweight:
 
@@ -19,8 +21,8 @@ The Business Loop may run in Codex, Cursor, or another compatible Agent. The too
 
 The Business Loop turns unclear business input into a clear `story.md`. Before starting the Business Loop, the Agent should refresh the workspace context:
 
-- Pull the docs repo (`xxxx-docs`) first.
-- Pull every configured code repository in the workspace that may be used as context.
+- Pull this docs repository first.
+- Pull every configured code repository under `repos/` that may be used as context.
 - Use safe git sync: check `git status` first, then run `git pull --ff-only` only when the repo has no local uncommitted changes.
 - If any repo has local uncommitted changes or cannot fast-forward, stop and ask the user how to proceed. Do not stash, reset, checkout, or overwrite user work automatically.
 
@@ -169,11 +171,79 @@ Valid `businessStatus` values:
 
 ## Technical Loop
 
-The Technical Loop reads `story.md` and produces `technical-plan.md`. Do not implement code until:
+The Technical Loop may run in Codex, Cursor, or another compatible Agent. Read `standards/technical-loop.md` for the full contract.
+
+Before starting the Technical Loop, use the same preflight sync rules as the Business Loop.
+
+During the Technical Loop, the Agent should:
+
+1. Read `story.md`, `metadata.json`, and the Lumen coding guideline shipped with the CLI.
+2. Inspect impacted repositories and identify real modules, endpoints, tables, and tests.
+3. Ask one focused technical question at a time when ambiguity affects design, scope, or verification.
+4. Record confirmed technical decisions in `technical-plan.md`.
+5. Produce a file-level plan detailed enough for implementation without guessing.
+6. Set `technicalStatus` to `ready_for_review` when the plan is complete.
+7. Ask for explicit user approval before setting `technicalStatus` to `approved`.
+8. Never modify application code during the Technical Loop.
+
+A technical plan is not ready until it includes repository scope, architecture placement, file-level changes, API/schema/config impact, implementation steps, and verification.
+
+## Technical Status
+
+Valid `technicalStatus` values:
+
+- `draft` - plan exists but is incomplete
+- `clarifying` - Agent is asking technical questions
+- `planning` - Agent is drafting the detailed plan
+- `ready_for_review` - plan is complete and waiting for approval
+- `approved` - user approved; Development Loop may start
+- `blocked` - required technical input or dependency is missing
+- `changed` - story changed after approval; plan must be revised
+
+## Development Loop
+
+The Development Loop is executed by `lumen delivery run`. Read `standards/development-loop.md` for the full contract.
+
+Coding standards are shipped with the Lumen CLI and injected automatically during `lumen delivery run`. Do not copy the coding guideline into the docs repository.
+
+Do not start the Development Loop until:
 
 - `metadata.json.businessStatus` is `ready`
-- `technical-plan.md` exists
 - `metadata.json.technicalStatus` is `approved`
+- `technical-plan.md` is detailed enough for file-level implementation
+
+During the Development Loop, Lumen CLI should:
+
+1. Read the approved `technical-plan.md`, `story.md`, and `metadata.json`.
+2. Resolve code repositories under `<docs-repo>/repos/<repository>/`.
+3. Create feature worktrees under `<docs-repo>/.lumen/worktrees/<repository>/`.
+4. Run the delivery agent with the Lumen coding guideline.
+5. Run verification steps from `technical-plan.md` when tooling is available.
+6. Commit, push, and open a PR when the plan scope is complete.
+7. Update `metadata.json.deliveryStatus` and send delivery notifications.
+
+## Delivery Status
+
+Valid `deliveryStatus` values:
+
+- `not_started` - plan approved but no code work yet
+- `in_progress` - implementation is underway
+- `blocked` - cannot proceed because of environment, dependency, or missing decision
+- `dev_done` - code complete locally but no PR yet
+- `pr_open` - PR created and awaiting review or merge
+- `done` - change merged or accepted as complete
+
+## Coding Standards
+
+Development execution uses the Lumen CLI coding guideline at `lib/standards/coding-guideline.md`.
+
+Run implementation with:
+
+```bash
+lumen delivery run <docs-dir> --story <JIRA-KEY-or-slug>
+```
+
+Interactive technical planning may still run in Codex or Cursor, but code implementation should go through `lumen delivery run` once `technicalStatus` is `approved`.
 
 ## Change Handling
 

@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0",
+  "layout": "nested",
+  "workspace_root": "__DOCS_ROOT__",
+  "docs_repo": ".",
+  "repos_dir": "repos",
+  "repositories": []
+}

@@ -52,6 +52,71 @@ def write_json(path: Path, data: dict) -> None:
         handle.write("\n")
 
 
+def get_scan_window_days(common: dict) -> int:
+    execution = common.get("execution", {})
+    if not isinstance(execution, dict):
+        return 7
+    try:
+        days = int(execution.get("scan_window_days", 7))
+    except (TypeError, ValueError):
+        return 7
+    return max(days, 1)
+
+
+def parse_iso_datetime(value: str) -> Optional[datetime]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def finding_within_scan_window(
+    finding: dict,
+    scan_window_days: int,
+    reference: datetime,
+) -> bool:
+    for field in ("commit_date", "source_date", "introduced_at", "change_date"):
+        raw = finding.get(field)
+        if not raw:
+            continue
+        parsed = parse_iso_datetime(str(raw))
+        if parsed is None:
+            continue
+        age_days = (reference - parsed).days
+        if age_days > scan_window_days:
+            return False
+    return True
+
+
+def apply_scan_window_policy(scan: dict, common: dict) -> dict:
+    scan_window_days = get_scan_window_days(common)
+    scan["scan_window"] = f"Last {scan_window_days} Days"
+    reference = parse_iso_datetime(str(scan.get("started_at", ""))) or datetime.now(timezone.utc)
+    findings = scan.get("findings", [])
+    if not isinstance(findings, list):
+        findings = []
+    kept: list = []
+    excluded = 0
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        if finding_within_scan_window(finding, scan_window_days, reference):
+            kept.append(finding)
+        else:
+            excluded += 1
+    scan["findings"] = kept
+    scan["excluded_findings_outside_scan_window"] = excluded
+    return scan
+
+
 def severity_counts(findings: list) -> dict:
     counts = {"High": 0, "Medium": 0, "Low": 0}
     for finding in findings:
@@ -217,7 +282,12 @@ def find_existing_issue(by_fingerprint: dict, by_match_key: dict, finding: dict,
     return None
 
 
-def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = True) -> dict:
+def reconcile_issue_registry(
+    scan: dict,
+    registry_path: Path,
+    persist: bool = True,
+    stale_after_days: int = 7,
+) -> dict:
     registry = load_json(registry_path, {"schema_version": "1.0", "issues": []})
     issues = deduplicate_registry(registry.setdefault("issues", []))
     by_fingerprint, by_match_key = build_issue_indexes(issues)
@@ -312,6 +382,17 @@ def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = Tr
                 issue["last_seen_at"] = now
 
     registry["issues"] = deduplicate_registry(registry["issues"])
+    now_dt = parse_iso_datetime(now) or datetime.now(timezone.utc)
+    for issue in registry["issues"]:
+        if issue.get("status") not in {"open", "in_progress", "pr_open"}:
+            issue["stale"] = False
+            continue
+        if issue.get("id") in matched_issue_ids:
+            issue["stale"] = False
+            continue
+        last_seen = parse_iso_datetime(str(issue.get("last_seen_at", "")))
+        issue["stale"] = bool(last_seen and (now_dt - last_seen).days > max(stale_after_days, 1))
+
     summary = {
         "path": str(registry_path),
         "new_issues": new_count,
@@ -319,7 +400,7 @@ def reconcile_issue_registry(scan: dict, registry_path: Path, persist: bool = Tr
         "stale_open_issues": sum(
             1
             for i in registry["issues"]
-            if i.get("status") == "open" and i.get("last_seen_at") != now and i.get("id") not in matched_issue_ids
+            if i.get("status") in {"open", "in_progress", "pr_open"} and i.get("stale")
         ),
         "pr_open_issues": sum(1 for i in registry["issues"] if i.get("status") == "pr_open"),
         "resolved_issues": sum(1 for i in registry["issues"] if i.get("status") == "resolved"),
@@ -739,8 +820,22 @@ def main() -> int:
     common = load_json(workspace_root / "config" / "common.json", {})
     product_name = common.get("product", {}).get("name", "Lumen")
     pdf_engine_preference = resolve_pdf_engine_preference(common)
+    issue_tracking = common.get("issue_tracking", {})
+    stale_after_days = 7
+    if isinstance(issue_tracking, dict):
+        try:
+            stale_after_days = int(issue_tracking.get("stale_after_days", 7))
+        except (TypeError, ValueError):
+            stale_after_days = 7
 
-    registry = reconcile_issue_registry(scan, registry_path, persist=not dry_run)
+    scan = apply_scan_window_policy(scan, common)
+
+    registry = reconcile_issue_registry(
+        scan,
+        registry_path,
+        persist=not dry_run,
+        stale_after_days=stale_after_days,
+    )
     scan["jira"] = sync_jira_issues(
         scan,
         registry,

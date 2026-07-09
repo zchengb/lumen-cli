@@ -1,0 +1,83 @@
+{
+  "schema_version": "1.0",
+  "execution": {
+    "model": "composer-2.5",
+    "sandbox": "disabled"
+  },
+  "jira": {
+    "enabled": true,
+    "auto_enable_when_twg_ready": true,
+    "site": "",
+    "in_dev_status": "IN DEV",
+    "dev_done_status": "DEV DONE"
+  },
+  "notifications": {
+    "feishu": {
+      "enabled": true
+    }
+  },
+  "verification": {
+    "auto_run_after_agent": true,
+    "fail_on_error": true,
+    "docker": {
+      "mode": "host_testcontainers",
+      "required_for": ["integration_test"],
+      "check_before_run": true,
+      "skip_if_unavailable": false
+    },
+    "java_gradle": {
+      "steps": [
+        {
+          "id": "language_grammar",
+          "label": "Language Grammar Check",
+          "command": ["./gradlew", "compileJava", "compileTestJava", "-x", "test"]
+        },
+        {
+          "id": "pmd",
+          "label": "PMD Check",
+          "command": ["./gradlew", "pmdMain", "pmdTest"]
+        },
+        {
+          "id": "unit_test",
+          "label": "Unit Test",
+          "command": [
+            "./gradlew",
+            "test",
+            "--tests",
+            "*ApplicationTest",
+            "--tests",
+            "*HelperTest",
+            "--tests",
+            "*RendererTest",
+            "--tests",
+            "*PropertiesTest",
+            "--tests",
+            "*MergerTest",
+            "--tests",
+            "*PusherTest",
+            "--tests",
+            "*QueryApplicationTest"
+          ],
+          "allow_no_tests": true
+        },
+        {
+          "id": "integration_test",
+          "label": "Integration Test",
+          "command": [
+            "./gradlew",
+            "test",
+            "--tests",
+            "*ControllerTest",
+            "--tests",
+            "*BaseTest",
+            "--tests",
+            "*IntegrationTest",
+            "--tests",
+            "*IT"
+          ],
+          "allow_no_tests": true
+        }
+      ]
+    }
+  }
+}

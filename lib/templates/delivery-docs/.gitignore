@@ -1,0 +1,10 @@
+.env.local
+.env.common
+
+.lumen/worktrees/
+.lumen/logs/
+.lumen/results/
+.lumen/tmp/
+
+repos/*/
+!repos/.gitkeep

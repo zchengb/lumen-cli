@@ -1,0 +1,345 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LUMEN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
+
+DOCS_DIR=""
+STORY_REF=""
+DRY_RUN="${LUMEN_DRY_RUN:-0}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --story)
+      STORY_REF="${2:-}"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN="1"
+      shift
+      ;;
+    --*)
+      printf 'Error: unknown option: %s\n' "$1" >&2
+      exit 1
+      ;;
+    *)
+      if [[ -z "${DOCS_DIR}" ]]; then
+        DOCS_DIR="$1"
+      else
+        STORY_REF="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+[[ -n "${DOCS_DIR}" ]] || { printf 'Usage: run-delivery.sh <docs-dir> [--story <slug>] [--dry-run]\n' >&2; exit 1; }
+
+if [[ -f "${LUMEN_LIB_DIR}/ensure-path.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${LUMEN_LIB_DIR}/ensure-path.sh"
+  ensure_lumen_path ""
+fi
+
+DOCS_DIR="$(cd "${DOCS_DIR}" && pwd)"
+
+load_env_file() {
+  local file="$1"
+  if [[ -f "${file}" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "${file}"
+    set +a
+  fi
+}
+
+workspace_root_from_docs() {
+  local resolve_py="${LUMEN_LIB_DIR}/resolve_delivery_workspace.py"
+  if [[ -f "${resolve_py}" ]]; then
+    python3 "${resolve_py}" "${DOCS_DIR}"
+    return
+  fi
+  python3 -c "from pathlib import Path
+import json
+docs = Path('${DOCS_DIR}').resolve()
+config = docs / '.lumen' / 'config' / 'workspace.json'
+if config.is_file():
+    data = json.loads(config.read_text())
+    root = str(data.get('workspace_root', '')).strip()
+    if root in {'.', './'}:
+        print(str(docs), end='')
+        raise SystemExit(0)
+    if root:
+        print(root, end='')
+        raise SystemExit(0)
+print(str(docs), end='')"
+}
+
+WORKSPACE_ROOT="$(workspace_root_from_docs)"
+DELIVERY_CONFIG="${WORKSPACE_ROOT}/.lumen/config/delivery.json"
+RUN_ID="$(date -u '+%Y%m%d-%H%M%S')"
+LOG_DIR="${WORKSPACE_ROOT}/.lumen/logs/delivery"
+LOG_FILE="${LOG_DIR}/run-${RUN_ID}.log"
+RESULT_FILE="${WORKSPACE_ROOT}/.lumen/results/delivery-result.json"
+STARTED_FILE="${WORKSPACE_ROOT}/.lumen/results/delivery-started.json"
+PROGRESS_PY="${LUMEN_LIB_DIR}/delivery_progress.py"
+
+mkdir -p "${LOG_DIR}" "${WORKSPACE_ROOT}/.lumen/results" "${WORKSPACE_ROOT}/.lumen/config" "${WORKSPACE_ROOT}/.lumen/worktrees"
+
+load_env_file "${DOCS_DIR}/.env.common"
+load_env_file "${DOCS_DIR}/.env.local"
+
+fail() {
+  local message="$1"
+  if [[ -f "${PROGRESS_PY}" ]]; then
+    python3 "${PROGRESS_PY}" phase --workspace-root "${WORKSPACE_ROOT}" "${CURRENT_PHASE:-notify}" failed --detail "${message}" || true
+    python3 "${PROGRESS_PY}" finish --workspace-root "${WORKSPACE_ROOT}" failed --detail "${message}" || true
+    python3 "${PROGRESS_PY}" report --workspace-root "${WORKSPACE_ROOT}" || true
+  fi
+  printf 'Error: %s\n' "${message}" >&2
+  exit 1
+}
+
+progress_phase() {
+  local phase_id="$1"
+  local status="$2"
+  local detail="${3:-}"
+  local step="${4:-}"
+  CURRENT_PHASE="${phase_id}"
+  [[ -f "${PROGRESS_PY}" ]] || return 0
+  python3 "${PROGRESS_PY}" phase --workspace-root "${WORKSPACE_ROOT}" "${phase_id}" "${status}" \
+    --detail "${detail}" --step "${step}" || true
+}
+
+progress_message() {
+  local text="$1"
+  [[ -f "${PROGRESS_PY}" ]] || return 0
+  python3 "${PROGRESS_PY}" message --workspace-root "${WORKSPACE_ROOT}" "${text}" || true
+}
+
+init_delivery_progress() {
+  [[ -f "${PROGRESS_PY}" ]] || return 0
+  python3 "${PROGRESS_PY}" init \
+    --workspace-root "${WORKSPACE_ROOT}" \
+    --docs-dir "${DOCS_DIR}" \
+    --story "${STORY_REF}" \
+    --run-id "${RUN_ID}" \
+    --log-file "${LOG_FILE}" || true
+  python3 "${PROGRESS_PY}" report --workspace-root "${WORKSPACE_ROOT}" || true
+}
+
+finish_delivery_progress() {
+  local status="$1"
+  local detail="${2:-}"
+  [[ -f "${PROGRESS_PY}" ]] || return 0
+  python3 "${PROGRESS_PY}" finish --workspace-root "${WORKSPACE_ROOT}" "${status}" --detail "${detail}" || true
+  python3 "${PROGRESS_PY}" report --workspace-root "${WORKSPACE_ROOT}" || true
+}
+
+model_from_config() {
+  if [[ ! -f "${DELIVERY_CONFIG}" ]]; then
+    return 0
+  fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json
+try:
+    with open('${DELIVERY_CONFIG}') as f:
+        c = json.load(f)
+    print(c.get('execution', {}).get('model', '') or '', end='')
+except Exception:
+    pass" 2>/dev/null
+  fi
+}
+
+MODEL="${CURSOR_AGENT_MODEL:-$(model_from_config)}"
+MODEL="${MODEL:-composer-2.5}"
+SANDBOX_MODE="${CURSOR_AGENT_SANDBOX:-disabled}"
+OUTPUT_FORMAT="${CURSOR_AGENT_OUTPUT_FORMAT:-stream-json}"
+STREAM_PARTIAL="${CURSOR_AGENT_STREAM_PARTIAL:-1}"
+
+prepare_delivery() {
+  local prepare_py="${LUMEN_LIB_DIR}/prepare_delivery_run.py"
+  [[ -f "${prepare_py}" ]] || fail "prepare_delivery_run.py not found"
+  python3 "${prepare_py}" "${DOCS_DIR}" --story "${STORY_REF}" --json
+}
+
+enrich_delivery_progress() {
+  local prepare_json="$1"
+  [[ -f "${PROGRESS_PY}" ]] || return 0
+  python3 "${PROGRESS_PY}" enrich --workspace-root "${WORKSPACE_ROOT}" --prepare-json "${prepare_json}" || true
+}
+
+run_prepare_delivery() {
+  local prepare_json
+  set +e
+  prepare_json="$(prepare_delivery 2>&1 | tee -a "${LOG_FILE}")"
+  local prep_exit=${PIPESTATUS[0]}
+  set -e
+  if [[ "${prep_exit}" -ne 0 ]]; then
+    progress_phase preflight failed "Story gates or worktree preparation failed"
+    fail "${prepare_json##*$'\n'}"
+  fi
+  enrich_delivery_progress "${prepare_json}"
+}
+
+send_started_notification() {
+  local render_py="${LUMEN_LIB_DIR}/render-delivery-and-notify.py"
+  local starter_py="${LUMEN_LIB_DIR}/write_delivery_started.py"
+  if [[ ! -f "${render_py}" || ! -f "${starter_py}" ]]; then
+    return 0
+  fi
+  local starter_result="${STARTED_FILE}"
+  python3 "${starter_py}" "${DOCS_DIR}" "${starter_result}" --story "${STORY_REF}" || return 0
+  python3 "${render_py}" "${starter_result}" --event delivery.started | tee -a "${LOG_FILE}" || true
+}
+
+load_delivery_prompt() {
+  local compose_py="${LUMEN_LIB_DIR}/compose_delivery_prompt.py"
+  [[ -f "${compose_py}" ]] || fail "compose_delivery_prompt.py not found"
+  python3 "${compose_py}" "${DOCS_DIR}" "${STORY_REF}"
+}
+
+run_dry_delivery() {
+  local dry_py="${LUMEN_LIB_DIR}/dry_run_delivery.py"
+  [[ -f "${dry_py}" ]] || fail "dry_run_delivery.py not found"
+
+  init_delivery_progress
+  progress_phase preflight in_progress "Validate story gates and metadata"
+  printf '\n[delivery] Phase 1/5 — Preflight\n'
+  progress_phase worktrees in_progress "Prepare feature worktrees"
+  printf '[delivery] Phase 2/5 — Feature worktrees\n'
+  run_prepare_delivery
+  progress_phase preflight completed "Gates passed"
+  progress_phase worktrees completed "Worktrees ready"
+
+  progress_phase agent skipped "Dry run — agent not started"
+  progress_phase verification skipped "Dry run — verification not executed"
+  progress_phase jira_start skipped "Dry run"
+  progress_phase jira_done skipped "Dry run"
+
+  printf '[delivery] Phase 3/5 — Dry-run result\n'
+  python3 "${dry_py}" "${DOCS_DIR}" "${STORY_REF}" "${RUN_ID}" | tee -a "${LOG_FILE}"
+  [[ -f "${RESULT_FILE}" ]] || fail "Dry run did not produce ${RESULT_FILE}"
+
+  progress_phase notify in_progress "Dry-run notification preview"
+  local render_py="${LUMEN_LIB_DIR}/render-delivery-and-notify.py"
+  if [[ -f "${render_py}" ]]; then
+    LUMEN_DRY_RUN=1 python3 "${render_py}" "${RESULT_FILE}" --event delivery.dev_done | tee -a "${LOG_FILE}" || true
+  fi
+  progress_phase notify completed "Dry-run notification preview sent"
+  finish_delivery_progress completed "Dry run finished"
+  printf '\nDry-run delivery finished. No Cursor agent, commits, or PRs were created.\n'
+}
+
+run_real_delivery() {
+  command -v agent >/dev/null 2>&1 || fail "Cursor CLI 'agent' was not found in PATH."
+  if [[ -z "${CURSOR_API_KEY:-}" ]] && ! agent status >/dev/null 2>&1; then
+    fail "Cursor agent is not authenticated. Add CURSOR_API_KEY to ${DOCS_DIR}/.env.local."
+  fi
+
+  init_delivery_progress
+
+  progress_phase preflight in_progress "Validate story gates and metadata"
+  printf '\n[delivery] Phase 1/7 — Preflight\n'
+  progress_phase worktrees in_progress "Create or refresh feature worktrees"
+  printf '[delivery] Phase 2/7 — Feature worktrees\n'
+  run_prepare_delivery
+  progress_phase preflight completed "Gates passed"
+  progress_phase worktrees completed "Worktrees ready"
+
+  progress_phase jira_start in_progress "Notify JIRA IN DEV"
+  printf '[delivery] Phase 3/7 — JIRA IN DEV\n'
+  send_started_notification
+  progress_phase jira_start completed "Started notification sent"
+
+  local delivery_prompt
+  delivery_prompt="$(load_delivery_prompt)" || fail "Failed to compose delivery prompt."
+
+  printf 'Docs repository: %s\n' "${DOCS_DIR}"
+  printf 'Workspace root: %s\n' "${WORKSPACE_ROOT}"
+  printf 'Cursor model: %s\n' "${MODEL}"
+  printf 'Run log: %s\n' "${LOG_FILE}"
+  progress_message "Model=${MODEL}; sandbox=${SANDBOX_MODE}"
+
+  if [[ -z "${FEISHU_WEBHOOK_URL:-}" ]]; then
+    printf 'Notice: FEISHU_WEBHOOK_URL is not set. Delivery Feishu notifications will be skipped.\n'
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    printf 'Notice: GitHub CLI (gh) is not installed. PR creation may be skipped by the agent.\n'
+  elif ! gh auth status >/dev/null 2>&1; then
+    printf 'Notice: GitHub CLI is not authenticated. PR creation may be skipped by the agent.\n'
+  fi
+
+  progress_phase agent in_progress "Cursor implementation agent"
+  printf '\n[delivery] Phase 4/7 — Implementation agent\n'
+  printf 'Starting Lumen delivery agent at %s UTC...\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
+
+  local agent_args=(
+    --workspace "${WORKSPACE_ROOT}"
+    --sandbox "${SANDBOX_MODE}"
+    --trust
+    -p
+    -f
+    --output-format "${OUTPUT_FORMAT}"
+    --model "${MODEL}"
+  )
+  if [[ "${OUTPUT_FORMAT}" == "stream-json" && "${STREAM_PARTIAL}" == "1" ]]; then
+    agent_args+=(--stream-partial-output)
+  fi
+
+  set +e
+  if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
+    agent "${agent_args[@]}" "${delivery_prompt}" 2>&1 | tee "${LOG_FILE}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
+  else
+    agent "${agent_args[@]}" "${delivery_prompt}" 2>&1 | tee "${LOG_FILE}"
+  fi
+  local agent_exit=${PIPESTATUS[0]}
+  set -e
+
+  if [[ "${agent_exit}" -ne 0 ]]; then
+    progress_phase agent failed "Agent exited with status ${agent_exit}"
+    fail "Lumen delivery agent exited with status ${agent_exit}. See log: ${LOG_FILE}"
+  fi
+
+  [[ -f "${RESULT_FILE}" ]] || fail "Delivery agent did not write ${RESULT_FILE}"
+  progress_phase agent completed "Agent finished; result written"
+
+  progress_phase verification in_progress "Compile, PMD, unit and integration tests"
+  printf '\n[delivery] Phase 5/7 — Verification\n'
+  local verify_py="${LUMEN_LIB_DIR}/run_delivery_verification.py"
+  if [[ -f "${verify_py}" ]]; then
+    set +e
+    python3 "${verify_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" --workspace-root "${WORKSPACE_ROOT}" | tee -a "${LOG_FILE}"
+    local verify_exit=${PIPESTATUS[0]}
+    set -e
+    if [[ "${verify_exit}" -ne 0 ]]; then
+      progress_phase verification failed "One or more verification checks failed"
+      fail "Delivery verification failed. See log: ${LOG_FILE}"
+    fi
+    progress_phase verification completed "All verification checks passed"
+  else
+    progress_phase verification skipped "Verification runner not installed"
+  fi
+
+  progress_phase jira_done in_progress "Sync JIRA DEV DONE"
+  progress_phase notify in_progress "Feishu and metadata updates"
+  printf '[delivery] Phase 6/7 — JIRA DEV DONE\n'
+  printf '[delivery] Phase 7/7 — Notifications\n'
+  local render_py="${LUMEN_LIB_DIR}/render-delivery-and-notify.py"
+  if [[ -f "${render_py}" ]]; then
+    python3 "${render_py}" "${RESULT_FILE}" --event delivery.dev_done | tee -a "${LOG_FILE}" || \
+      printf 'Warning: delivery notification step failed. See log for details.\n' >&2
+  fi
+  progress_phase jira_done completed "JIRA sync attempted"
+  progress_phase notify completed "Notifications sent"
+  finish_delivery_progress completed "Delivery run finished"
+  printf '\nLumen delivery run finished at %s UTC.\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
+}
+
+cd "${DOCS_DIR}"
+
+if [[ "${DRY_RUN}" == "1" || "${DRY_RUN}" == "true" || "${DRY_RUN}" == "yes" ]]; then
+  run_dry_delivery
+else
+  run_real_delivery
+fi

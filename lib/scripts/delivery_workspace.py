@@ -1,0 +1,482 @@
+#!/usr/bin/env python3
+"""Resolve delivery docs workspace, stories, and repository paths."""
+
+from __future__ import annotations
+
+import json
+import re
+import subprocess
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Optional
+
+
+@dataclass
+class RepoTarget:
+    name: str
+    path: Path
+    worktree_path: Path
+    default_branch: str = "master"
+
+
+@dataclass
+class StoryContext:
+    docs_dir: Path
+    workspace_root: Path
+    story_dir: Path
+    story_md: Path
+    technical_plan: Path
+    metadata_path: Path
+    metadata: dict[str, Any]
+    repos: list[RepoTarget]
+    branch_name: str
+    delivery_config: dict[str, Any]
+    workspace_config: dict[str, Any]
+
+
+def read_json(path: Path, default: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    if not path.is_file():
+        return default or {}
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    return payload if isinstance(payload, dict) else (default or {})
+
+
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+
+
+def workspace_lumen_dir(workspace_root: Path) -> Path:
+    return workspace_root / ".lumen"
+
+
+def delivery_results_dir(workspace_root: Path) -> Path:
+    return workspace_lumen_dir(workspace_root) / "results"
+
+
+def delivery_result_path(workspace_root: Path) -> Path:
+    return delivery_results_dir(workspace_root) / "delivery-result.json"
+
+
+def delivery_started_path(workspace_root: Path) -> Path:
+    return delivery_results_dir(workspace_root) / "delivery-started.json"
+
+
+def delivery_logs_dir(workspace_root: Path) -> Path:
+    return workspace_lumen_dir(workspace_root) / "logs" / "delivery"
+
+
+def delivery_config_dir(workspace_root: Path) -> Path:
+    return workspace_lumen_dir(workspace_root) / "config"
+
+
+def delivery_worktrees_dir(workspace_root: Path) -> Path:
+    return workspace_lumen_dir(workspace_root) / "worktrees"
+
+
+def workspace_config_path(workspace_root: Path) -> Path:
+    return delivery_config_dir(workspace_root) / "workspace.json"
+
+
+def docs_lumen_config_dir(docs_dir: Path) -> Path:
+    return docs_dir / ".lumen" / "config"
+
+
+def legacy_parent_lumen_config_dir(docs_dir: Path) -> Path:
+    return docs_dir.parent / ".lumen" / "config"
+
+
+def delivery_config_path(workspace_root: Path) -> Path:
+    return delivery_config_dir(workspace_root) / "delivery.json"
+
+
+def worktree_path_for_repo(workspace_root: Path, repo_name: str) -> Path:
+    return delivery_worktrees_dir(workspace_root) / repo_name
+
+
+def ensure_workspace_lumen_dirs(workspace_root: Path) -> None:
+    delivery_config_dir(workspace_root).mkdir(parents=True, exist_ok=True)
+    delivery_worktrees_dir(workspace_root).mkdir(parents=True, exist_ok=True)
+    delivery_results_dir(workspace_root).mkdir(parents=True, exist_ok=True)
+    delivery_logs_dir(workspace_root).mkdir(parents=True, exist_ok=True)
+
+
+def legacy_docs_config_dir(docs_dir: Path) -> Path:
+    return docs_lumen_config_dir(docs_dir)
+
+
+def repos_container_dir(workspace_root: Path, workspace_config: dict[str, Any]) -> Path:
+    repos_dir_name = str(workspace_config.get("repos_dir", "repos")).strip() or "repos"
+    return workspace_root / repos_dir_name
+
+
+def load_workspace_config(docs_dir: Path) -> tuple[Path, dict[str, Any]]:
+    docs_dir = resolve_docs_dir(docs_dir)
+
+    nested_path = docs_lumen_config_dir(docs_dir) / "workspace.json"
+    if nested_path.is_file():
+        workspace_config = read_json(nested_path)
+        workspace_root = workspace_root_for_docs(docs_dir, workspace_config)
+        return workspace_root, read_json(workspace_config_path(workspace_root))
+
+    parent_path = legacy_parent_lumen_config_dir(docs_dir) / "workspace.json"
+    if parent_path.is_file():
+        workspace_config = read_json(parent_path)
+        workspace_root = workspace_root_for_docs(docs_dir, workspace_config)
+        return workspace_root, read_json(workspace_config_path(workspace_root))
+
+    legacy_path = legacy_docs_config_dir(docs_dir) / "workspace.json"
+    if legacy_path.is_file() and legacy_path != nested_path:
+        workspace_config = read_json(legacy_path)
+        workspace_root = workspace_root_for_docs(docs_dir, workspace_config)
+        return workspace_root, workspace_config
+
+    workspace_root = docs_dir.resolve()
+    return workspace_root, {
+        "schema_version": "1.0",
+        "layout": "nested",
+        "workspace_root": str(workspace_root),
+        "docs_repo": ".",
+        "repos_dir": "repos",
+        "repositories": [],
+    }
+
+
+def load_delivery_config(docs_dir: Path, workspace_root: Path) -> dict[str, Any]:
+    primary = delivery_config_path(workspace_root)
+    if primary.is_file():
+        return read_json(primary)
+    legacy = legacy_docs_config_dir(docs_dir) / "delivery.json"
+    if legacy.is_file():
+        return read_json(legacy)
+    return {}
+
+
+def slugify(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def resolve_docs_dir(path: Path) -> Path:
+    candidate = path.expanduser().resolve()
+    if (candidate / "stories").is_dir() or (candidate / "AGENTS.md").is_file():
+        return candidate
+    raise FileNotFoundError(f"Not a delivery docs repository: {candidate}")
+
+
+def workspace_root_for_docs(docs_dir: Path, workspace_config: dict[str, Any]) -> Path:
+    configured = str(workspace_config.get("workspace_root", "")).strip()
+    if configured in {".", "./"}:
+        return docs_dir.resolve()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    layout = str(workspace_config.get("layout", "nested")).strip().lower()
+    if layout == "sibling":
+        return docs_dir.parent.resolve()
+    return docs_dir.resolve()
+
+
+def discover_git_repos(workspace_root: Path, workspace_config: Optional[dict[str, Any]] = None) -> dict[str, Path]:
+    config = workspace_config or {}
+    layout = str(config.get("layout", "nested")).strip().lower()
+    repos: dict[str, Path] = {}
+    if not workspace_root.is_dir():
+        return repos
+
+    skip_names = {
+        ".lumen",
+        ".git",
+        "stories",
+        "standards",
+        "templates",
+        "notifications",
+        "repos",
+    }
+
+    if layout != "sibling":
+        container = repos_container_dir(workspace_root, config)
+        if container.is_dir():
+            for child in sorted(container.iterdir()):
+                if child.is_dir() and (child / ".git").exists():
+                    repos[child.name] = child.resolve()
+            return repos
+
+    for child in sorted(workspace_root.iterdir()):
+        if not child.is_dir() or child.name in skip_names or child.name.startswith("."):
+            continue
+        if (child / ".git").exists():
+            repos[child.name] = child.resolve()
+    return repos
+
+
+def repo_path_for_name(
+    name: str,
+    workspace_root: Path,
+    workspace_config: dict[str, Any],
+    discovered: dict[str, Path],
+) -> Optional[Path]:
+    configured = workspace_config.get("repositories") or []
+    if isinstance(configured, list):
+        for item in configured:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("name", "")).strip() != name:
+                continue
+            rel = str(item.get("path", name)).strip() or name
+            candidate = (workspace_root / rel).resolve()
+            if candidate.is_dir():
+                return candidate
+    if name in discovered:
+        return discovered[name]
+    candidate = (workspace_root / name).resolve()
+    if candidate.is_dir():
+        return candidate
+    return None
+
+
+def find_story_dir(docs_dir: Path, story_ref: str) -> Path:
+    stories_dir = docs_dir / "stories"
+    if not stories_dir.is_dir():
+        raise FileNotFoundError(f"Stories directory not found: {stories_dir}")
+
+    ref = story_ref.strip()
+    if not ref:
+        candidates = sorted(
+            [item for item in stories_dir.iterdir() if item.is_dir()],
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            raise FileNotFoundError(f"No stories found under {stories_dir}")
+        return candidates[0].resolve()
+
+    direct = stories_dir / ref
+    if direct.is_dir():
+        return direct.resolve()
+
+    upper_ref = ref.upper()
+    for item in stories_dir.iterdir():
+        if not item.is_dir():
+            continue
+        if item.name == ref or item.name.upper() == upper_ref:
+            return item.resolve()
+        if item.name.upper().startswith(f"{upper_ref}-"):
+            return item.resolve()
+
+    needle = slugify(ref)
+    for item in stories_dir.iterdir():
+        if item.is_dir() and slugify(item.name) == needle:
+            return item.resolve()
+
+    raise FileNotFoundError(f"Story not found for reference: {story_ref}")
+
+
+def branch_name_for_story(metadata: dict[str, Any], story_dir: Path) -> str:
+    jira_key = str(metadata.get("jiraKey", "")).strip()
+    slug = story_dir.name
+    if jira_key:
+        if slug.upper().startswith(f"{jira_key.upper()}-"):
+            short_slug = slug[len(jira_key) + 1 :]
+        else:
+            short_slug = slug
+        return f"feature/{jira_key}-{slugify(short_slug) or 'delivery'}"
+    return f"feature/{slugify(slug) or 'delivery'}"
+
+
+def default_branch_for_repo(repo_path: Path) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(repo_path), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode == 0:
+        value = completed.stdout.strip()
+        if value.startswith("origin/"):
+            return value.split("/", 1)[1]
+    for candidate in ("main", "master", "develop"):
+        completed = subprocess.run(
+            ["git", "-C", str(repo_path), "rev-parse", "--verify", candidate],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode == 0:
+            return candidate
+    return "master"
+
+
+def git_status_clean(repo_path: Path) -> bool:
+    completed = subprocess.run(
+        ["git", "-C", str(repo_path), "status", "--porcelain"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode == 0 and not completed.stdout.strip()
+
+
+def ensure_feature_worktree(
+    repo: RepoTarget,
+    branch_name: str,
+    workspace_root: Path,
+) -> tuple[bool, str]:
+    worktrees_root = delivery_worktrees_dir(workspace_root) / repo.name
+    worktrees_root.parent.mkdir(parents=True, exist_ok=True)
+    repo.worktree_path = worktrees_root.resolve()
+
+    if worktrees_root.is_dir() and (worktrees_root / ".git").exists():
+        completed = subprocess.run(
+            ["git", "-C", str(worktrees_root), "checkout", branch_name],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            completed = subprocess.run(
+                ["git", "-C", str(worktrees_root), "checkout", "-b", branch_name],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            if completed.returncode != 0:
+                return False, completed.stderr or completed.stdout or "checkout failed"
+        repo.worktree_path = worktrees_root.resolve()
+        return True, "reused worktree"
+
+    if not git_status_clean(repo.path):
+        return False, f"Repository has local changes: {repo.path}"
+
+    if worktrees_root.exists():
+        return False, f"Worktree path exists but is not a git worktree: {worktrees_root}"
+
+    base_branch = default_branch_for_repo(repo.path)
+    repo.default_branch = base_branch
+    fetch = subprocess.run(
+        ["git", "-C", str(repo.path), "fetch", "origin", base_branch],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if fetch.returncode != 0:
+        pull = subprocess.run(
+            ["git", "-C", str(repo.path), "pull", "--ff-only", "origin", base_branch],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if pull.returncode != 0:
+            return False, pull.stderr or pull.stdout or "failed to sync base branch"
+
+    create = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(repo.path),
+            "worktree",
+            "add",
+            "-B",
+            branch_name,
+            str(worktrees_root),
+            base_branch,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if create.returncode != 0:
+        return False, create.stderr or create.stdout or "worktree add failed"
+    return True, "created worktree"
+
+
+def validate_story_gates(metadata: dict[str, Any], technical_plan: Path) -> list[str]:
+    errors: list[str] = []
+    if metadata.get("businessStatus") != "ready":
+        errors.append(
+            f"businessStatus must be 'ready' (current: {metadata.get('businessStatus', 'missing')})"
+        )
+    if metadata.get("technicalStatus") != "approved":
+        errors.append(
+            f"technicalStatus must be 'approved' (current: {metadata.get('technicalStatus', 'missing')})"
+        )
+    if not technical_plan.is_file():
+        errors.append(f"technical-plan.md not found: {technical_plan}")
+    elif technical_plan.stat().st_size < 80:
+        errors.append("technical-plan.md is too short to be implementation-ready")
+    return errors
+
+
+def load_story_context(docs_dir: Path, story_ref: str = "", validate_gates: bool = True) -> StoryContext:
+    docs_dir = resolve_docs_dir(docs_dir)
+    workspace_root, workspace_config = load_workspace_config(docs_dir)
+    delivery_config = load_delivery_config(docs_dir, workspace_root)
+    story_dir = find_story_dir(docs_dir, story_ref)
+    metadata_path = story_dir / "metadata.json"
+    metadata = read_json(metadata_path)
+    story_md = story_dir / "story.md"
+    technical_plan = story_dir / str(metadata.get("technicalPlanFile") or "technical-plan.md")
+
+    if validate_gates:
+        errors = validate_story_gates(metadata, technical_plan)
+        if errors:
+            raise ValueError("; ".join(errors))
+
+    linked = metadata.get("linkedRepos") or []
+    if not isinstance(linked, list) or not linked:
+        raise ValueError("metadata.json.linkedRepos must list at least one repository")
+
+    discovered = discover_git_repos(workspace_root, workspace_config)
+    repos: list[RepoTarget] = []
+    for name in linked:
+        repo_name = str(name).strip()
+        if not repo_name:
+            continue
+        repo_path = repo_path_for_name(repo_name, workspace_root, workspace_config, discovered)
+        if repo_path is None:
+            raise FileNotFoundError(
+                f"Repository '{repo_name}' not found under workspace root {workspace_root}"
+            )
+        repos.append(
+            RepoTarget(
+                name=repo_name,
+                path=repo_path,
+                worktree_path=delivery_worktrees_dir(workspace_root) / repo_name,
+            )
+        )
+
+    branch_name = branch_name_for_story(metadata, story_dir)
+    return StoryContext(
+        docs_dir=docs_dir,
+        workspace_root=workspace_root,
+        story_dir=story_dir,
+        story_md=story_md,
+        technical_plan=technical_plan,
+        metadata_path=metadata_path,
+        metadata=metadata,
+        repos=repos,
+        branch_name=branch_name,
+        delivery_config=delivery_config,
+        workspace_config=workspace_config,
+    )
+
+
+def prepare_story_for_delivery(context: StoryContext) -> list[str]:
+    messages: list[str] = []
+    ensure_workspace_lumen_dirs(context.workspace_root)
+    metadata = dict(context.metadata)
+    metadata["deliveryStatus"] = "in_progress"
+    metadata["updatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    metadata["deliveryBranch"] = context.branch_name
+    write_json(context.metadata_path, metadata)
+    context.metadata = metadata
+    messages.append(f"Updated deliveryStatus to in_progress for {context.story_dir.name}")
+
+    for repo in context.repos:
+        ok, detail = ensure_feature_worktree(repo, context.branch_name, context.workspace_root)
+        if not ok:
+            raise RuntimeError(f"Failed to prepare worktree for {repo.name}: {detail}")
+        messages.append(f"{repo.name}: {detail} at {repo.worktree_path}")
+    return messages

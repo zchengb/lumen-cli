@@ -5,3 +5,5 @@ build/
 .test-lumen-home/
 
 .idea/
+__pycache__/
+*.pyc
