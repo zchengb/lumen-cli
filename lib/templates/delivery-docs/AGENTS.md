@@ -4,9 +4,13 @@ This repository is the source of truth for business stories and technical delive
 
 ## Repository Model
 
-Business stories live under `stories/`. Linked code repositories live under `repos/` and are gitignored by this docs project.
+Business topics live under `topics/`. Business stories live under `stories/`. Linked code repositories live under `repos/` and are gitignored by this docs project.
 
-Each story is intentionally lightweight:
+Each topic and story is intentionally lightweight:
+
+- `topics/<slug>.md` - broad business discovery container before story split
+
+Each story contains:
 
 - `story.md` - business truth, maintained by humans with Agent help
 - `technical-plan.md` - technical delivery plan, maintained during the technical loop
@@ -19,14 +23,25 @@ Do not create extra decision, question, change, refactor, or evidence files unle
 
 The Business Loop may run in Codex, Cursor, or another compatible Agent. The tool is not important; the contract is.
 
-The Business Loop turns unclear business input into a clear `story.md`. Before starting the Business Loop, the Agent should refresh the workspace context:
+The Business Loop can start from a broad Topic or from a concrete Story. It turns unclear business input into either `topics/<slug>.md` plus candidate stories, or a clear `story.md`. Before starting the Business Loop, the Agent should refresh the workspace context:
 
 - Pull this docs repository first.
 - Pull every configured code repository under `repos/` that may be used as context.
 - Use safe git sync: check `git status` first, then run `git pull --ff-only` only when the repo has no local uncommitted changes.
 - If any repo has local uncommitted changes or cannot fast-forward, stop and ask the user how to proceed. Do not stash, reset, checkout, or overwrite user work automatically.
 
-During the Business Loop, the Agent should:
+During Topic Discovery, the Agent should:
+
+1. Create or update `topics/<slug>.md` using `templates/topic.md`.
+2. Read existing topics, stories, and relevant repository context.
+3. Understand current system behavior before suggesting story splits.
+4. Ask one progressive clarification question at a time.
+5. Record confirmed answers in the topic file.
+6. Propose candidate stories only after enough context is understood.
+7. Create story folders only after the user confirms the split.
+8. Never modify application code.
+
+During Story Clarification, the Agent should:
 
 1. Read the existing `story.md` and `metadata.json`.
 2. Inspect relevant repository context if available.
@@ -108,8 +123,8 @@ Rules:
 - Mark one option as `Recommended` when reasonable.
 - Always allow the user to provide a custom answer.
 - Do not use blank placeholders as the primary interaction style.
-- After the user answers, update `story.md` under `Clarifications`.
-- Then decide the next best question based on the updated story.
+- After the user answers, update `topics/<slug>.md` under `Progressive Clarifications` during Topic Discovery, or `story.md` under `Clarifications` during Story Clarification.
+- Then decide the next best question based on the updated topic or story.
 
 If the tool supports an interactive question UI, use it. If not, present a short text menu like:
 
@@ -123,11 +138,13 @@ D. Other: describe your answer
 
 ## Language Rule
 
-Write `story.md` in the primary language of the user's business input by default. Do not force English or any other fixed language. Keep the story internally consistent in one main language unless the user explicitly asks otherwise. Preserve product names, domain terms, JIRA keys, code identifiers, API names, field names, and configuration names in their original form.
+Write `topics/<slug>.md` and `story.md` in the primary language of the user's business input by default. Do not force English or any other fixed language. Keep the story internally consistent in one main language unless the user explicitly asks otherwise. Preserve product names, domain terms, JIRA keys, code identifiers, API names, field names, and configuration names in their original form.
 
 When creating or updating a JIRA Story from `story.md`, use the same primary language as `story.md`.
 
 ## Story Rules
+
+`topics/<slug>.md` is allowed to be broader than a story, but it must stay business-readable. It should contain current understanding, repository context, progressive clarifications, candidate stories, risks, and out-of-scope notes.
 
 `story.md` must be business-readable. It should contain only:
 

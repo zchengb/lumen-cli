@@ -1,15 +1,23 @@
 # Business Loop
 
-The Business Loop turns early business input into a clear, implementation-ready story. It can be run in Codex, Cursor, or another Agent.
+The Business Loop supports two entry shapes: a broad Topic or a concrete Story. A Topic is used when the user starts from an area, idea, customer request, or vague business problem. A Story is used when the scope is already small enough to express as ACs. The loop can be run in Codex, Cursor, or another Agent.
 
 ## Inputs
 
-- Initial business text or JIRA description
-- Existing `story.md` if present
+- Initial business topic, idea, customer request, story text, or JIRA description
+- Existing `topics/<slug>.md` if the work starts from a broad topic
+- Existing `story.md` if the work starts from a concrete story
 - Relevant code/repository context when useful
 - Optional screenshots or sketches placed under `assets/` and referenced inline where they are discussed
 
 ## Outputs
+
+For Topic Discovery:
+
+- Updated `topics/<slug>.md`
+- Candidate story split proposal
+
+For Story Clarification:
 
 - Updated `story.md`
 - Updated `metadata.json.businessStatus` through Lumen or explicit status update
@@ -24,10 +32,25 @@ Before starting the Business Loop, refresh the workspace context:
 4. Run `git pull --ff-only` only when the repo has no local uncommitted changes.
 5. If a repo has local uncommitted changes, diverged history, or cannot fast-forward, stop and ask the user how to proceed. Do not stash, reset, checkout, or overwrite user work automatically.
 
-## Flow
+## Topic Discovery Flow
 
-1. Start from draft business input.
-2. Agent reads `story.md` and relevant context.
+Use this flow when the user starts with a broad topic instead of a concrete story.
+
+1. Create or update `topics/<slug>.md` using `templates/topic.md`.
+2. Read the topic, existing stories, and relevant repository context under `repos/`.
+3. Build a short understanding of current system behavior before proposing story splits.
+4. Ask one progressive clarification question at a time, with options and a custom answer path.
+5. Record confirmed answers under `Progressive Clarifications`.
+6. Gradually identify candidate stories with clear goals and boundaries.
+7. Do not create story folders until the user confirms the split.
+8. When the user confirms one candidate story, create a normal `stories/<slug>/` folder from `templates/story.md` and continue with the Story Clarification Flow.
+
+A Topic is not implementation-ready. It is a discovery container. Lumen must not start Technical Loop or Development Loop from a topic directly.
+
+## Story Clarification Flow
+
+1. Start from draft story input or a confirmed candidate story from Topic Discovery.
+2. Agent reads `story.md`, `metadata.json`, related topic notes if any, and relevant repository context.
 3. Agent identifies the single highest-impact unclear point.
 4. Agent asks one progressive clarification question with options.
 5. User chooses an option or enters a custom answer.
@@ -40,7 +63,7 @@ Before starting the Business Loop, refresh the workspace context:
 
 ## Language
 
-Use the primary language of the user's business input for `story.md`. Do not force English, Chinese, or any fixed language. Keep product names, domain terms, JIRA keys, code identifiers, API names, field names, and configuration names in their original form.
+Use the primary language of the user's business input for `topics/<slug>.md` and `story.md`. Do not force English, Chinese, or any fixed language. Keep product names, domain terms, JIRA keys, code identifiers, API names, field names, and configuration names in their original form.
 
 JIRA Story content created from `story.md` should use the same primary language as `story.md`.
 
@@ -67,7 +90,7 @@ Rules:
 - Provide 2-4 meaningful options.
 - Always allow a custom answer.
 - Do not ask users to fill blank templates.
-- Record the final answer in `story.md`, not the entire chat history.
+- Record the final answer in `topics/<slug>.md` during Topic Discovery or in `story.md` during Story Clarification. Do not keep raw chat history.
 
 ## JIRA Publishing
 

@@ -6,7 +6,7 @@ This repository stores lightweight Lumen Delivery documents for business explora
 
 | Loop | Standard | Primary output | Executor |
 |---|---|---|---|
-| Business Loop | `standards/business-loop.md` | `story.md` | Codex / Cursor / Agent |
+| Business Loop | `standards/business-loop.md` | `topics/<slug>.md` or `story.md` | Codex / Cursor / Agent |
 | Technical Loop | `standards/technical-loop.md` | `technical-plan.md` | Codex / Cursor / Agent |
 | Development Loop | `standards/development-loop.md` | code + PR | `lumen delivery run` |
 
@@ -24,6 +24,7 @@ This repository stores lightweight Lumen Delivery documents for business explora
   repos/
     <service-a>/
     <service-b>/
+  topics/
   stories/
 ```
 
@@ -32,6 +33,8 @@ Configure repositories in `<docs-repo>/.lumen/config/workspace.json`. Cloned cod
 ## Structure
 
 ```text
+topics/
+  <slug>.md              # broad discovery before story split
 stories/
   <slug>/                  # before JIRA exists
   <JIRA-KEY>-<slug>/       # after JIRA is created or bound
@@ -44,6 +47,7 @@ standards/
   technical-loop.md
   development-loop.md
 templates/
+  topic.md
   story.md
   technical-plan.md
 notifications/
@@ -64,7 +68,8 @@ notifications/
 
 ## Typical Flow
 
-1. Business Loop clarifies `story.md`.
-2. Technical Loop produces and approves `technical-plan.md`.
-3. `lumen delivery run <docs-dir> --story <JIRA-KEY-or-slug>` implements the approved plan.
-4. Optional JIRA comment and PR complete the delivery trail.
+1. Business Loop starts from a broad `topics/<slug>.md` or directly clarifies `story.md`.
+2. If starting from a topic, Business Loop proposes candidate stories and waits for user confirmation before creating story folders.
+3. Technical Loop produces and approves `technical-plan.md`.
+4. `lumen delivery run <docs-dir> --story <JIRA-KEY-or-slug>` implements the approved plan.
+5. Optional JIRA comment and PR complete the delivery trail.

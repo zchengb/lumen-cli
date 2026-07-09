@@ -62,6 +62,7 @@ def init_docs(target: Path, project_name: str, example_key: str, force: bool) ->
         copy_rendered(src, dest, values, force)
 
     for keep_dir in [
+        target / "topics",
         target / "stories",
         target / "repos",
         docs_root / ".lumen" / "config",
