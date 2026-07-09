@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="lumen-dashboard-version" content="3" />
+  <meta name="lumen-dashboard-version" content="4" />
   <title>Lumen Dashboard</title>
   <style>
     :root {
@@ -697,25 +697,8 @@
         return (Date.now() - parsed.getTime()) / 86400000;
       }
 
-      function locallyHiddenIssueIds(workspaceRoot) {
-        if (!window.localStorage || !workspaceRoot) return [];
-        try {
-          return JSON.parse(window.localStorage.getItem("lumen_hidden_issues:" + workspaceRoot) || "[]");
-        } catch (error) {
-          return [];
-        }
-      }
-
-      function hideIssueLocally(workspaceRoot, issueId) {
-        if (!window.localStorage || !workspaceRoot || !issueId) return;
-        var ids = locallyHiddenIssueIds(workspaceRoot);
-        if (ids.indexOf(issueId) < 0) ids.push(issueId);
-        window.localStorage.setItem("lumen_hidden_issues:" + workspaceRoot, JSON.stringify(ids));
-      }
-
       function ignoreIssue(issueId, workspaceRoot) {
         var cmd = "lumen issue ignore " + issueId + " --workspace " + JSON.stringify(workspaceRoot);
-        hideIssueLocally(workspaceRoot, issueId);
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(cmd).then(function () {
             window.alert(
@@ -765,13 +748,9 @@
         );
       }
 
-      function filterIssues(issues, mode, scanWindowDays, hiddenIds) {
-        var hidden = hiddenIds || [];
-        issues = (issues || []).filter(function (issue) {
-          return hidden.indexOf(issue.id) < 0;
-        });
+      function filterIssues(issues, mode, scanWindowDays) {
         if (mode === "open") {
-          return issues.filter(function (issue) {
+          return (issues || []).filter(function (issue) {
             if (["open", "in_progress", "pr_open"].indexOf(issue.status) < 0) return false;
             if (issue.stale) return false;
             var age = daysSince(issue.first_seen_at);
@@ -780,20 +759,20 @@
           });
         }
         if (mode === "ignored") {
-          return issues.filter(function (issue) {
+          return (issues || []).filter(function (issue) {
             return issue.status === "ignored";
           });
         }
         if (mode === "resolved") {
-          return issues.filter(function (issue) {
+          return (issues || []).filter(function (issue) {
             return ["resolved", "accepted_risk", "false_positive"].indexOf(issue.status) >= 0;
           });
         }
-        return issues;
+        return issues || [];
       }
 
-      function renderIssues(issues, mode, scanWindowDays, hiddenIds) {
-        var filtered = filterIssues(issues || [], mode, scanWindowDays, hiddenIds);
+      function renderIssues(issues, mode, scanWindowDays) {
+        var filtered = filterIssues(issues, mode, scanWindowDays);
         if (!filtered.length) {
           return '<div class="empty">No issues in this view.</div>';
         }
@@ -868,7 +847,6 @@
       var issueMode = "open";
       var scanWindowDays = data.scan_window_days || ((data.config && data.config.execution && data.config.execution.scan_window_days) || 7);
       var workspaceRoot = data.workspace_root || "";
-      var hiddenIssueIds = locallyHiddenIssueIds(workspaceRoot);
 
       document.getElementById("page-title").textContent = (data.product && data.product.name) || "Lumen";
       document.getElementById("page-subtitle").textContent = "Run History";
@@ -891,7 +869,7 @@
           '<button type="button" data-mode="resolved">Resolved</button>' +
           "</div></div>" +
           '<div class="card-body"><div class="refresh-note">Open view respects scan window (' + esc(String(scanWindowDays)) + ' days).</div>' +
-          '<div id="issue-panel">' + renderIssues(issues, issueMode, scanWindowDays, hiddenIssueIds) + "</div></div></div>" +
+          '<div id="issue-panel">' + renderIssues(issues, issueMode, scanWindowDays) + "</div></div></div>" +
           '<div class="card"><div class="card-head card-head-trend">' +
           '<div class="trend-head-main"><h2>Finding Trend</h2>' + renderTrendLegend() + "</div>" +
           '<span class="refresh-note">Last ' + ((data.trend || []).length || 0) + " runs</span></div>" +
@@ -906,8 +884,6 @@
           event.preventDefault();
           event.stopPropagation();
           ignoreIssue(ignoreBtn.getAttribute("data-issue-id"), workspaceRoot);
-          hiddenIssueIds = locallyHiddenIssueIds(workspaceRoot);
-          document.getElementById("issue-panel").innerHTML = renderIssues(issues, issueMode, scanWindowDays, hiddenIssueIds);
           return;
         }
         var button = event.target.closest("#issue-tabs button");
@@ -916,7 +892,7 @@
         document.querySelectorAll("#issue-tabs button").forEach(function (node) {
           node.classList.toggle("active", node === button);
         });
-        document.getElementById("issue-panel").innerHTML = renderIssues(issues, issueMode, scanWindowDays, hiddenIssueIds);
+        document.getElementById("issue-panel").innerHTML = renderIssues(issues, issueMode, scanWindowDays);
       });
 
       if (activeRun) {
