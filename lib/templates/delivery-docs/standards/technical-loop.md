@@ -1,13 +1,12 @@
 # Technical Loop
 
-The Technical Loop turns a business-ready `story.md` into an executable `technical-plan.md`. It may run in Codex, Cursor, or another Agent, but it must stay in planning mode: no application source code changes are allowed in this loop.
+The Technical Loop turns one concrete, business-ready `story.md` into one executable `technical-plan.md`. It may run in Codex, Cursor, or another Agent, but it must stay in planning mode: no application source code changes are allowed in this loop.
 
 ## Inputs
 
 - `story.md`
 - `metadata.json`
 - Existing `technical-plan.md` when refining a previous draft
-- Related topic file under `topics/` when the story came from Topic Discovery
 - Relevant repository context from `repos/<repository>/`
 - `standards/business-loop.md`
 - `templates/technical-plan.md`
@@ -34,8 +33,11 @@ Use the same preflight rules as the Business Loop:
 
 Do not start the Technical Loop until:
 
-- `metadata.json.businessStatus` is `ready`
-- `story.md` has clear Acceptance Criteria and no important `TBD`
+- The input is a single concrete story, not a broad topic.
+- `metadata.json.businessStatus` is `ready`.
+- `story.md` has clear Acceptance Criteria and no important `TBD`.
+
+If the user starts from a topic, guide them to split and select one story first. Generate technical plans story by story, never one technical plan for an entire topic.
 
 Do not start the Development Loop until:
 
@@ -46,14 +48,13 @@ Do not start the Development Loop until:
 
 1. Read `story.md`, `metadata.json`, `templates/technical-plan.md`, and this standard.
 2. Inspect the real repositories before drafting: architecture, modules, endpoints, jobs, tables, tests, Dockerfile, build files, and recent patterns.
-3. Mark `technicalStatus` as `planning` or `clarifying`.
+3. Keep `technicalStatus` as `draft` while planning or asking questions.
 4. Build an initial impact map: repositories, modules, API/data/config/permission/test surfaces.
 5. Ask derived technical questions progressively when an answer affects design, delivery boundary, verification, or rollout.
 6. Record every confirmed answer in `technical-plan.md`; do not leave decisions only in chat.
 7. Produce a file-level implementation plan detailed enough for another engineer or Agent to implement without guessing.
-8. When all critical unknowns are resolved, set `technicalStatus` to `ready_for_review`.
-9. Ask the user to approve the plan.
-10. After explicit approval, set `technicalStatus` to `approved`.
+8. Ask the user to review the plan and choose whether to approve, build, or keep refining.
+9. After explicit approval, set `technicalStatus` to `approved`.
 
 ## Progressive Technical Q&A
 
@@ -93,7 +94,7 @@ The Agent should actively check these areas and ask only when the answer is not 
 - Data model: tables, migrations, indexes, default values, backfill, rollback, and data retention.
 - Integration boundary: upstream/downstream services, queues, scheduled jobs, email/SMS/push providers, and failure handling.
 - Runtime and environment: Java version, project-provided Dockerfile, runtime profile, secrets, config keys, and local limitations.
-- Verification: compile, unit tests, integration tests, PMD/lint, lightweight checks for App/PHP/frontend repos, and manual checks.
+- Verification: compile, unit tests, integration tests, PMD/lint, lightweight checks for App/PHP/frontend repos, and manual checks. Plan unit and integration tests only when the target repository actually has the relevant test framework, commands, or existing pattern.
 - Observability: logs, metrics, audit trail, alerting, and support diagnostics.
 - Rollout and rollback: feature flags, config switch, release sequencing, and rollback plan.
 - Refactoring boundary: local cleanup allowed inside the story vs separate refactor discussion.
@@ -110,6 +111,7 @@ The Agent should actively check these areas and ask only when the answer is not 
 - File-level change list per repository
 - API, schema, migration, config, permission, and integration changes
 - Step-by-step implementation sequence
+- Unit test and integration test plan based on the actual repository test setup
 - Verification commands or manual checks per repository
 - Runtime profile / Dockerfile expectations per repository
 - Rollback or release notes when rollout risk exists
@@ -136,29 +138,28 @@ Before setting `technicalStatus` to `approved`, ask:
 ```text
 The technical plan is ready for review. What should I do next?
 
-A. Approve the plan and move to development (Recommended)
-B. Keep refining the plan
-C. Return to business clarification
-D. Other: describe what to do
+A. Approve and push the technical plan (Recommended)
+B. Run local build / verification now, then decide
+C. Approve, push the technical plan, and start build
+D. Keep refining the plan
+E. Return to business clarification
+F. Other: describe what to do
 ```
 
 Rules:
 
 - Do not set `approved` without explicit user confirmation.
 - If the user changes business scope, set `businessStatus` to `changed` and return to the Business Loop.
-- If the user requests plan edits, keep `technicalStatus` as `ready_for_review` or `clarifying`.
+- If the user requests plan edits, keep `technicalStatus` as `draft`.
 
 ## Technical Status
 
 Valid `technicalStatus` values:
 
-- `draft` - plan file exists but is incomplete
-- `clarifying` - Agent is asking technical questions
-- `planning` - Agent is drafting the detailed plan
-- `ready_for_review` - plan is complete and waiting for approval
-- `approved` - user approved; Development Loop may start
-- `blocked` - required technical input or dependency is missing
-- `changed` - story changed after approval; plan must be revised
+- `draft` - the technical plan is being created, refined, questioned, or reviewed. This is the only non-approved state.
+- `approved` - the user approved the technical plan; Development Loop may start.
+
+If the story changes after approval, move `technicalStatus` back to `draft` and revise the plan. If planning is blocked, keep `draft` and record the blocker in `technical-plan.md` under `Risks` or `Technical Clarifications`.
 
 ## Language
 

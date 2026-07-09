@@ -81,6 +81,8 @@ mini-lumen-web
 
 ## Verification Plan
 
+Plan tests based on the actual repository setup. Include unit tests and integration tests only when the repository already supports them or the story explicitly requires adding them.
+
 | Step | Repository | Command or manual check | Expected result | Notes |
 |---|---|---|---|---|
 | 1 | mini-lumen-web | `npm test` | Welcome banner test passes | Lightweight only |

@@ -196,27 +196,25 @@ During the Technical Loop, the Agent should:
 
 1. Read `story.md`, `metadata.json`, `templates/technical-plan.md`, and the Lumen coding guideline shipped with the CLI.
 2. Inspect impacted repositories and identify real modules, endpoints, tables, jobs, Dockerfiles, build files, and tests.
-3. Ask one focused technical question at a time when ambiguity affects design, scope, runtime, verification, rollout, or rollback.
-4. Offer concrete options for each question and allow a custom answer.
-5. Record confirmed technical decisions in `technical-plan.md`; do not leave decisions only in chat.
-6. Produce a file-level plan detailed enough for implementation without guessing.
-7. Set `technicalStatus` to `ready_for_review` when the plan is complete.
-8. Ask for explicit user approval before setting `technicalStatus` to `approved`.
-9. Never modify application code during the Technical Loop.
+3. If the input is a broad topic, guide the user to split and select one concrete story before planning.
+4. Ask one focused technical question at a time when ambiguity affects design, scope, runtime, verification, rollout, or rollback.
+5. Offer concrete options for each question and allow a custom answer.
+6. Record confirmed technical decisions in `technical-plan.md`; do not leave decisions only in chat.
+7. Produce a file-level plan detailed enough for implementation without guessing.
+8. Ask whether to approve and push the technical plan, run build/verification now, or keep refining.
+9. Ask for explicit user approval before setting `technicalStatus` to `approved`.
+10. Never modify application code during the Technical Loop.
 
-A technical plan is not ready until it includes repository scope, architecture placement, file-level changes, API/schema/config/integration impact, runtime profile, implementation steps, verification, rollback, and out-of-scope boundaries.
+A technical plan is not ready until it is scoped to one story and includes repository scope, architecture placement, file-level changes, API/schema/config/integration impact, runtime profile, implementation steps, test strategy based on actual repo capabilities, verification, rollback, and out-of-scope boundaries.
 
 ## Technical Status
 
 Valid `technicalStatus` values:
 
-- `draft` - plan exists but is incomplete
-- `clarifying` - Agent is asking technical questions
-- `planning` - Agent is drafting the detailed plan
-- `ready_for_review` - plan is complete and waiting for approval
-- `approved` - user approved; Development Loop may start
-- `blocked` - required technical input or dependency is missing
-- `changed` - story changed after approval; plan must be revised
+- `draft` - the technical plan is being created, refined, questioned, or reviewed. This is the only non-approved state.
+- `approved` - user approved; Development Loop may start.
+
+If the story changes after approval, move `technicalStatus` back to `draft` and revise the plan. If planning is blocked, keep `draft` and record the blocker in `technical-plan.md`.
 
 ## Development Loop
 

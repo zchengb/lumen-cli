@@ -92,6 +92,8 @@ Each step must be concrete enough for the Development Loop to execute without gu
 
 ## Verification Plan
 
+Plan tests based on the actual repository setup. Include unit tests and integration tests only when the repository already supports them or the story explicitly requires adding them.
+
 | Step | Repository | Command or manual check | Expected result | Notes |
 |---|---|---|---|---|
 | 1 | TBD | TBD | TBD | TBD |
