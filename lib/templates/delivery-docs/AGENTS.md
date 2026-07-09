@@ -194,16 +194,17 @@ Before starting the Technical Loop, use the same preflight sync rules as the Bus
 
 During the Technical Loop, the Agent should:
 
-1. Read `story.md`, `metadata.json`, and the Lumen coding guideline shipped with the CLI.
-2. Inspect impacted repositories and identify real modules, endpoints, tables, and tests.
-3. Ask one focused technical question at a time when ambiguity affects design, scope, or verification.
-4. Record confirmed technical decisions in `technical-plan.md`.
-5. Produce a file-level plan detailed enough for implementation without guessing.
-6. Set `technicalStatus` to `ready_for_review` when the plan is complete.
-7. Ask for explicit user approval before setting `technicalStatus` to `approved`.
-8. Never modify application code during the Technical Loop.
+1. Read `story.md`, `metadata.json`, `templates/technical-plan.md`, and the Lumen coding guideline shipped with the CLI.
+2. Inspect impacted repositories and identify real modules, endpoints, tables, jobs, Dockerfiles, build files, and tests.
+3. Ask one focused technical question at a time when ambiguity affects design, scope, runtime, verification, rollout, or rollback.
+4. Offer concrete options for each question and allow a custom answer.
+5. Record confirmed technical decisions in `technical-plan.md`; do not leave decisions only in chat.
+6. Produce a file-level plan detailed enough for implementation without guessing.
+7. Set `technicalStatus` to `ready_for_review` when the plan is complete.
+8. Ask for explicit user approval before setting `technicalStatus` to `approved`.
+9. Never modify application code during the Technical Loop.
 
-A technical plan is not ready until it includes repository scope, architecture placement, file-level changes, API/schema/config impact, implementation steps, and verification.
+A technical plan is not ready until it includes repository scope, architecture placement, file-level changes, API/schema/config/integration impact, runtime profile, implementation steps, verification, rollback, and out-of-scope boundaries.
 
 ## Technical Status
 

@@ -1,3 +1,11 @@
+---
+status: "draft"
+approvedBy: ""
+approvedAt: ""
+jiraKey: ""
+baseBranch: ""
+featureBranch: ""
+---
 # Technical Plan: <Story Title>
 
 ## Goal
@@ -8,13 +16,21 @@ Describe the technical outcome and map it to Acceptance Criteria from `story.md`
 |---|---|
 | AC1 | TBD |
 
-## Impacted Repositories
+## Technical Clarifications
 
-| Repository | Role in this delivery | Change summary |
+Record confirmed answers from progressive technical Q&A. Do not keep important decisions only in chat.
+
+| Question | Confirmed answer | Impact on plan |
 |---|---|---|
 | TBD | TBD | TBD |
 
-## Architecture Summary
+## Impacted Repositories
+
+| Repository | Role in this delivery | Change summary | Runtime / verification level |
+|---|---|---|---|
+| TBD | TBD | TBD | TBD |
+
+## Architecture And Module Placement
 
 Describe where the change belongs in each repository and why.
 
@@ -24,35 +40,39 @@ mbpass-admin -> controller validation + request mapping
 mbpass-business -> application service + repository query
 ```
 
-## Design Decisions
-
-| Decision | Chosen approach | Rejected alternatives | Reason |
-|---|---|---|---|
-| TBD | TBD | TBD | TBD |
-
 ## API And Contract Changes
 
 ### New or changed endpoints
 
-| Method | Path | Repository | Auth / permission | Request | Response | Notes |
+| Method | Path | Repository | Auth / permission | Request | Response | Compatibility notes |
 |---|---|---|---|---|---|---|
 | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
 
+### Caller impact
+
+- TBD or `None`
+
 ### Breaking changes
 
-- None
+- TBD or `None`
 
-## Data And Migration Changes
+## Data Model And Migration Plan
 
-| Repository | Migration / table / field | Change | Backward compatible |
+| Repository | Table / field / migration | Change | Backward compatible | Rollback |
+|---|---|---|---|---|
+| TBD | TBD | TBD | TBD | TBD |
+
+## Integration And Failure Handling
+
+| Integration point | Change | Failure behavior | Retry / fallback |
 |---|---|---|---|
 | TBD | TBD | TBD | TBD |
 
-## Configuration Changes
+## Configuration And Secrets
 
-| Repository | Key / file | Change | Default |
-|---|---|---|---|
-| TBD | TBD | TBD | TBD |
+| Repository | Key / file | Change | Default | Secret handling |
+|---|---|---|---|---|
+| TBD | TBD | TBD | TBD | TBD |
 
 ## File-Level Change Plan
 
@@ -64,17 +84,31 @@ mbpass-business -> application service + repository query
 
 ## Implementation Steps
 
-1. Step 1 — repository, files, and expected result
-2. Step 2 — repository, files, and expected result
-3. Step 3 — verification and PR boundary
+1. Step 1 - repository, files, and expected result.
+2. Step 2 - repository, files, and expected result.
+3. Step 3 - verification and PR boundary.
 
 Each step must be concrete enough for the Development Loop to execute without guessing.
 
-## Verification
+## Verification Plan
 
-| Step | Repository | Command or manual check | Expected result |
-|---|---|---|---|
-| 1 | TBD | TBD | TBD |
+| Step | Repository | Command or manual check | Expected result | Notes |
+|---|---|---|---|---|
+| 1 | TBD | TBD | TBD | TBD |
+
+## Runtime Profiles
+
+| Repository | Dockerfile / profile source | Java / Node / PHP version | Commands allowed | Commands skipped |
+|---|---|---|---|---|
+| TBD | TBD | TBD | TBD | TBD |
+
+## Observability And Support
+
+| Area | Plan |
+|---|---|
+| Logs | TBD |
+| Metrics / audit | TBD |
+| Support diagnostics | TBD |
 
 ## Rollback / Release Notes
 

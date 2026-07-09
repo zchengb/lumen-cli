@@ -1,4 +1,12 @@
-# Delivery Plan: __JIRA_KEY__ Mini Web Welcome Banner
+---
+status: "draft"
+approvedBy: ""
+approvedAt: ""
+jiraKey: "__JIRA_KEY__"
+baseBranch: "main"
+featureBranch: "feature/__JIRA_KEY__-mini-web-welcome-banner"
+---
+# Technical Plan: Mini Web Welcome Banner
 
 ## Goal
 
@@ -8,13 +16,19 @@ Add a static welcome banner to the mini web app and verify it with lightweight t
 |---|---|
 | AC1: User sees welcome banner on first page load | Render a semantic banner in the home page component |
 
+## Technical Clarifications
+
+| Question | Confirmed answer | Impact on plan |
+|---|---|---|
+| Should the banner be global or home-page only? | Home-page only | Keep the change scoped to `src/pages/home.tsx` and a presentational component |
+
 ## Impacted Repositories
 
-| Repository | Role in this delivery | Change summary |
-|---|---|---|
-| mini-lumen-web | Frontend UI | Add banner markup, styles, and DOM test |
+| Repository | Role in this delivery | Change summary | Runtime / verification level |
+|---|---|---|---|
+| mini-lumen-web | Frontend UI | Add banner markup, styles, and DOM test | Node lightweight unit test |
 
-## Architecture Summary
+## Architecture And Module Placement
 
 ```text
 mini-lumen-web
@@ -24,23 +38,25 @@ mini-lumen-web
   tests -> DOM render test
 ```
 
-## Design Decisions
-
-| Decision | Chosen approach | Rejected alternatives | Reason |
-|---|---|---|---|
-| Banner placement | Home page only | Global layout injection | Story scope is limited to first page load |
-
 ## API And Contract Changes
+
+### Caller impact
+
+- None
 
 ### Breaking changes
 
 - None
 
-## Data And Migration Changes
+## Data Model And Migration Plan
 
 - None
 
-## Configuration Changes
+## Integration And Failure Handling
+
+- None
+
+## Configuration And Secrets
 
 - None
 
@@ -61,14 +77,28 @@ mini-lumen-web
 2. Render the component from the home page.
 3. Add focused styling for readability.
 4. Add a DOM render test.
-5. Run `npm test` and create PR.
+5. Run verification and create PR.
 
-## Verification
+## Verification Plan
 
-| Step | Repository | Command or manual check | Expected result |
-|---|---|---|---|
-| 1 | mini-lumen-web | `npm test` | Welcome banner test passes |
-| 2 | mini-lumen-web | Open home page manually | Banner is visible on first load |
+| Step | Repository | Command or manual check | Expected result | Notes |
+|---|---|---|---|---|
+| 1 | mini-lumen-web | `npm test` | Welcome banner test passes | Lightweight only |
+| 2 | mini-lumen-web | Open home page manually | Banner is visible on first load | Optional manual check |
+
+## Runtime Profiles
+
+| Repository | Dockerfile / profile source | Java / Node / PHP version | Commands allowed | Commands skipped |
+|---|---|---|---|---|
+| mini-lumen-web | Project package scripts | Node from project/toolchain | `npm test` | Production build unless explicitly requested |
+
+## Observability And Support
+
+| Area | Plan |
+|---|---|
+| Logs | Not required |
+| Metrics / audit | Not required |
+| Support diagnostics | Visual verification only |
 
 ## Rollback / Release Notes
 
