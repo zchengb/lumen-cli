@@ -319,6 +319,8 @@ Usage:
                                  Remove a project's scheduled scan
   lumen schedule list           List all configured scan schedules (alias: lumen schedule)
   lumen watch --project <slug>  Watch the latest scan log in real time
+  lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
+                                 List tracked findings from the issue registry
   lumen issue ignore <issue-id> [--project <slug>]
                                  Mark a tracked finding as ignored in the issue registry
   lumen dashboard --project <slug> [--no-open]
@@ -2336,6 +2338,39 @@ cmd_issue() {
   local issue_py="${LUMEN_HOME}/lib/scripts/issue_registry.py"
 
   case "${sub}" in
+    list)
+      local status="open" json_flag="" filtered_args=() arg
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project|-p|--workspace)
+            filtered_args+=("$1" "${2:-}")
+            shift 2
+            ;;
+          --status)
+            status="${2:-open}"
+            shift 2
+            ;;
+          --json)
+            json_flag="1"
+            shift
+            ;;
+          --*)
+            err "Unknown option: $1"
+            exit 1
+            ;;
+          *)
+            err "Unexpected argument: $1"
+            exit 1
+            ;;
+        esac
+      done
+      command -v python3 >/dev/null 2>&1 || { err "Python 3 is required."; exit 1; }
+      [[ -f "${issue_py}" ]] || { err "Issue registry helper not found: ${issue_py}"; exit 1; }
+      resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+      local args=(list "${RESOLVED_WORKSPACE}" --status "${status}")
+      [[ -n "${json_flag}" ]] && args+=(--json)
+      python3 "${issue_py}" "${args[@]}"
+      ;;
     ignore)
       local issue_id="" reason="" filtered_args=() arg
       while [[ $# -gt 0 ]]; do
@@ -2378,6 +2413,7 @@ cmd_issue() {
       ;;
     ""|help|-h|--help)
       printf 'Usage:\n'
+      printf '  lumen issue list [--workspace <path>|--project <slug>] [--status open|ignored|resolved|all] [--json]\n'
       printf '  lumen issue ignore <issue-id> [--workspace <path>|--project <slug>] [--reason <text>]\n'
       ;;
     *)

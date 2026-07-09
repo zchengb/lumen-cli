@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="lumen-dashboard-version" content="3" />
   <title>Lumen Dashboard</title>
   <style>
     :root {
@@ -902,6 +903,8 @@
       document.getElementById("content").addEventListener("click", function (event) {
         var ignoreBtn = event.target.closest(".ignore-btn");
         if (ignoreBtn) {
+          event.preventDefault();
+          event.stopPropagation();
           ignoreIssue(ignoreBtn.getAttribute("data-issue-id"), workspaceRoot);
           hiddenIssueIds = locallyHiddenIssueIds(workspaceRoot);
           document.getElementById("issue-panel").innerHTML = renderIssues(issues, issueMode, scanWindowDays, hiddenIssueIds);
