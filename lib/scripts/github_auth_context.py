@@ -89,7 +89,7 @@ def has_env_token() -> bool:
 
 def preflight_notice(workspace: Path) -> int:
     if not shutil_which("gh"):
-        print("Notice: GitHub CLI (gh) is not installed. Scanning can continue, but automated PR creation will be skipped.")
+        print("Notice: GitHub CLI (gh) is not installed. Scanning can continue, but post-scan PR creation will be skipped.")
         return 0
 
     gh_host = detect_github_host(workspace)
@@ -98,11 +98,11 @@ def preflight_notice(workspace: Path) -> int:
 
     if gh_auth_ok(gh_host):
         label = gh_host or "GitHub"
-        print(f"Notice: GitHub CLI is authenticated for {label}.")
+        print(f"Notice: GitHub CLI is authenticated for {label} (post-scan PR creation).")
         return 0
 
     label = gh_host or "GitHub"
-    print(f"Notice: GitHub CLI is not authenticated for {label}. Scanning can continue, but automated PR creation will be skipped.")
+    print(f"Notice: GitHub CLI is not authenticated for {label}. Scanning can continue, but post-scan PR creation will be skipped.")
     if not sys.stdin.isatty() or not has_env_token():
         print(f"  Scheduled and non-interactive scans cannot rely on macOS Keychain for gh auth.")
         print(f"  Add GH_TOKEN and GH_HOST to {workspace}/.env.local")
@@ -128,11 +128,13 @@ def prompt_lines(workspace: Path) -> list[str]:
     lines = []
     if gh_host:
         lines.append(f"- **GitHub host:** `{gh_host}` (from repository remotes or `GH_HOST`).")
-        lines.append(f"- **Auth check:** run `gh auth status -h {gh_host}` before creating PRs.")
+        lines.append(f"- **PR creation:** post-scan Python pushes auto-fix branches and runs `gh pr create` (not during the agent run).")
+        lines.append(f"- **Auth check:** run `gh auth status -h {gh_host}` on the machine that runs `render-report-and-notify.py`.")
     else:
-        lines.append("- **Auth check:** run `gh auth status` before creating PRs.")
+        lines.append("- **PR creation:** post-scan Python opens PRs after the agent exits.")
+        lines.append("- **Auth check:** run `gh auth status` before expecting automated PRs.")
     if token_ready:
-        lines.append("- **GH_TOKEN:** present in the environment (`.env.local`). Use it for `gh` in non-interactive runs.")
+        lines.append("- **GH_TOKEN:** present in the environment (`.env.local`). Post-scan `gh` uses this token.")
     else:
         lines.append(
             "- **GH_TOKEN:** not set. For scheduled scans, add `GH_TOKEN` and `GH_HOST` to `.env.local` "

@@ -95,7 +95,7 @@ If confidence is low, prefer `Low` or omit entirely.
 
 ### Automated PR eligibility
 
-Only `High` findings may receive automated fix commits and PRs, and only when the separate auto-fix policy also passes (safe minimal fix, `gh` authenticated, repo allows auto-fix).
+Only `High` findings may receive automated fix commits and PRs, and only when the separate auto-fix policy also passes (safe minimal fix, repo allows auto-fix). Post-scan Python opens PRs using `GH_TOKEN`.
 
 ### Anti-patterns (never do this)
 

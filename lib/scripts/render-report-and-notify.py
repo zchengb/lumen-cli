@@ -15,6 +15,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from auto_fix_sync import sync_auto_fix_prs
 from jira_sync import sync_jira_issues
 
 
@@ -836,6 +837,15 @@ def main() -> int:
         persist=not dry_run,
         stale_after_days=stale_after_days,
     )
+    scan["auto_fix_prs"] = sync_auto_fix_prs(
+        scan,
+        registry,
+        registry_path,
+        workspace_root,
+        common,
+        dry_run=dry_run,
+        persist=not dry_run,
+    )
     scan["jira"] = sync_jira_issues(
         scan,
         registry,
@@ -909,6 +919,10 @@ def main() -> int:
         "jira_updated": scan.get("jira", {}).get("updated", 0),
         "jira_failed": scan.get("jira", {}).get("failed", 0),
         "jira_error": "; ".join(scan.get("jira", {}).get("errors", [])[:1]) or None,
+        "pr_status": scan.get("auto_fix_prs", {}).get("status"),
+        "pr_created": scan.get("auto_fix_prs", {}).get("created", 0),
+        "pr_failed": scan.get("auto_fix_prs", {}).get("failed", 0),
+        "pr_error": "; ".join(scan.get("auto_fix_prs", {}).get("errors", [])[:1]) or None,
     }))
     return 0
 

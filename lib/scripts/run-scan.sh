@@ -283,11 +283,11 @@ run_real_scan() {
   fi
 
   if ! command -v gh >/dev/null 2>&1; then
-    printf 'Notice: GitHub CLI (gh) is not installed. Scanning can continue, but automated PR creation will be skipped.\n'
+    printf 'Notice: GitHub CLI (gh) is not installed. Scanning can continue, but post-scan PR creation will be skipped.\n'
   elif command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/github_auth_context.py" ]]; then
     python3 "${LUMEN_LIB_DIR}/github_auth_context.py" preflight "${WORKSPACE_ROOT}" 2>&1 | tee -a "${LOG_FILE}" || true
   elif ! gh auth status >/dev/null 2>&1; then
-    printf 'Notice: GitHub CLI is installed but not authenticated. Scanning can continue, but automated PR creation will be skipped.\n'
+    printf 'Notice: GitHub CLI is installed but not authenticated. Scanning can continue, but post-scan PR creation will be skipped.\n'
   fi
 
   printf '\nStarting Lumen scan agent at %s UTC...\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
@@ -325,8 +325,8 @@ run_real_scan() {
   fi
 
   printf '\nLumen scan agent finished at %s UTC.\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
-  refresh_scan_worktrees refresh || true
   run_report_and_notify || true
+  refresh_scan_worktrees refresh || true
   refresh_dashboard
 }
 

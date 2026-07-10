@@ -1,30 +1,10 @@
-## GitHub CLI Policy
+## GitHub PR Policy (Post-Scan)
 
-Use `gh` only after confirming it is installed and authentication is available.
+You do not push branches or run `gh` during the scan. After you exit, `render-report-and-notify.py` pushes each committed auto-fix branch and runs `gh pr create` using `GH_TOKEN` / `GH_HOST` from `.env.local`.
 
-If `gh` is not installed, scanning may continue, but PR creation must be skipped. Record:
+If you applied a local auto-fix commit, record `auto_fix` on the finding and leave `pr_url` empty. Do not record `pr_creation` failures for missing `gh` auth — post-scan handles that.
 
-```text
-Skipped PR creation: GitHub CLI (gh) is not installed.
-```
-
-If `gh auth status` indicates that the user is not logged in, scanning may continue, but PR creation must be skipped. Record:
-
-```text
-Skipped PR creation: GitHub CLI is not authenticated.
-```
-
-For GitHub Enterprise hosts (for example `mercedes-benz.ghe.com`), run:
-
-```bash
-gh auth status -h <github-host>
-```
-
-For scheduled or other non-interactive scans, interactive `gh auth login` and macOS Keychain are not reliable. Use `GH_TOKEN` and `GH_HOST` from this workspace's `.env.local` instead (`lumen config set-gh-token <token> --host <github-host>`). `gh` reads `GH_TOKEN` automatically when it is exported.
-
-Only record a `pr_creation` failure when at least one confirmed High-severity finding in this run required an auto-fix PR. If no PR-eligible finding exists, do not add a failure entry solely because `gh` auth is unavailable.
-
-Never claim a PR was created unless `gh pr create` actually succeeded and returned a PR URL.
+Never claim a PR was created unless the post-scan step has already filled `pr_url` (you will not see that in your run).
 
 Use this branch naming format:
 
@@ -32,9 +12,9 @@ Use this branch naming format:
 auto-fix/<repo-name>/<short-finding-slug>
 ```
 
-All commits and pushes must happen on this new branch only. Never commit on, push to, or modify the default branch directly.
+All commits must happen on this new branch only. Never commit on, push to, or modify the default branch directly.
 
-Use this PR title format:
+Use this PR title format (post-scan uses the finding title):
 
 ```text
 [Bug Fix] <Short Description>
@@ -50,24 +30,11 @@ PR descriptions must include:
 ## 5. Validation
 ```
 
-## Local Pre-Push Hook Policy
+## Local Pre-Push Hook Policy (Post-Scan)
 
-Some repositories have a local `pre-push` git hook that runs a full project build and test suite (for example `./gradlew clean build`) before allowing a push. This is separate from, and outside the control of, the "no project commands" rule above — it is triggered automatically by `git push` itself, not invoked directly by the agent.
+Some repositories have a local `pre-push` git hook that runs a full project build and test suite before allowing a push.
 
-These hook-triggered builds can run for many minutes and can fail for reasons that are unrelated to the automated fix, most commonly because local integration tests depend on Docker/Testcontainers and Docker is not running on the machine executing the scan.
-
-To keep automated fix branches from being blocked by this local-environment-only failure mode:
-
-1. Push the auto-fix branch using `git push --no-verify -u origin <branch>` so the local pre-push hook does not run. Local validation is already skipped by review-only policy, so skipping the redundant hook run does not change what was actually validated.
-2. Record in `scan-result.json` and the final console summary that the push used `--no-verify` and why:
-
-```text
-Pushed with --no-verify: local pre-push hook runs a full build/test suite that depends on Docker/Testcontainers, which is unavailable in this environment. No commit or code content was skipped by this flag; only the local hook execution was skipped.
-```
-
-3. This exception applies only to pushes of new `auto-fix/<repo-name>/<short-finding-slug>` branches created by this automation. Never use `--no-verify` when pushing to, or on behalf of, the repository's default branch.
-4. If `git push --no-verify` itself fails (network, auth, remote rejection, branch protection, etc.), record the exact failure. Do not retry with additional flags beyond `--no-verify`.
-5. Still create the PR normally with `gh pr create` once the branch is pushed. Mention in the PR description that local pre-push validation was bypassed for this environment-only reason, under section 5 (Validation).
+Post-scan push uses `git push --no-verify -u origin <branch>` for auto-fix branches so Docker/Testcontainers-dependent hooks do not block PR creation. The push note is recorded on the PR entry in `scan-result.json`.
 
 ## Git Commit Rules
 

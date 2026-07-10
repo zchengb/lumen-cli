@@ -46,9 +46,9 @@ def runtime_context_section(workspace_root: Path) -> str:
         f"- **Shallow fetch:** worktree refresh uses `git fetch --shallow-since={shallow_since}` (derived from the scan window).\n",
         f"- **Worktree preparation script:** `{worktree_script}`\n",
         f"- **Shell wrapper:** `bash {shell_script} {workspace_root} refresh`\n",
-        "- The scan wrapper runs worktree refresh before and after the agent when possible.\n",
+        "- The scan wrapper runs worktree refresh before the agent and again after post-scan PR creation.\n",
         "- If worktrees are missing, dirty, or out of date, run the refresh command yourself before reviewing repositories.\n",
-        "- After the scan completes, run the refresh command again so the next scan starts from clean, up-to-date worktrees.\n",
+        "- Do not refresh worktrees when you finish — post-scan steps need auto-fix branches intact.\n",
     ]
     lines.extend(f"{line}\n" for line in github_prompt_lines(workspace_root))
     return "".join(lines)
