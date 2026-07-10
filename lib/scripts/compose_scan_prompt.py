@@ -8,6 +8,12 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from github_auth_context import prompt_lines as github_prompt_lines
+
 
 def load_json(path: Path, default: dict | None = None) -> dict:
     if not path.is_file():
@@ -34,16 +40,18 @@ def runtime_context_section(workspace_root: Path) -> str:
     script_dir = Path(__file__).resolve().parent
     worktree_script = script_dir / "prepare_scan_worktrees.py"
     shell_script = script_dir / "prepare-scan-worktrees.sh"
-    return (
-        "## Runtime Scan Context (generated)\n\n"
-        f"- **Scan window:** last **{scan_window_days}** days (`execution.scan_window_days` in `config/common.json`).\n"
-        f"- **Shallow fetch:** worktree refresh uses `git fetch --shallow-since={shallow_since}` (derived from the scan window).\n"
-        f"- **Worktree preparation script:** `{worktree_script}`\n"
-        f"- **Shell wrapper:** `bash {shell_script} {workspace_root} refresh`\n"
-        "- The scan wrapper runs worktree refresh before and after the agent when possible.\n"
-        "- If worktrees are missing, dirty, or out of date, run the refresh command yourself before reviewing repositories.\n"
-        "- After the scan completes, run the refresh command again so the next scan starts from clean, up-to-date worktrees.\n"
-    )
+    lines = [
+        "## Runtime Scan Context (generated)\n",
+        f"- **Scan window:** last **{scan_window_days}** days (`execution.scan_window_days` in `config/common.json`).\n",
+        f"- **Shallow fetch:** worktree refresh uses `git fetch --shallow-since={shallow_since}` (derived from the scan window).\n",
+        f"- **Worktree preparation script:** `{worktree_script}`\n",
+        f"- **Shell wrapper:** `bash {shell_script} {workspace_root} refresh`\n",
+        "- The scan wrapper runs worktree refresh before and after the agent when possible.\n",
+        "- If worktrees are missing, dirty, or out of date, run the refresh command yourself before reviewing repositories.\n",
+        "- After the scan completes, run the refresh command again so the next scan starts from clean, up-to-date worktrees.\n",
+    ]
+    lines.extend(f"{line}\n" for line in github_prompt_lines(workspace_root))
+    return "".join(lines)
 
 
 def compose_prompt(workspace_root: Path) -> str:

@@ -85,6 +85,7 @@ Then:
 | `lumen doctor` | Check installed prerequisites (agent, git, python3, gh, webhook) |
 | `lumen config set-webhook <url> [--project <slug>]` | Save the Feishu webhook in a workspace `.env.local` |
 | `lumen config set-cursor-api-key <key> [--project <slug>]` | Save `CURSOR_API_KEY` in a workspace `.env.local` (for scheduled scans) |
+| `lumen config set-gh-token <token> [--host <host>] [--project <slug>]` | Save `GH_TOKEN` / `GH_HOST` for scheduled PR creation on GitHub Enterprise |
 | `lumen config set-scan-window <days> [--project <slug>]` | Set how many days of git history each scan inspects (`execution.scan_window_days`) |
 | `lumen config show` / `lumen config unset-webhook` | Show workspace settings or remove the Feishu webhook |
 | `lumen config unset-cursor-api-key [--project <slug>]` | Remove `CURSOR_API_KEY` from a workspace |
@@ -271,7 +272,7 @@ lumen schedule remove --project mbpass
 
 The cron expression uses the standard 5-field format (`minute hour day-of-month month day-of-week`). Scheduled runs are appended to `crontab` with a `# lumen-schedule:<slug>` marker and log to `<workspace>/logs/schedule.log`. Add `--dry-run` to schedule mock runs (no Cursor agent, no PRs, no Feishu).
 
-Cron jobs run with a minimal environment. Lumen sets a short `PATH`, `HOME`, `SHELL`, and `AGENT_CLI_CREDENTIAL_STORE=file` in crontab (the last avoids macOS Keychain access, which cron cannot use). Scheduled scans also need **`CURSOR_API_KEY`** in `<workspace>/.env.local` — interactive `agent login` tokens are not available to cron on macOS. Get a key from **Cursor Settings > API Keys**. If scheduled scans fail silently, upgrade to v1.12.1+ and re-run `lumen schedule add` with the same cron expression to refresh the crontab entry (older versions could write a PATH line long enough for cron to truncate).
+Cron jobs run with a minimal environment. Lumen sets a short `PATH`, `HOME`, `SHELL`, and `AGENT_CLI_CREDENTIAL_STORE=file` in crontab (the last avoids macOS Keychain access, which cron cannot use). Scheduled scans also need **`CURSOR_API_KEY`** in `<workspace>/.env.local` — interactive `agent login` tokens are not available to cron on macOS. Get a key from **Cursor Settings > API Keys**. For automated PR creation on GitHub Enterprise, also add **`GH_TOKEN`** and **`GH_HOST`** to `.env.local` (`lumen config set-gh-token <token> --host mercedes-benz.ghe.com --project <slug>`). Interactive `gh auth login` / macOS Keychain is not available to cron. If scheduled scans fail silently, upgrade to v1.12.1+ and re-run `lumen schedule add` with the same cron expression to refresh the crontab entry (older versions could write a PATH line long enough for cron to truncate).
 
 ### Scan notifications
 

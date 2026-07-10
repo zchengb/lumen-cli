@@ -14,6 +14,16 @@ If `gh auth status` indicates that the user is not logged in, scanning may conti
 Skipped PR creation: GitHub CLI is not authenticated.
 ```
 
+For GitHub Enterprise hosts (for example `mercedes-benz.ghe.com`), run:
+
+```bash
+gh auth status -h <github-host>
+```
+
+For scheduled or other non-interactive scans, interactive `gh auth login` and macOS Keychain are not reliable. Use `GH_TOKEN` and `GH_HOST` from this workspace's `.env.local` instead (`lumen config set-gh-token <token> --host <github-host>`). `gh` reads `GH_TOKEN` automatically when it is exported.
+
+Only record a `pr_creation` failure when at least one confirmed High-severity finding in this run required an auto-fix PR. If no PR-eligible finding exists, do not add a failure entry solely because `gh` auth is unavailable.
+
 Never claim a PR was created unless `gh pr create` actually succeeded and returned a PR URL.
 
 Use this branch naming format:

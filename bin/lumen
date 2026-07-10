@@ -345,6 +345,8 @@ Usage:
                                  Save the Feishu webhook in this workspace's .env.local
   lumen config set-cursor-api-key <key> [--project <slug>]
                                  Save CURSOR_API_KEY in this workspace's .env.local (for scheduled scans)
+  lumen config set-gh-token <token> [--host <github-host>] [--project <slug>]
+                                 Save GH_TOKEN (and optional GH_HOST) for scheduled PR creation on GHE/GitHub
   lumen config set-scan-window <days> [--project <slug>]
                                  Set how many days of git history each scan inspects
   lumen config set-jira [--enable|--disable] [--project-key <key>]
@@ -521,25 +523,41 @@ cmd_doctor() {
     err "git not found. Required for worktree-based scanning."
   fi
 
+  local webhook_source=""
+  local workspace=""
+  workspace="$( (set +e; resolve_command_workspace >/dev/null 2>&1; printf '%s' "${RESOLVED_WORKSPACE}") )" || true
+  if [[ -n "${workspace}" ]]; then
+    load_env_file_if_present "${workspace}/.env.common"
+    load_env_file_if_present "${workspace}/.env.local"
+  fi
+
   if command -v gh >/dev/null 2>&1; then
-    if gh auth status >/dev/null 2>&1; then
+    local gh_host=""
+    if [[ -n "${workspace}" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_HOME}/lib/scripts/github_auth_context.py" ]]; then
+      gh_host="$(python3 "${LUMEN_HOME}/lib/scripts/github_auth_context.py" detect-host "${workspace}" 2>/dev/null || true)"
+    fi
+    if [[ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]] && { [[ -z "${gh_host}" ]] || gh auth status -h "${gh_host}" >/dev/null 2>&1; }; then
+      ok "GitHub CLI (gh) token is available from .env.local${gh_host:+ for ${gh_host}}."
+    elif [[ -n "${gh_host}" ]] && gh auth status -h "${gh_host}" >/dev/null 2>&1; then
+      ok "GitHub CLI (gh) authenticated for ${gh_host}."
+    elif gh auth status >/dev/null 2>&1; then
       ok "GitHub CLI (gh) found and authenticated."
     else
-      warn "GitHub CLI (gh) found but not authenticated. Run 'gh auth login' to enable automated PR creation."
+      warn "GitHub CLI (gh) is not authenticated${gh_host:+ for ${gh_host}}."
+      if [[ -n "${gh_host}" ]]; then
+        printf '  Interactive: gh auth login -h %s\n' "${gh_host}"
+      else
+        printf '  Interactive: gh auth login\n'
+      fi
+      printf '  Scheduled scans: lumen config set-gh-token <token> --host %s --project <slug>\n' "${gh_host:-mercedes-benz.ghe.com}"
     fi
   else
     warn "GitHub CLI (gh) not found. Scans will run, but automated PR creation will be skipped."
   fi
 
-  local webhook_source=""
-  local workspace=""
-  workspace="$( (set +e; resolve_command_workspace >/dev/null 2>&1; printf '%s' "${RESOLVED_WORKSPACE}") )" || true
-
   if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
     webhook_source="the current shell environment"
   elif [[ -n "${workspace}" ]]; then
-    load_env_file_if_present "${workspace}/.env.common"
-    load_env_file_if_present "${workspace}/.env.local"
     if [[ -n "${FEISHU_WEBHOOK_URL:-}" ]]; then
       webhook_source="${workspace}/.env.local"
     fi
@@ -605,6 +623,12 @@ except Exception:
       warn "CURSOR_API_KEY is not set. Scheduled scans will fail under cron."
       printf '  Add it during lumen init or: lumen config set-cursor-api-key <key> --project <slug>\n'
     fi
+    if [[ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
+      ok "GH_TOKEN is set for scheduled PR creation."
+    else
+      warn "GH_TOKEN is not set. Scheduled scans can review code but will skip automated PR creation."
+      printf '  Add: lumen config set-gh-token <token> --host <github-host> --project <slug>\n'
+    fi
   elif [[ -n "${workspace}" ]]; then
     load_env_file_if_present "${workspace}/.env.local"
     if [[ -n "${CURSOR_API_KEY:-}" ]]; then
@@ -619,6 +643,16 @@ write_workspace_webhook() {
 
 write_workspace_cursor_api_key() {
   set_env_local_var "$1" "CURSOR_API_KEY" "$2"
+}
+
+write_workspace_gh_token() {
+  local workspace="$1"
+  local token="$2"
+  local host="$3"
+  set_env_local_var "${workspace}" "GH_TOKEN" "${token}"
+  if [[ -n "${host}" ]]; then
+    set_env_local_var "${workspace}" "GH_HOST" "${host}"
+  fi
 }
 
 ensure_env_local_file() {
@@ -752,6 +786,44 @@ cmd_config() {
       resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
       write_workspace_cursor_api_key "${RESOLVED_WORKSPACE}" "${api_key}"
       ok "Saved CURSOR_API_KEY to ${RESOLVED_WORKSPACE}/.env.local"
+      ;;
+    set-gh-token)
+      local token="" host="" filtered_args=() arg
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project|-p|--workspace|--no-open) filtered_args+=("$1"); shift ;;
+          --host)
+            host="${2:-}"
+            shift 2
+            ;;
+          --*)
+            err "Unknown option: $1"
+            exit 1
+            ;;
+          *)
+            if [[ -z "${token}" ]]; then
+              token="${arg}"
+            else
+              err "Unexpected argument: $1"
+              exit 1
+            fi
+            shift
+            ;;
+        esac
+      done
+      if [[ -z "${token}" ]]; then
+        err "Usage: lumen config set-gh-token <token> [--host <github-host>] [--project <slug>]"
+        exit 1
+      fi
+      resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+      if [[ -z "${host}" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_HOME}/lib/scripts/github_auth_context.py" ]]; then
+        host="$(python3 "${LUMEN_HOME}/lib/scripts/github_auth_context.py" detect-host "${RESOLVED_WORKSPACE}" 2>/dev/null || true)"
+      fi
+      write_workspace_gh_token "${RESOLVED_WORKSPACE}" "${token}" "${host}"
+      ok "Saved GH_TOKEN to ${RESOLVED_WORKSPACE}/.env.local"
+      if [[ -n "${host}" ]]; then
+        ok "Saved GH_HOST=${host}"
+      fi
       ;;
     set-scan-window)
       local days="" filtered_args=() arg
@@ -909,6 +981,7 @@ cmd_config() {
       printf 'Usage:\n'
       printf '  lumen config set-webhook <url> [--project <slug>]\n'
       printf '  lumen config set-cursor-api-key <key> [--project <slug>]\n'
+      printf '  lumen config set-gh-token <token> [--host <github-host>] [--project <slug>]\n'
       printf '  lumen config set-scan-window <days> [--project <slug>]\n'
       printf '  lumen config set-jira [--enable|--disable] [--project-key <key>] [--board-id <id>] [--project <slug>]\n'
       printf '  lumen config show [--project <slug>]\n'
@@ -1788,6 +1861,10 @@ cmd_schedule_add() {
     if [[ -z "${CURSOR_API_KEY:-}" ]]; then
       warn "Scheduled scans need CURSOR_API_KEY in ${workspace}/.env.local"
       printf '  Set it during lumen init or: lumen config set-cursor-api-key <key> --project %s\n' "${slug}"
+    fi
+    if [[ -z "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
+      warn "Scheduled scans need GH_TOKEN in ${workspace}/.env.local for automated PR creation"
+      printf '  Set it with: lumen config set-gh-token <token> --host <github-host> --project %s\n' "${slug}"
     fi
   fi
   printf 'Run %slumen schedule list%s to review all schedules.\n' "${BOLD}" "${RESET}"
