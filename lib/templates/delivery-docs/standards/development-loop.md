@@ -58,16 +58,15 @@ Do not run `lumen delivery run` until:
    - `technical-plan.md`
    - Lumen coding guideline
 6. Agent writes `delivery-result.json` under the workspace root `.lumen/results/`.
-7. Lumen reruns mandatory verification checks:
-   - Language Grammar Check
-   - PMD Check
-   - Unit Test
-   - Integration Test
+7. Lumen reruns the repository-specific verification profile from the approved plan. Java repositories run compile/static/unit/integration/architecture checks when supported; App/PHP/frontend repositories run only the lightweight checks explicitly allowed by the plan.
 8. Lumen updates `metadata.json`, moves JIRA to `DEV DONE`, and sends `delivery.dev_done`.
 
 ## Implementation Rules
 
 - Follow the Lumen coding guideline injected by the CLI.
+- Follow the impacted repository's existing layer boundaries, coding conventions, and architecture guard tests.
+- Do not add database foreign keys. Preserve relationships through the repository's existing application validation, lifecycle handling, and indexes.
+- Assess authorization, tenant/dealer/ownership scope, and audit behavior for every protected read or mutation.
 - Implement only what the approved plan contains.
 - Prefer the smallest safe diff.
 - Reuse existing patterns in each repository.

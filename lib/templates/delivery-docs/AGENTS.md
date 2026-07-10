@@ -200,12 +200,14 @@ During the Technical Loop, the Agent should:
 4. Ask one focused technical question at a time when ambiguity affects design, scope, runtime, verification, rollout, or rollback.
 5. Offer concrete options for each question and allow a custom answer.
 6. Record confirmed technical decisions in `technical-plan.md`; do not leave decisions only in chat.
-7. Produce a file-level plan detailed enough for implementation without guessing.
-8. Ask whether to approve and push the technical plan, run build/verification now, or keep refining.
-9. Ask for explicit user approval before setting `technicalStatus` to `approved`.
-10. Never modify application code during the Technical Loop.
+7. Derive a concise, business-facing `Delivery Checklist` from confirmed Acceptance Criteria and Business Rules; do not use technical implementation language.
+8. Add an optional business flow diagram only when the flow spans systems, jobs, asynchronous steps, state transitions, or complex filtering.
+9. Produce a file-level plan detailed enough for implementation without guessing.
+10. Ask whether to approve and push the technical plan, run build/verification now, or keep refining.
+11. Ask for explicit user approval before setting `technicalStatus` to `approved`.
+12. Never modify application code during the Technical Loop.
 
-A technical plan is not ready until it is scoped to one story and includes repository scope, architecture placement, file-level changes, API/schema/config/integration impact, runtime profile, implementation steps, test strategy based on actual repo capabilities, verification, rollback, and out-of-scope boundaries.
+A technical plan is not ready until it is scoped to one story and includes repository scope, existing layer boundaries and coding conventions, architecture guard impact, file-level changes, API/schema/config/integration/permission impact, runtime profile, implementation steps, test strategy based on actual repo capabilities, verification, rollback, and out-of-scope boundaries. Database foreign keys are not allowed; plan application-level relationship validation and indexes instead.
 
 ## Technical Status
 
@@ -220,7 +222,7 @@ If the story changes after approval, move `technicalStatus` back to `draft` and 
 
 The Development Loop is executed by `lumen delivery run`. Read `standards/development-loop.md` for the full contract.
 
-Coding standards are shipped with the Lumen CLI and injected automatically during `lumen delivery run`. Do not copy the coding guideline into the docs repository.
+Coding standards are shipped with the Lumen CLI and injected automatically during `lumen delivery run`. Do not copy the coding guideline into the docs repository. The delivery Agent must first discover the impacted repository's actual layer boundaries, coding conventions, test capability, architecture guards, and authorization patterns; those repository-specific facts govern implementation.
 
 Do not start the Development Loop until:
 

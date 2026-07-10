@@ -16,6 +16,15 @@ Add a static welcome banner to the mini web app and verify it with lightweight t
 |---|---|
 | AC1: User sees welcome banner on first page load | Render a semantic banner in the home page component |
 
+## Delivery Checklist
+
+- [ ] 使用者首次進入首頁時可以看到歡迎橫幅。
+- [ ] 歡迎橫幅不影響既有首頁內容與操作。
+
+## Business Flow Diagram (Optional)
+
+No diagram is required because this is a simple local UI change.
+
 ## Technical Clarifications
 
 | Question | Confirmed answer | Impact on plan |
@@ -38,6 +47,12 @@ mini-lumen-web
   tests -> DOM render test
 ```
 
+## Repository Conventions And Architecture Guards
+
+| Repository | Existing layers / module boundary | Existing style to follow | Architecture guard test / rule | Delivery action |
+|---|---|---|---|---|
+| mini-lumen-web | page -> component -> styles | Existing component and test naming | None found | Preserve folder boundary |
+
 ## API And Contract Changes
 
 ### Caller impact
@@ -51,6 +66,14 @@ mini-lumen-web
 ## Data Model And Migration Plan
 
 - None
+
+Do not introduce database foreign keys. Use application-level relationship validation and ordinary indexes where a data relationship requires them.
+
+## Permission And Data Scope
+
+| Surface | Actor / caller | Permission / role | Tenant, dealer, or ownership scope | Audit / logging | Verification |
+|---|---|---|---|---|---|
+| Welcome banner | Anonymous page visitor | Public read | Not applicable | Not required | DOM render test |
 
 ## Integration And Failure Handling
 
@@ -81,12 +104,12 @@ mini-lumen-web
 
 ## Verification Plan
 
-Plan tests based on the actual repository setup. Include unit tests and integration tests only when the repository already supports them or the story explicitly requires adding them.
+Plan tests based on the actual repository setup. Include unit tests, integration tests, and architecture guards only when the repository already supports them or the story explicitly requires adding them. App/PHP/frontend projects default to syntax/type/lint and explicitly allowed focused tests.
 
-| Step | Repository | Command or manual check | Expected result | Notes |
-|---|---|---|---|---|
-| 1 | mini-lumen-web | `npm test` | Welcome banner test passes | Lightweight only |
-| 2 | mini-lumen-web | Open home page manually | Banner is visible on first load | Optional manual check |
+| Level | Repository | Existing capability / guard discovered | Command or manual check | Expected result | Notes |
+|---|---|---|---|---|---|
+| Syntax / unit | mini-lumen-web | Existing DOM test setup | `npm test` | Welcome banner test passes | Lightweight only |
+| Manual | mini-lumen-web | Browser | Open home page manually | Banner is visible on first load | Optional |
 
 ## Runtime Profiles
 

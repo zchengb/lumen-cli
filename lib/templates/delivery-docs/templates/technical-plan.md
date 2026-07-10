@@ -16,6 +16,16 @@ Describe the technical outcome and map it to Acceptance Criteria from `story.md`
 |---|---|
 | AC1 | TBD |
 
+## Delivery Checklist
+
+Summarize the business outcomes the delivery must achieve. Derive every item from confirmed Acceptance Criteria or Business Rules in `story.md`. Use concise, business-facing language; do not list implementation tasks, commands, or tests.
+
+- [ ] TBD
+
+## Business Flow Diagram (Optional)
+
+Add a Mermaid flowchart only when cross-system flow, scheduled or asynchronous processing, state transitions, or complex filtering is material to understanding the business flow. Omit this section's diagram for a simple local change.
+
 ## Technical Clarifications
 
 Record confirmed answers from progressive technical Q&A. Do not keep important decisions only in chat.
@@ -40,6 +50,14 @@ mbpass-admin -> controller validation + request mapping
 mbpass-business -> application service + repository query
 ```
 
+## Repository Conventions And Architecture Guards
+
+Document the conventions observed in each impacted repository. Existing repository patterns and guard tests are authoritative; do not create a parallel layering approach for this story.
+
+| Repository | Existing layers / module boundary | Existing style to follow | Architecture guard test / rule | Delivery action |
+|---|---|---|---|---|
+| TBD | TBD | TBD | TBD or `None found` | TBD |
+
 ## API And Contract Changes
 
 ### New or changed endpoints
@@ -58,9 +76,19 @@ mbpass-business -> application service + repository query
 
 ## Data Model And Migration Plan
 
+Do not introduce database foreign keys. Use application-level relationship validation and ordinary indexes where required by the query or lifecycle.
+
 | Repository | Table / field / migration | Change | Backward compatible | Rollback |
 |---|---|---|---|---|
 | TBD | TBD | TBD | TBD | TBD |
+
+## Permission And Data Scope
+
+Complete this section whenever the change reads or mutates data, exposes an endpoint, runs a job, or changes an integration. Reuse the repository's existing authorization and audit conventions.
+
+| Surface | Actor / caller | Permission / role | Tenant, dealer, or ownership scope | Audit / logging | Verification |
+|---|---|---|---|---|---|
+| TBD or `No permission impact` | TBD | TBD | TBD | TBD | TBD |
 
 ## Integration And Failure Handling
 
@@ -92,11 +120,14 @@ Each step must be concrete enough for the Development Loop to execute without gu
 
 ## Verification Plan
 
-Plan tests based on the actual repository setup. Include unit tests and integration tests only when the repository already supports them or the story explicitly requires adding them.
+Plan tests based on the actual repository setup. Include unit tests, integration tests, and architecture guards only when the repository already supports them or the story explicitly requires adding them. App/PHP/frontend projects default to syntax/type/lint and explicitly allowed focused tests; do not plan heavy environment-dependent builds by default.
 
-| Step | Repository | Command or manual check | Expected result | Notes |
-|---|---|---|---|---|
-| 1 | TBD | TBD | TBD | TBD |
+| Level | Repository | Existing capability / guard discovered | Command or manual check | Expected result | Notes |
+|---|---|---|---|---|---|
+| Compile / syntax | TBD | TBD | TBD | TBD | TBD |
+| Static / architecture | TBD | TBD | TBD | TBD | TBD |
+| Unit | TBD | TBD | TBD | TBD | TBD |
+| Integration | TBD | TBD | TBD | TBD | TBD |
 
 ## Runtime Profiles
 

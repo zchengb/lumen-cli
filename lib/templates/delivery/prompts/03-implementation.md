@@ -8,17 +8,13 @@ Implement the approved technical plan step by step.
    - Inspect the relevant files before editing.
    - Apply the smallest safe change.
    - Run the verification command listed for that step when tooling is available.
-3. Before finishing, run the mandatory delivery verification checks in each impacted repository worktree:
-   - **Language Grammar Check** — compile main and test sources
-   - **PMD Check** — static analysis
-   - **Unit Test** — focused unit-level tests
-   - **Integration Test** — controller/base/integration-style tests
+3. Before finishing, run the approved repository-specific verification profile in each impacted worktree. For Java repositories, include compile, static analysis, focused unit, integration, and architecture-guard tests when the repository supports them. For App/PHP/frontend repositories, run only the syntax/type/lint and explicitly allowed focused checks in the plan.
 4. Record verification results honestly in `delivery-result.json`.
 5. When the plan scope is complete, create the PR unless the user disabled PR creation.
 
 ## Mandatory Java / Gradle Commands
 
-When the repository uses Gradle with PMD, run these in the prepared worktree unless `delivery.json` overrides them:
+When the repository uses Gradle with PMD and the approved verification profile does not override them, run these in the prepared worktree:
 
 ```bash
 ./gradlew compileJava compileTestJava -x test

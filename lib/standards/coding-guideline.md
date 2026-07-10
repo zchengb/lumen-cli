@@ -19,9 +19,11 @@ For each impacted repository:
 
 1. Read `technical-plan.md` and the linked Acceptance Criteria in `story.md`.
 2. Read this coding guideline.
-3. Inspect package/module layout, naming, and recent commits in that repository.
+3. Inspect package/module layout, naming, recent commits, build configuration, and representative tests in that repository.
 4. Identify the exact files, classes, endpoints, migrations, and tests named or implied by the plan.
-5. Confirm the worktree is on a feature branch, not the default branch.
+5. Discover whether the repository has architecture guard tests (for example ArchUnit, package-boundary tests, ESLint import rules, PMD, or Checkstyle) and record the relevant guard in the delivery result.
+6. Identify the repository's authentication, authorization, tenant/dealer scope, and audit conventions whenever a changed flow can read or mutate protected data.
+7. Confirm the worktree is on a feature branch, not the default branch.
 
 If the plan is missing file-level detail for a non-trivial change, stop and return to the Technical Loop.
 
@@ -51,7 +53,7 @@ Use the workspace paths provided in the delivery prompt. Repositories are not si
 
 ## Architecture Rules
 
-Place code in the same layer the repository already uses.
+Place code in the same layer the repository already uses. The actual repository package/module structure and its guard tests are authoritative; the generic names below are only a vocabulary for the delivery plan.
 
 | Layer | Responsibility |
 |-------|----------------|
@@ -66,6 +68,10 @@ Rules:
 - Keep business rules out of controllers when the repository already uses an application/domain layer.
 - Keep persistence details out of domain models.
 - Reuse existing builders, mappers, repositories, and DTO patterns instead of inventing parallel structures.
+- Do not bypass an existing application/service boundary from a controller, job, consumer, or UI adapter.
+- Do not introduce a new layer, package convention, or cross-layer dependency merely for this story.
+- When the repository has architecture guard tests, extend the relevant guard for a new package/layer or keep the change compliant with it. Do not weaken or disable an existing guard to pass delivery.
+- When no guard exists, follow the observed layering and record the absence as a delivery risk; propose a new guard only through a separately approved technical plan.
 
 ## Java (Spring) Rules
 
@@ -77,6 +83,7 @@ Use when the repository is Java-based.
 - Use existing annotation patterns for auth, validation, and exception handling.
 - Reuse existing request/response DTOs and mappers.
 - For database changes, add Flyway/Liquibase migrations in the repository's existing migration folder and naming style.
+- Do not create database foreign-key constraints. Preserve referential integrity through application validation, indexes, lifecycle handling, and the repository's existing data-access conventions.
 - Name tests `<ClassUnderTest>Test` or follow the repository's existing suffix.
 - Prefer focused unit tests for domain/application logic and slice/integration tests only when the repository already uses them.
 
@@ -110,6 +117,8 @@ Use when the repository is PHP-based.
 
 - Preserve existing authentication and authorization checks.
 - Never weaken role, permission, dealer-scope, or tenant-scope checks to make implementation easier.
+- For every new or changed endpoint, job, query, export, or mutation, explicitly assess: actor, permission/role, tenant/dealer/data scope, ownership check, and audit requirement. Reuse the repository's existing mechanism.
+- Add or update an authorization-focused test when the repository has a matching test pattern and the change affects protected data or actions.
 - Do not log secrets, tokens, passwords, or personal data.
 - Validate all external input at the boundary the repository already uses.
 - Prefer existing sanitization and encoding utilities.
@@ -118,6 +127,7 @@ Use when the repository is PHP-based.
 
 - One migration per logical change when possible.
 - Make migrations backward-compatible unless the plan documents a coordinated release.
+- Do not add database foreign keys, including `FOREIGN KEY`, `REFERENCES`, or cascading FK constraints. Use a normal index where query performance or application-level relationship checks require it.
 - Do not hand-edit production data in code.
 - Name tables, columns, and indexes consistently with the repository's existing schema.
 - Update seeders/factories/tests when the repository already maintains them for the changed tables.
@@ -193,7 +203,14 @@ If the repository uses a different PR template, follow the repository template a
 
 ## Verification Rules
 
-Follow the `Verification` section of `technical-plan.md`, then run the mandatory Lumen delivery checks when applicable:
+Follow the `Verification` section of `technical-plan.md`. Test depth is discovered per repository; it is not a blanket command list:
+
+- Java repositories: run compile/grammar, PMD or equivalent static checks, focused unit tests, and integration/architecture tests when the repository already provides those test patterns or the plan adds them.
+- App, PHP, and frontend repositories: run only the lightweight syntax, type, lint, or existing focused tests explicitly allowed by the plan/runtime profile. Do not infer a full native build or environment-heavy integration suite.
+- If a repository has architecture guard tests, include the affected guard test in verification. A changed layer boundary without its existing guard passing is a failed delivery.
+- If an expected unit or integration test suite does not exist, record the observed capability and the selected verification level; do not claim coverage that the repository cannot provide.
+
+Lumen's default Java/Gradle profile runs the following checks only when applicable or when no repository-specific verification profile overrides them:
 
 | Check | Typical Java / Gradle command |
 |---|---|
