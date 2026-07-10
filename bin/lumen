@@ -740,18 +740,29 @@ cmd_config() {
 
   case "${sub}" in
     set-webhook)
-      local url="" filtered_args=() arg
-      for arg in "$@"; do
-        case "${arg}" in
-          --project|-p|--workspace|--no-open) filtered_args+=("${arg}") ;;
-          --*) err "Unknown option: ${arg}"; exit 1 ;;
+      local url="" filtered_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project|-p|--workspace)
+            filtered_args+=("$1" "${2:-}")
+            shift 2
+            ;;
+          --no-open)
+            filtered_args+=("$1")
+            shift
+            ;;
+          --*)
+            err "Unknown option: $1"
+            exit 1
+            ;;
           *)
             if [[ -z "${url}" ]]; then
-              url="${arg}"
+              url="$1"
             else
-              err "Unexpected argument: ${arg}"
+              err "Unexpected argument: $1"
               exit 1
             fi
+            shift
             ;;
         esac
       done
@@ -764,18 +775,29 @@ cmd_config() {
       ok "Saved FEISHU_WEBHOOK_URL to ${RESOLVED_WORKSPACE}/.env.local"
       ;;
     set-cursor-api-key)
-      local api_key="" filtered_args=() arg
-      for arg in "$@"; do
-        case "${arg}" in
-          --project|-p|--workspace|--no-open) filtered_args+=("${arg}") ;;
-          --*) err "Unknown option: ${arg}"; exit 1 ;;
+      local api_key="" filtered_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project|-p|--workspace)
+            filtered_args+=("$1" "${2:-}")
+            shift 2
+            ;;
+          --no-open)
+            filtered_args+=("$1")
+            shift
+            ;;
+          --*)
+            err "Unknown option: $1"
+            exit 1
+            ;;
           *)
             if [[ -z "${api_key}" ]]; then
-              api_key="${arg}"
+              api_key="$1"
             else
-              err "Unexpected argument: ${arg}"
+              err "Unexpected argument: $1"
               exit 1
             fi
+            shift
             ;;
         esac
       done
@@ -788,10 +810,17 @@ cmd_config() {
       ok "Saved CURSOR_API_KEY to ${RESOLVED_WORKSPACE}/.env.local"
       ;;
     set-gh-token)
-      local token="" host="" filtered_args=() arg
+      local token="" host="" filtered_args=()
       while [[ $# -gt 0 ]]; do
         case "$1" in
-          --project|-p|--workspace|--no-open) filtered_args+=("$1"); shift ;;
+          --project|-p|--workspace)
+            filtered_args+=("$1" "${2:-}")
+            shift 2
+            ;;
+          --no-open)
+            filtered_args+=("$1")
+            shift
+            ;;
           --host)
             host="${2:-}"
             shift 2
@@ -802,7 +831,7 @@ cmd_config() {
             ;;
           *)
             if [[ -z "${token}" ]]; then
-              token="${arg}"
+              token="$1"
             else
               err "Unexpected argument: $1"
               exit 1
