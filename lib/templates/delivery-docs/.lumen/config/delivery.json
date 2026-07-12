@@ -26,58 +26,8 @@
       "skip_if_unavailable": false
     },
     "java_gradle": {
-      "steps": [
-        {
-          "id": "language_grammar",
-          "label": "Language Grammar Check",
-          "command": ["./gradlew", "compileJava", "compileTestJava", "-x", "test"]
-        },
-        {
-          "id": "pmd",
-          "label": "PMD Check",
-          "command": ["./gradlew", "pmdMain", "pmdTest"]
-        },
-        {
-          "id": "unit_test",
-          "label": "Unit Test",
-          "command": [
-            "./gradlew",
-            "test",
-            "--tests",
-            "*ApplicationTest",
-            "--tests",
-            "*HelperTest",
-            "--tests",
-            "*RendererTest",
-            "--tests",
-            "*PropertiesTest",
-            "--tests",
-            "*MergerTest",
-            "--tests",
-            "*PusherTest",
-            "--tests",
-            "*QueryApplicationTest"
-          ],
-          "allow_no_tests": true
-        },
-        {
-          "id": "integration_test",
-          "label": "Integration Test",
-          "command": [
-            "./gradlew",
-            "test",
-            "--tests",
-            "*ControllerTest",
-            "--tests",
-            "*BaseTest",
-            "--tests",
-            "*IntegrationTest",
-            "--tests",
-            "*IT"
-          ],
-          "allow_no_tests": true
-        }
-      ]
-    }
+      "strategy": "compile, PMD when configured, then full Gradle test suite"
+    },
+    "steps": {}
   }
 }

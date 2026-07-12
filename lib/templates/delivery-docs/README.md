@@ -18,7 +18,7 @@ This repository stores lightweight Lumen Delivery documents for business explora
     config/
       workspace.json
       delivery.json
-    worktrees/<repository>/
+    worktrees/<story-key>/<repository>/
     results/delivery-result.json
     logs/delivery/
   repos/
@@ -71,5 +71,11 @@ notifications/
 1. Business Loop starts from a broad `topics/<slug>.md` or directly clarifies `story.md`.
 2. If starting from a topic, Business Loop proposes candidate stories and waits for user confirmation before creating story folders.
 3. Technical Loop produces and approves `technical-plan.md`.
-4. `lumen delivery run <docs-dir> --story <JIRA-KEY-or-slug>` implements the approved plan.
-5. Optional JIRA comment and PR complete the delivery trail.
+4. From the workspace root, `lumen delivery run --story <JIRA-KEY-or-slug>` implements the approved plan.
+5. Lumen verifies the worktree, then commits, pushes, opens one PR per repository, updates JIRA, and sends the delivery notification.
+
+## Local Java Runtime
+
+Java delivery verification runs on the host machine. For Testcontainers on macOS/Colima, start Colima once with `colima start --network-address`. Lumen then injects the required Testcontainers environment variables for each integration test.
+
+If a private Gradle repository needs CodeArtifact, provide `CODEARTIFACT_AUTH_TOKEN` in the current shell, or define a trusted local `CODEARTIFACT_TOKEN_COMMAND` in `.env.local`. Neither value is committed or written to delivery results.

@@ -1,11 +1,3 @@
----
-status: "draft"
-approvedBy: ""
-approvedAt: ""
-jiraKey: "__JIRA_KEY__"
-baseBranch: "main"
-featureBranch: "feature/__JIRA_KEY__-mini-web-welcome-banner"
----
 # Technical Plan: Mini Web Welcome Banner
 
 ## Goal

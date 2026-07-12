@@ -3,7 +3,7 @@
 The Development Loop implements an approved `technical-plan.md` in code. It is executed by Lumen CLI:
 
 ```bash
-lumen delivery run <docs-dir> --story <JIRA-KEY-or-slug>
+lumen delivery run --story <JIRA-KEY-or-slug>
 ```
 
 ## Workspace Layout
@@ -19,7 +19,9 @@ Code repositories live inside this docs project:
   .lumen/
 ```
 
-Configure repositories in `<docs-repo>/.lumen/config/workspace.json`. When `repositories` is empty, Lumen auto-discovers git repositories under `repos/`.
+The docs repository is the delivery workspace. Lumen auto-discovers git repositories under `<docs-repo>/repos/`; no separate delivery workspace configuration is required.
+
+Different Stories have independent worktrees and may be developed in parallel. Lumen serializes automated `delivery run` executions in one docs repository so verification resources, JIRA transitions, and delivery state remain deterministic.
 
 ## Inputs
 
@@ -50,7 +52,7 @@ Do not run `lumen delivery run` until:
 
 1. Validate story gates and resolve repository paths.
 2. Set `deliveryStatus` to `in_progress`.
-3. Create or reuse feature worktrees under `<docs-repo>/.lumen/worktrees/<repository>/`.
+3. Create or reuse feature worktrees under `<workspace-root>/.lumen/worktrees/<story-key>/<repository>/`, based on `origin/<base-branch>` without modifying original checkouts.
 4. Move JIRA Story to `IN DEV` when `twg-cli` is authenticated.
 5. Run the Cursor agent with:
    - delivery prompt snippets
@@ -58,8 +60,9 @@ Do not run `lumen delivery run` until:
    - `technical-plan.md`
    - Lumen coding guideline
 6. Agent writes `delivery-result.json` under the workspace root `.lumen/results/`.
-7. Lumen reruns the repository-specific verification profile from the approved plan. Java repositories run compile/static/unit/integration/architecture checks when supported; App/PHP/frontend repositories run only the lightweight checks explicitly allowed by the plan.
-8. Lumen updates `metadata.json`, moves JIRA to `DEV DONE`, and sends `delivery.dev_done`.
+7. Lumen reruns the repository-specific verification profile from the approved plan. Java repositories run compile, PMD when configured, and their full Gradle test suite; App/PHP/frontend repositories run only lightweight local syntax/type/lint checks and never run native builds by default.
+8. Lumen commits verified changes, pushes only feature branches, and opens one PR per repository.
+9. Lumen updates `metadata.json`, moves JIRA to `DEV DONE`, sends `delivery.dev_done`, and archives the run history.
 
 ## Implementation Rules
 

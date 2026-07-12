@@ -20,6 +20,7 @@ PHASES = [
     ("jira_start", "JIRA IN DEV"),
     ("agent", "Implementation agent"),
     ("verification", "Verification"),
+    ("finalize", "Commit, Push, And Pull Requests"),
     ("jira_done", "JIRA DEV DONE"),
     ("notify", "Notifications"),
 ]

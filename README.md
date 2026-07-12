@@ -48,11 +48,11 @@ cd ~/Projects/my-project
 lumen init
 ```
 
-This creates a `.lumen/` folder inside your project root with all scan configuration and outputs. Your application code stays untouched at the project root.
+This creates one Lumen workspace: `.lumen/` holds shared runtime/configuration, `repos/` holds stable code checkouts, and `stories/` holds business and technical delivery documents.
 
 `lumen init` asks you a few questions interactively — no manual JSON editing required for a first run:
 
-- Project display name and where your repositories live locally
+- Project display name; repositories live together under `repos/`
 - Scan window (days) and which Cursor model to use
 - Your Feishu webhook URL (optional — written to `.lumen/.env.local` for this project only)
 - Your Cursor API key (optional — written to `.lumen/.env.local` as `CURSOR_API_KEY` for scheduled/cron scans)
@@ -72,7 +72,7 @@ Then:
 
 | Command | Description |
 |---|---|
-| `lumen init [dir] [--yes] [--force]` | Create a new scan workspace and interactively configure it (default: current directory). Re-runs after an interrupted init automatically clean up the incomplete `.lumen` folder. Use `--force` to replace a fully configured workspace. |
+| `lumen init [dir] [--yes] [--force]` | Create one integrated scan + delivery workspace and configure it interactively (default: current directory). Re-runs after an interrupted init automatically clean up the incomplete `.lumen` folder. Use `--force` to replace a fully configured workspace. |
 | `lumen list` | List all registered scan projects (name, slug, workspace) |
 | `lumen use [slug]` | Set or show the default project slug |
 | `lumen register [dir]` | Register an existing workspace (e.g. an `.auto-scan` folder) as a project |
@@ -91,19 +91,18 @@ Then:
 | `lumen config unset-cursor-api-key [--project <slug>]` | Remove `CURSOR_API_KEY` from a workspace |
 | `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled templates (`config/prompts/`, `scan-prompt.md`, dashboard). Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
-| `lumen set-up-docs [dir] [--name <name>] [--key <key>] [--force]` | Initialize a delivery docs repository for Business / Technical / Development loops |
-| `lumen delivery init-docs ...` | Alias for `lumen set-up-docs` |
+| `lumen delivery dashboard [workspace-dir]` | Render the Delivery history dashboard |
 | `lumen help` | Show usage |
 
 ## Delivery Docs (Business → Technical → Development)
 
-Lumen also ships a **delivery docs** template for story-driven development with Codex, Cursor, or another Agent.
+`lumen init` includes the delivery docs template for story-driven development with Codex, Cursor, or another Agent.
 
 ```bash
-lumen set-up-docs ~/Projects/mbpass-docs --name "MBPass Delivery Docs"
+lumen init ~/Projects/mbpass-workspace
 ```
 
-This creates a docs repository with:
+This creates one workspace with:
 
 | Loop | Standard file | Output |
 |---|---|---|
@@ -115,13 +114,16 @@ Typical flow:
 
 1. **Business Loop** — clarify requirements in `story.md`, optionally publish to Jira.
 2. **Technical Loop** — inspect repositories and write a file-level `technical-plan.md`.
-3. **Development Loop** — run `lumen delivery run <docs-dir> --story <slug>` to implement the approved plan with the Lumen coding guideline.
+3. **Development Loop** — from the workspace root, run `lumen delivery run --story <slug>` to implement the approved plan with the Lumen coding guideline.
 
 ```bash
-lumen delivery run ~/Projects/MBPass/mbpass-docs --story MBPAS-1505
+cd ~/Projects/mbpass-workspace
+lumen delivery run --story MBPAS-1505
 ```
 
-The docs repo `AGENTS.md` is the primary agent contract. Status lives in each story's `metadata.json`.
+`AGENTS.md` is the primary agent contract. Status lives in each story's `metadata.json`.
+
+Source base checkouts live under `repos/`, while Lumen creates one isolated feature worktree per Story under `.lumen/worktrees/<story-key>/<repo>/`. Auto-scan and delivery share the same repository list, secrets, JIRA setup, and workspace. Multiple Story worktrees may coexist, while automated `lumen delivery run` executions are serialized per workspace so shared verification resources and delivery state cannot collide.
 
 To refresh templates in an existing docs repo:
 
@@ -373,8 +375,14 @@ Run `lumen doctor` after installing to check all of the above.
 A workspace created by `lumen init` looks like this:
 
 ```text
-my-project/                 ← your project root (application code lives here)
-  .lumen/                   ← Lumen scan workspace (all Lumen files live here)
+my-project/                 ← one Lumen project workspace
+  AGENTS.md                  ← shared AI agent contract
+  stories/                   ← story.md, technical-plan.md, metadata.json
+  standards/                 ← business / technical / development loop rules
+  repos/                     ← stable base checkouts shared by scan and delivery
+    service-a/
+    web-app/
+  .lumen/                    ← shared scan + delivery runtime
     .env.common.example
     .env.local.example
     .env.local              (create this; never commit it)
@@ -391,14 +399,14 @@ my-project/                 ← your project root (application code lives here)
         09-severity-guideline.md
       feishu-card-template.json
     tmp/                    run metadata only
-    worktrees/              one reusable git worktree per repository
+    worktrees/              scan review worktrees and <story>/<repo> delivery worktrees
     reports/                generated HTML/PDF reports
     results/                scan-result-*.json history
     logs/                   run-*.log (readable with 'lumen watch')
     state/
       issue-registry.json   persistent finding tracker
-  service-a/                ← your git repositories
-  web-app/
+    logs/delivery/
+    history/delivery/
 ```
 
 ## Uninstall

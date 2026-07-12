@@ -83,9 +83,26 @@ LOG_FILE="${LOG_DIR}/run-${RUN_ID}.log"
 RESULT_FILE="${WORKSPACE_ROOT}/.lumen/results/delivery-result.json"
 STARTED_FILE="${WORKSPACE_ROOT}/.lumen/results/delivery-started.json"
 PROGRESS_PY="${LUMEN_LIB_DIR}/delivery_progress.py"
+ARCHIVE_PY="${LUMEN_LIB_DIR}/archive_delivery_run.py"
 
 mkdir -p "${LOG_DIR}" "${WORKSPACE_ROOT}/.lumen/results" "${WORKSPACE_ROOT}/.lumen/config" "${WORKSPACE_ROOT}/.lumen/worktrees"
 
+# Feature worktrees are Story-isolated, but one docs workspace has one delivery
+# control plane. Serializing agent runs prevents shared result/progress state,
+# JIRA transitions, and expensive verification resources from colliding.
+LOCK_DIR="${WORKSPACE_ROOT}/.lumen/locks/delivery-run"
+mkdir -p "${WORKSPACE_ROOT}/.lumen/locks"
+if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+  printf 'Error: another Lumen delivery run is already active for this docs workspace. Check `lumen delivery status %s`.\n' "${DOCS_DIR}" >&2
+  exit 1
+fi
+trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
+
+# Scan and delivery share the workspace-local environment. Root-level files are
+# read only as a compatibility fallback for docs projects created before init
+# became the unified initializer.
+load_env_file "${DOCS_DIR}/.lumen/.env.common"
+load_env_file "${DOCS_DIR}/.lumen/.env.local"
 load_env_file "${DOCS_DIR}/.env.common"
 load_env_file "${DOCS_DIR}/.env.local"
 
@@ -96,8 +113,27 @@ fail() {
     python3 "${PROGRESS_PY}" finish --workspace-root "${WORKSPACE_ROOT}" failed --detail "${message}" || true
     python3 "${PROGRESS_PY}" report --workspace-root "${WORKSPACE_ROOT}" || true
   fi
+  local failure_py="${LUMEN_LIB_DIR}/write_delivery_failure.py"
+  if [[ -f "${failure_py}" ]]; then
+    python3 "${failure_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" \
+      --run-id "${RUN_ID}" --phase "${CURRENT_PHASE:-delivery}" --message "${message}" || true
+    local render_py="${LUMEN_LIB_DIR}/render-delivery-and-notify.py"
+    if [[ -f "${render_py}" ]]; then
+      python3 "${render_py}" "${RESULT_FILE}" --event delivery.failed | tee -a "${LOG_FILE}" || true
+    fi
+  fi
+  archive_delivery || true
   printf 'Error: %s\n' "${message}" >&2
   exit 1
+}
+
+archive_delivery() {
+  [[ -f "${ARCHIVE_PY}" ]] || return 0
+  python3 "${ARCHIVE_PY}" \
+    --workspace-root "${WORKSPACE_ROOT}" \
+    --result "${RESULT_FILE}" \
+    --progress "${WORKSPACE_ROOT}/.lumen/results/delivery-progress.json" \
+    --log-file "${LOG_FILE}" >/dev/null
 }
 
 progress_phase() {
@@ -163,6 +199,22 @@ prepare_delivery() {
   python3 "${prepare_py}" "${DOCS_DIR}" --story "${STORY_REF}" --json
 }
 
+sync_delivery_references() {
+  local sync_py="${LUMEN_LIB_DIR}/sync_delivery_workspace.py"
+  [[ -f "${sync_py}" ]] || return 0
+  python3 "${sync_py}" "${DOCS_DIR}" --story "${STORY_REF}"
+}
+
+run_sync_delivery() {
+  set +e
+  sync_delivery_references 2>&1 | tee -a "${LOG_FILE}"
+  local sync_exit=${PIPESTATUS[0]}
+  set -e
+  if [[ "${sync_exit}" -ne 0 ]]; then
+    fail "Delivery reference sync failed. See log: ${LOG_FILE}"
+  fi
+}
+
 enrich_delivery_progress() {
   local prepare_json="$1"
   [[ -f "${PROGRESS_PY}" ]] || return 0
@@ -205,7 +257,8 @@ run_dry_delivery() {
 
   init_delivery_progress
   progress_phase preflight in_progress "Validate story gates and metadata"
-  printf '\n[delivery] Phase 1/5 — Preflight\n'
+  printf '\n[delivery] Phase 1/5 — Sync references and preflight\n'
+  run_sync_delivery
   progress_phase worktrees in_progress "Prepare feature worktrees"
   printf '[delivery] Phase 2/5 — Feature worktrees\n'
   run_prepare_delivery
@@ -228,6 +281,7 @@ run_dry_delivery() {
   fi
   progress_phase notify completed "Dry-run notification preview sent"
   finish_delivery_progress completed "Dry run finished"
+  archive_delivery
   printf '\nDry-run delivery finished. No Cursor agent, commits, or PRs were created.\n'
 }
 
@@ -240,15 +294,16 @@ run_real_delivery() {
   init_delivery_progress
 
   progress_phase preflight in_progress "Validate story gates and metadata"
-  printf '\n[delivery] Phase 1/7 — Preflight\n'
+  printf '\n[delivery] Phase 1/8 — Sync references and preflight\n'
+  run_sync_delivery
   progress_phase worktrees in_progress "Create or refresh feature worktrees"
-  printf '[delivery] Phase 2/7 — Feature worktrees\n'
+  printf '[delivery] Phase 2/8 — Feature worktrees\n'
   run_prepare_delivery
   progress_phase preflight completed "Gates passed"
   progress_phase worktrees completed "Worktrees ready"
 
   progress_phase jira_start in_progress "Notify JIRA IN DEV"
-  printf '[delivery] Phase 3/7 — JIRA IN DEV\n'
+  printf '[delivery] Phase 3/8 — JIRA IN DEV\n'
   send_started_notification
   progress_phase jira_start completed "Started notification sent"
 
@@ -271,7 +326,7 @@ run_real_delivery() {
   fi
 
   progress_phase agent in_progress "Cursor implementation agent"
-  printf '\n[delivery] Phase 4/7 — Implementation agent\n'
+  printf '\n[delivery] Phase 4/8 — Implementation agent\n'
   printf 'Starting Lumen delivery agent at %s UTC...\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
 
   local agent_args=(
@@ -305,7 +360,7 @@ run_real_delivery() {
   progress_phase agent completed "Agent finished; result written"
 
   progress_phase verification in_progress "Compile, PMD, unit and integration tests"
-  printf '\n[delivery] Phase 5/7 — Verification\n'
+  printf '\n[delivery] Phase 5/8 — Verification\n'
   local verify_py="${LUMEN_LIB_DIR}/run_delivery_verification.py"
   if [[ -f "${verify_py}" ]]; then
     set +e
@@ -321,10 +376,27 @@ run_real_delivery() {
     progress_phase verification skipped "Verification runner not installed"
   fi
 
+  progress_phase finalize in_progress "Commit verified changes, push feature branches, and create PRs"
+  printf '\n[delivery] Phase 6/8 — Commit, push, and PR\n'
+  local finalize_py="${LUMEN_LIB_DIR}/finalize_delivery.py"
+  if [[ ! -f "${finalize_py}" ]]; then
+    progress_phase finalize failed "Finalization runner not installed"
+    fail "Delivery finalization runner not found: ${finalize_py}"
+  fi
+  set +e
+  python3 "${finalize_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" | tee -a "${LOG_FILE}"
+  local finalize_exit=${PIPESTATUS[0]}
+  set -e
+  if [[ "${finalize_exit}" -ne 0 ]]; then
+    progress_phase finalize failed "Commit, push, or PR creation failed"
+    fail "Delivery finalization failed. See log: ${LOG_FILE}"
+  fi
+  progress_phase finalize completed "Feature branches pushed and PRs opened"
+
   progress_phase jira_done in_progress "Sync JIRA DEV DONE"
   progress_phase notify in_progress "Feishu and metadata updates"
-  printf '[delivery] Phase 6/7 — JIRA DEV DONE\n'
-  printf '[delivery] Phase 7/7 — Notifications\n'
+  printf '[delivery] Phase 7/8 — JIRA DEV DONE\n'
+  printf '[delivery] Phase 8/8 — Notifications\n'
   local render_py="${LUMEN_LIB_DIR}/render-delivery-and-notify.py"
   if [[ -f "${render_py}" ]]; then
     python3 "${render_py}" "${RESULT_FILE}" --event delivery.dev_done | tee -a "${LOG_FILE}" || \
@@ -333,6 +405,7 @@ run_real_delivery() {
   progress_phase jira_done completed "JIRA sync attempted"
   progress_phase notify completed "Notifications sent"
   finish_delivery_progress completed "Delivery run finished"
+  archive_delivery
   printf '\nLumen delivery run finished at %s UTC.\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
 }
 

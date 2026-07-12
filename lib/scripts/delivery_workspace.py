@@ -70,6 +70,10 @@ def delivery_logs_dir(workspace_root: Path) -> Path:
     return workspace_lumen_dir(workspace_root) / "logs" / "delivery"
 
 
+def delivery_history_dir(workspace_root: Path) -> Path:
+    return workspace_lumen_dir(workspace_root) / "history" / "delivery"
+
+
 def delivery_config_dir(workspace_root: Path) -> Path:
     return workspace_lumen_dir(workspace_root) / "config"
 
@@ -98,11 +102,26 @@ def worktree_path_for_repo(workspace_root: Path, repo_name: str) -> Path:
     return delivery_worktrees_dir(workspace_root) / repo_name
 
 
+def story_worktree_key(metadata: dict[str, Any], story_dir: Path) -> str:
+    """Return the stable directory segment for one delivery story."""
+    jira_key = str(metadata.get("jiraKey", "")).strip()
+    return jira_key if jira_key else slugify(story_dir.name)
+
+
+def story_worktrees_dir(
+    workspace_root: Path,
+    metadata: dict[str, Any],
+    story_dir: Path,
+) -> Path:
+    return delivery_worktrees_dir(workspace_root) / story_worktree_key(metadata, story_dir)
+
+
 def ensure_workspace_lumen_dirs(workspace_root: Path) -> None:
     delivery_config_dir(workspace_root).mkdir(parents=True, exist_ok=True)
     delivery_worktrees_dir(workspace_root).mkdir(parents=True, exist_ok=True)
     delivery_results_dir(workspace_root).mkdir(parents=True, exist_ok=True)
     delivery_logs_dir(workspace_root).mkdir(parents=True, exist_ok=True)
+    delivery_history_dir(workspace_root).mkdir(parents=True, exist_ok=True)
 
 
 def legacy_docs_config_dir(docs_dir: Path) -> Path:
@@ -121,13 +140,19 @@ def load_workspace_config(docs_dir: Path) -> tuple[Path, dict[str, Any]]:
     if nested_path.is_file():
         workspace_config = read_json(nested_path)
         workspace_root = workspace_root_for_docs(docs_dir, workspace_config)
-        return workspace_root, read_json(workspace_config_path(workspace_root))
+        root_config = read_json(workspace_config_path(workspace_root))
+        merged = dict(root_config)
+        merged.update(workspace_config)
+        return workspace_root, merged
 
     parent_path = legacy_parent_lumen_config_dir(docs_dir) / "workspace.json"
     if parent_path.is_file():
         workspace_config = read_json(parent_path)
         workspace_root = workspace_root_for_docs(docs_dir, workspace_config)
-        return workspace_root, read_json(workspace_config_path(workspace_root))
+        root_config = read_json(workspace_config_path(workspace_root))
+        merged = dict(root_config)
+        merged.update(workspace_config)
+        return workspace_root, merged
 
     legacy_path = legacy_docs_config_dir(docs_dir) / "workspace.json"
     if legacy_path.is_file() and legacy_path != nested_path:
@@ -309,46 +334,42 @@ def default_branch_for_repo(repo_path: Path) -> str:
     return "master"
 
 
-def git_status_clean(repo_path: Path) -> bool:
-    completed = subprocess.run(
-        ["git", "-C", str(repo_path), "status", "--porcelain"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    return completed.returncode == 0 and not completed.stdout.strip()
-
-
 def ensure_feature_worktree(
     repo: RepoTarget,
     branch_name: str,
     workspace_root: Path,
+    metadata: dict[str, Any],
+    story_dir: Path,
 ) -> tuple[bool, str]:
-    worktrees_root = delivery_worktrees_dir(workspace_root) / repo.name
+    worktrees_root = story_worktrees_dir(workspace_root, metadata, story_dir) / repo.name
     worktrees_root.parent.mkdir(parents=True, exist_ok=True)
     repo.worktree_path = worktrees_root.resolve()
 
     if worktrees_root.is_dir() and (worktrees_root / ".git").exists():
         completed = subprocess.run(
-            ["git", "-C", str(worktrees_root), "checkout", branch_name],
+            ["git", "-C", str(worktrees_root), "branch", "--show-current"],
             check=False,
             capture_output=True,
             text=True,
         )
+        current_branch = completed.stdout.strip()
         if completed.returncode != 0:
-            completed = subprocess.run(
-                ["git", "-C", str(worktrees_root), "checkout", "-b", branch_name],
+            return False, completed.stderr or completed.stdout or "could not inspect worktree branch"
+        if current_branch != branch_name:
+            status = subprocess.run(
+                ["git", "-C", str(worktrees_root), "status", "--porcelain"],
                 check=False,
                 capture_output=True,
                 text=True,
             )
-            if completed.returncode != 0:
-                return False, completed.stderr or completed.stdout or "checkout failed"
+            if status.stdout.strip():
+                return False, (
+                    f"Existing worktree is on {current_branch} with local changes; "
+                    f"expected {branch_name}"
+                )
+            return False, f"Existing worktree is on {current_branch}; expected {branch_name}"
         repo.worktree_path = worktrees_root.resolve()
-        return True, "reused worktree"
-
-    if not git_status_clean(repo.path):
-        return False, f"Repository has local changes: {repo.path}"
+        return True, "reused story worktree"
 
     if worktrees_root.exists():
         return False, f"Worktree path exists but is not a git worktree: {worktrees_root}"
@@ -362,14 +383,17 @@ def ensure_feature_worktree(
         text=True,
     )
     if fetch.returncode != 0:
-        pull = subprocess.run(
-            ["git", "-C", str(repo.path), "pull", "--ff-only", "origin", base_branch],
-            check=False,
-            capture_output=True,
-            text=True,
-        )
-        if pull.returncode != 0:
-            return False, pull.stderr or pull.stdout or "failed to sync base branch"
+        return False, fetch.stderr or fetch.stdout or "failed to fetch base branch"
+
+    base_ref = f"origin/{base_branch}"
+    verify_base = subprocess.run(
+        ["git", "-C", str(repo.path), "rev-parse", "--verify", base_ref],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if verify_base.returncode != 0:
+        return False, verify_base.stderr or verify_base.stdout or f"missing {base_ref}"
 
     create = subprocess.run(
         [
@@ -381,7 +405,7 @@ def ensure_feature_worktree(
             "-B",
             branch_name,
             str(worktrees_root),
-            base_branch,
+            base_ref,
         ],
         check=False,
         capture_output=True,
@@ -392,7 +416,11 @@ def ensure_feature_worktree(
     return True, "created worktree"
 
 
-def validate_story_gates(metadata: dict[str, Any], technical_plan: Path) -> list[str]:
+def validate_story_gates(
+    metadata: dict[str, Any],
+    story_md: Path,
+    technical_plan: Path,
+) -> list[str]:
     errors: list[str] = []
     if metadata.get("businessStatus") != "ready":
         errors.append(
@@ -402,6 +430,10 @@ def validate_story_gates(metadata: dict[str, Any], technical_plan: Path) -> list
         errors.append(
             f"technicalStatus must be 'approved' (current: {metadata.get('technicalStatus', 'missing')})"
         )
+    if not story_md.is_file():
+        errors.append(f"story.md not found: {story_md}")
+    elif story_md.stat().st_size < 80:
+        errors.append("story.md is too short to be business-ready")
     if not technical_plan.is_file():
         errors.append(f"technical-plan.md not found: {technical_plan}")
     elif technical_plan.stat().st_size < 80:
@@ -420,7 +452,7 @@ def load_story_context(docs_dir: Path, story_ref: str = "", validate_gates: bool
     technical_plan = story_dir / str(metadata.get("technicalPlanFile") or "technical-plan.md")
 
     if validate_gates:
-        errors = validate_story_gates(metadata, technical_plan)
+        errors = validate_story_gates(metadata, story_md, technical_plan)
         if errors:
             raise ValueError("; ".join(errors))
 
@@ -443,7 +475,7 @@ def load_story_context(docs_dir: Path, story_ref: str = "", validate_gates: bool
             RepoTarget(
                 name=repo_name,
                 path=repo_path,
-                worktree_path=delivery_worktrees_dir(workspace_root) / repo_name,
+                worktree_path=story_worktrees_dir(workspace_root, metadata, story_dir) / repo_name,
             )
         )
 
@@ -466,6 +498,19 @@ def load_story_context(docs_dir: Path, story_ref: str = "", validate_gates: bool
 def prepare_story_for_delivery(context: StoryContext) -> list[str]:
     messages: list[str] = []
     ensure_workspace_lumen_dirs(context.workspace_root)
+
+    for repo in context.repos:
+        ok, detail = ensure_feature_worktree(
+            repo,
+            context.branch_name,
+            context.workspace_root,
+            context.metadata,
+            context.story_dir,
+        )
+        if not ok:
+            raise RuntimeError(f"Failed to prepare worktree for {repo.name}: {detail}")
+        messages.append(f"{repo.name}: {detail} at {repo.worktree_path}")
+
     metadata = dict(context.metadata)
     metadata["deliveryStatus"] = "in_progress"
     metadata["updatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -473,10 +518,4 @@ def prepare_story_for_delivery(context: StoryContext) -> list[str]:
     write_json(context.metadata_path, metadata)
     context.metadata = metadata
     messages.append(f"Updated deliveryStatus to in_progress for {context.story_dir.name}")
-
-    for repo in context.repos:
-        ok, detail = ensure_feature_worktree(repo, context.branch_name, context.workspace_root)
-        if not ok:
-            raise RuntimeError(f"Failed to prepare worktree for {repo.name}: {detail}")
-        messages.append(f"{repo.name}: {detail} at {repo.worktree_path}")
     return messages

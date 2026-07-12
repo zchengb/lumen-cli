@@ -6,7 +6,7 @@ The docs repository is the delivery workspace root.
 - Code repositories live under `repos/<repository>/`
 - Delivery runtime state lives under `.lumen/`
 
-Use only the repository worktrees prepared by Lumen under `<docs-repo>/.lumen/worktrees/<repository-name>/`.
+Use only the repository worktrees prepared by Lumen under `<workspace-root>/.lumen/worktrees/<story-key>/<repository-name>/`.
 
 Rules:
 
@@ -16,16 +16,12 @@ Rules:
 - Pull or sync only when required by the technical plan; prefer the prepared worktree state.
 - If a worktree is missing or dirty in an unexpected way, stop and record the problem in `delivery-result.json`.
 
-When committing:
+Commit preparation:
 
 - Inspect `git log --oneline -n 20` first.
-- When past commits use an author name prefix (for example `[xiaobin]`), use `[lumen]` for delivery commits.
-- Use this format: `[lumen] #{JIRA_NUMBER} {chore|docs|feat|fix|refactor|style|test}: {COMMIT_MESSAGE}`
-- Commit in small, incremental steps after each small feature.
-- Use `N/A` for `{JIRA_NUMBER}` when no JIRA key is available in the story context.
+- Derive one concise commit subject that follows the repository's existing history.
+- Record that subject as `commit_subject` for the repository in `delivery-result.json`.
+- Do not invent a fallback style. If history is unclear, stop and mark the delivery blocked.
+- Do not commit in the agent session. Lumen commits only after its deterministic verification succeeds.
 
-When pushing and opening a PR:
-
-- Push only the feature branch.
-- Use `gh pr create` when GitHub CLI is authenticated.
-- Record the PR URL in `delivery-result.json`.
+Do not push branches or create PRs. Lumen performs those actions only after verification succeeds and records the real commit SHA and PR URL itself.

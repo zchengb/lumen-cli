@@ -49,6 +49,27 @@ def transition_issue(jira_key: str, status_name: str, config: dict) -> None:
         raise RuntimeError(truncate_error(output or f"twg status update failed with status {returncode}"))
 
 
+def add_delivery_comment(jira_key: str, comment: str, config: dict) -> None:
+    returncode, output = run_twg(
+        [
+            "jira",
+            "workitem",
+            "update",
+            "--id",
+            jira_key,
+            "--comment",
+            comment,
+            "--comment-format",
+            "markdown",
+            "-o",
+            "json",
+            *site_args(config),
+        ]
+    )
+    if returncode != 0:
+        raise RuntimeError(truncate_error(output or f"twg comment update failed with status {returncode}"))
+
+
 def sync_delivery_jira(
     delivery: dict,
     delivery_config: dict,
@@ -84,6 +105,21 @@ def sync_delivery_jira(
             if in_dev_status:
                 transition_issue(jira_key, in_dev_status, config)
                 transitions.append(in_dev_status)
+            branch = str(delivery.get("branch", "")).strip() or "n/a"
+            repos = ", ".join(
+                str(item.get("name", "")).strip()
+                for item in delivery.get("repos_touched", [])
+                if isinstance(item, dict) and item.get("name")
+            ) or "n/a"
+            docs_dir = str(delivery.get("docs_dir", "")).strip() or "n/a"
+            add_delivery_comment(
+                jira_key,
+                "Lumen Delivery Started\n\n"
+                f"- Branch: `{branch}`\n"
+                f"- Repositories: {repos}\n"
+                f"- Docs: `{docs_dir}`",
+                config,
+            )
 
         pr_urls = delivery.get("pr_urls") or []
         if pr_urls:

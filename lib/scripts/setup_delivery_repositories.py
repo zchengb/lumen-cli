@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from discover_repos import infer_profile
 from delivery_workspace import read_json, write_json, workspace_config_path
 
 
@@ -55,6 +56,34 @@ def default_branch(repo_path: Path) -> str:
         if value and value != "HEAD":
             return value
     return "main"
+
+
+def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str) -> None:
+    """Keep auto-scan and delivery pointed at the same repos/ checkout."""
+    scan_path = docs_dir / ".lumen" / "config" / "repos.json"
+    scan_config = read_json(scan_path, {"repositories": []})
+    repositories = scan_config.get("repositories")
+    if not isinstance(repositories, list):
+        repositories = []
+    entry = {
+        "name": name,
+        "path": str(repo_path.resolve()),
+        "default_branch": branch,
+        "runtime_profile": infer_profile(repo_path),
+        "validation_commands": [],
+        "allow_auto_fix": True,
+        "allow_pr": True,
+    }
+    updated = False
+    for index, item in enumerate(repositories):
+        if isinstance(item, dict) and str(item.get("name", "")).strip() == name:
+            repositories[index] = entry
+            updated = True
+            break
+    if not updated:
+        repositories.append(entry)
+    scan_config["repositories"] = repositories
+    write_json(scan_path, scan_config)
 
 
 def clone_repository(clone_url: str, destination: Path) -> None:
@@ -119,14 +148,15 @@ def upsert_repository(
 
     workspace_config.update(
         {
-            "layout": "nested",
-            "workspace_root": str(docs_dir),
-            "docs_repo": ".",
-            "repos_dir": str(workspace_config.get("repos_dir", "repos") or "repos"),
             "repositories": repositories,
         }
     )
+    workspace_config.setdefault("layout", "nested")
+    workspace_config.setdefault("workspace_root", str(docs_dir))
+    workspace_config.setdefault("docs_repo", ".")
+    workspace_config.setdefault("repos_dir", "repos")
     write_json(workspace_config_path(docs_dir), workspace_config)
+    sync_scan_repository(docs_dir, name, destination, branch_name)
     return entry
 
 

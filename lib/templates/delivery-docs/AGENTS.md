@@ -26,7 +26,7 @@ The Business Loop may run in Codex, Cursor, or another compatible Agent. The too
 The Business Loop can start from a broad Topic or from a concrete Story. It turns unclear business input into either `topics/<slug>.md` plus candidate stories, or a clear `story.md`. Before starting the Business Loop, the Agent should refresh the workspace context:
 
 - Pull this docs repository first.
-- Pull every configured code repository under `repos/` that may be used as context.
+- Pull every configured code repository that may be used as context. Repositories live under `repos/` and are discovered from `.lumen/config/workspace.json`.
 - Use safe git sync: check `git status` first, then run `git pull --ff-only` only when the repo has no local uncommitted changes.
 - If any repo has local uncommitted changes or cannot fast-forward, stop and ask the user how to proceed. Do not stash, reset, checkout, or overwrite user work automatically.
 
@@ -233,12 +233,12 @@ Do not start the Development Loop until:
 During the Development Loop, Lumen CLI should:
 
 1. Read the approved `technical-plan.md`, `story.md`, and `metadata.json`.
-2. Resolve code repositories under `<docs-repo>/repos/<repository>/`.
-3. Create feature worktrees under `<docs-repo>/.lumen/worktrees/<repository>/`.
+2. Resolve code repositories from the configured workspace mapping.
+3. Create feature worktrees under `<workspace-root>/.lumen/worktrees/<story-key>/<repository>/`.
 4. Run the delivery agent with the Lumen coding guideline.
-5. Run verification steps from `technical-plan.md` when tooling is available.
-6. Commit, push, and open a PR when the plan scope is complete.
-7. Update `metadata.json.deliveryStatus` and send delivery notifications.
+5. Let Lumen run verification after the Agent exits. Java uses host JDK/Testcontainers when required; App/PHP/frontend stay on lightweight checks.
+6. Record a repository-history-compatible `commit_subject` in `delivery-result.json`, but do not commit, push, or open a PR.
+7. Let Lumen commit, push, open PRs, update `metadata.json.deliveryStatus`, transition JIRA, send notifications, and archive the run.
 
 ## Delivery Status
 
@@ -258,7 +258,7 @@ Development execution uses the Lumen CLI coding guideline at `lib/standards/codi
 Run implementation with:
 
 ```bash
-lumen delivery run <docs-dir> --story <JIRA-KEY-or-slug>
+lumen delivery run --story <JIRA-KEY-or-slug>
 ```
 
 Interactive technical planning may still run in Codex or Cursor, but code implementation should go through `lumen delivery run` once `technicalStatus` is `approved`.

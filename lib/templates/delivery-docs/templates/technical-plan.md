@@ -1,11 +1,3 @@
----
-status: "draft"
-approvedBy: ""
-approvedAt: ""
-jiraKey: ""
-baseBranch: ""
-featureBranch: ""
----
 # Technical Plan: <Story Title>
 
 ## Goal

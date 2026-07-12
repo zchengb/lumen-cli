@@ -300,8 +300,8 @@ cmd_help() {
 Lumen - illuminate code health across your repositories
 
 Usage:
-  lumen init [dir] [--yes] [--force]  Create a Lumen scan workspace at <dir>/.lumen
-                                 Prompts for repositories, Cursor model, and Feishu webhook.
+  lumen init [dir] [--yes] [--force]  Create one Lumen workspace at <dir>
+                                 Includes scan, delivery docs, shared repos/, Cursor model, and Feishu setup.
                                  Pass --yes (or run non-interactively) to skip prompts and use templates.
                                  If a previous init was interrupted, init removes the incomplete
                                  .lumen folder and starts again. Use --force to replace a fully
@@ -326,20 +326,14 @@ Usage:
   lumen dashboard --project <slug> [--no-open]
                                  Refresh dashboard-data.js and open dashboard.html in your browser
                                  Pass --no-open to only refresh the data without opening a browser
-  lumen set-up-docs [dir] [--name <name>] [--key <key>] [--force]
-                                 Initialize a delivery docs project with templates and examples
-  lumen delivery run <docs-dir> [--story <slug>] [--dry-run]
+  lumen delivery run [--story <slug>] [--dry-run] [workspace-dir]
                                  Implement an approved technical plan with the Lumen delivery agent
-  lumen delivery status [docs-dir|--workspace <root>]
+  lumen delivery status [workspace-dir|--workspace <root>]
                                  Show detailed delivery progress for the latest run
-  lumen delivery watch <docs-dir|--workspace <root>>
+  lumen delivery dashboard [workspace-dir] [--no-open]
+                                 Render the Delivery history dashboard for one workspace
+  lumen delivery watch [workspace-dir|--workspace <root>]
                                  Watch the latest delivery log and progress in real time
-  lumen delivery status <docs-dir>
-                                 Show detailed delivery progress for the latest run
-  lumen delivery watch <docs-dir>
-                                 Watch the latest delivery log and progress in real time
-  lumen delivery init-docs [dir] [--project-name <name>] [--example-key <key>] [--force]
-                                 Advanced alias for set-up-docs
   lumen doctor                  Check that required and optional tools are installed
   lumen config set-webhook <url> [--project <slug>]
                                  Save the Feishu webhook in this workspace's .env.local
@@ -1530,27 +1524,48 @@ cmd_init() {
 
   echo '{"schema_version": "1.0", "issues": []}' > "${lumen_dir}/state/issue-registry.json"
 
+  initialize_integrated_delivery_workspace() {
+    local workspace_root="$1"
+    local project_name="$2"
+    local initializer="${LUMEN_LIB_DIR}/init_delivery_docs.py"
+    [[ -f "${initializer}" ]] || { err "Delivery workspace initializer not found: ${initializer}"; return 1; }
+    python3 "${initializer}" --target "${workspace_root}" --project-name "${project_name}" --merge --no-example
+  }
+
+  sync_integrated_scan_repositories() {
+    local workspace_root="$1"
+    local sync_py="${LUMEN_LIB_DIR}/sync_workspace_repositories.py"
+    [[ -f "${sync_py}" ]] || { err "Workspace repository sync helper not found: ${sync_py}"; return 1; }
+    python3 "${sync_py}" "${workspace_root}" >/dev/null
+  }
+
   local interactive="0"
   if [[ "${assume_yes}" == "0" && -t 0 && -t 1 ]]; then
     interactive="1"
   fi
 
   if [[ "${interactive}" == "0" ]]; then
+    initialize_integrated_delivery_workspace "${target}" "$(basename "${target}")" || exit 1
     if [[ ! -f "${lumen_dir}/config/repos.json" ]]; then
       cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${lumen_dir}/config/repos.json"
     fi
+    local noninteractive_common="${lumen_dir}/config/common.json"
+    sed -i.bak "s/\"display_name\": \"\"/\"display_name\": \"$(sed_escape_replacement "$(basename "${target}")")\"/" "${noninteractive_common}"
+    sed -i.bak "s#\"workspace_root\": \"\"#\"workspace_root\": \"$(sed_escape_replacement "${target}/repos")\"#" "${noninteractive_common}"
+    rm -f "${noninteractive_common}.bak"
+    sync_integrated_scan_repositories "${target}" || exit 1
     ok "Workspace created (non-interactive)."
     try_register_project "${lumen_dir}" "$(workspace_display_name "${lumen_dir}")"
     cat <<EOF
 
 Next steps:
-  1. Edit ${LUMEN_DIR_NAME}/config/repos.json to list the repositories to scan.
-  2. Edit ${LUMEN_DIR_NAME}/config/common.json to set project.display_name, project.workspace_root, and execution.model.
+  1. Add or clone code repositories under repos/.
+  2. Edit ${LUMEN_DIR_NAME}/config/common.json to set project.display_name and execution.model.
   3. Copy ${LUMEN_DIR_NAME}/.env.local.example to ${LUMEN_DIR_NAME}/.env.local and set FEISHU_WEBHOOK_URL and/or CURSOR_API_KEY (required for scheduled scans).
   4. Optional: enable Jira sync with lumen config set-jira --enable --project-key <KEY> --project <slug>
   5. Run: lumen doctor
   6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  7. Open ${LUMEN_DIR_NAME}/dashboard.html in a browser to view results.
+  7. Run: lumen delivery run --story <story-key> after a technical plan is approved.
 EOF
     return 0
   fi
@@ -1559,7 +1574,9 @@ EOF
 
   local display_name workspace_root scan_window model webhook cursor_api_key env_written="0"
   display_name="$(prompt "Project display name" "$(basename "${target}")")"
-  workspace_root="$(prompt "Where do your repositories live locally? (project root)" "${target}")"
+  initialize_integrated_delivery_workspace "${target}" "${display_name}" || exit 1
+  workspace_root="${target}/repos"
+  printf 'Code repositories: %s\n' "${workspace_root}"
   scan_window="$(prompt "Scan window in days" "7")"
   model="$(prompt_menu "Cursor model to use for scans" "composer-2.5" "sonnet-4.5" "gpt-5.1-codex" "custom")"
   if [[ "${model}" == "custom" ]]; then
@@ -1627,13 +1644,14 @@ EOF
   cat <<EOF
 
 Next steps:
-  1. Review ${LUMEN_DIR_NAME}/config/repos.json and ${LUMEN_DIR_NAME}/config/common.json — edit anytime.
+  1. Work from this project root. Scan and delivery share repos/, ${LUMEN_DIR_NAME}/, and .env.local.
   2. If Jira sync is enabled, install TWG CLI and run: twg login
   3. For scheduled scans, ensure CURSOR_API_KEY is set in ${LUMEN_DIR_NAME}/.env.local
   4. Run: lumen list
   5. Run: lumen doctor
   6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
-  7. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
+  7. Run: lumen delivery run --story <story-key> when a technical plan is approved.
+  8. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
 EOF
 }
 
@@ -2150,57 +2168,63 @@ cmd_set_up_docs() {
   cmd_delivery_init_docs "$@"
 }
 
-cmd_delivery_status() {
+cmd_delivery_configure() {
   local docs_dir=""
+  local workspace_root=""
+  local repos=()
+  local replace_repositories="0"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --docs-dir)
+        docs_dir="${2:-}"
+        shift 2
+        ;;
+      --workspace-root)
+        workspace_root="${2:-}"
+        shift 2
+        ;;
+      --repo)
+        repos+=("${2:-}")
+        shift 2
+        ;;
+      --replace-repositories)
+        replace_repositories="1"
+        shift
+        ;;
       --*)
         err "Unknown option: $1"
         exit 1
         ;;
       *)
-        docs_dir="$1"
-        shift
+        err "Unexpected argument: $1"
+        exit 1
         ;;
     esac
   done
 
-  [[ -n "${docs_dir}" ]] || { err "Docs repository path is required."; exit 1; }
-  docs_dir="$(cd "${docs_dir}" && pwd)"
-
-  local progress_py="${LUMEN_HOME}/lib/scripts/delivery_progress.py"
-  [[ -f "${progress_py}" ]] || { err "delivery_progress.py not found."; exit 1; }
-
-  local workspace_root
-  workspace_root="$(python3 -c "import json
-from pathlib import Path
-docs = Path('${docs_dir}').resolve()
-workspace = docs.parent.resolve()
-config = workspace / '.lumen' / 'config' / 'workspace.json'
-if config.is_file():
-    data = json.loads(config.read_text())
-    root = str(data.get('workspace_root', '')).strip()
-    if root:
-        print(root, end='')
-        raise SystemExit(0)
-legacy = docs / '.lumen' / 'config' / 'workspace.json'
-if legacy.is_file():
-    data = json.loads(legacy.read_text())
-    root = str(data.get('workspace_root', '')).strip()
-    if root:
-        print(root, end='')
-        raise SystemExit(0)
-print(str(workspace), end='')")"
-
-  python3 "${progress_py}" report --workspace-root "${workspace_root}"
+  [[ -n "${docs_dir}" ]] || { err "--docs-dir is required."; exit 1; }
+  [[ -n "${workspace_root}" ]] || { err "--workspace-root is required."; exit 1; }
+  local configure_py="${LUMEN_HOME}/lib/scripts/configure_delivery_workspace.py"
+  [[ -f "${configure_py}" ]] || { err "Delivery workspace configurator not found: ${configure_py}"; exit 1; }
+  local args=(--docs-dir "${docs_dir}" --workspace-root "${workspace_root}")
+  local repo
+  for repo in "${repos[@]}"; do
+    args+=(--repo "${repo}")
+  done
+  [[ "${replace_repositories}" == "1" ]] && args+=(--replace-repositories)
+  python3 "${configure_py}" "${args[@]}"
 }
 
-cmd_delivery_watch() {
-  local docs_dir=""
-
+cmd_delivery_dashboard() {
+  local docs_dir="."
+  local no_open="0"
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --no-open)
+        no_open="1"
+        shift
+        ;;
       --*)
         err "Unknown option: $1"
         exit 1
@@ -2211,57 +2235,81 @@ cmd_delivery_watch() {
         ;;
     esac
   done
-
-  [[ -n "${docs_dir}" ]] || { err "Docs repository path is required."; exit 1; }
   docs_dir="$(cd "${docs_dir}" && pwd)"
-
   local workspace_root
-  workspace_root="$(python3 -c "import json
-from pathlib import Path
-docs = Path('${docs_dir}').resolve()
-workspace = docs.parent.resolve()
-config = workspace / '.lumen' / 'config' / 'workspace.json'
-if config.is_file():
-    data = json.loads(config.read_text())
-    root = str(data.get('workspace_root', '')).strip()
-    if root:
-        print(root, end='')
-        raise SystemExit(0)
-legacy = docs / '.lumen' / 'config' / 'workspace.json'
-if legacy.is_file():
-    data = json.loads(legacy.read_text())
-    root = str(data.get('workspace_root', '')).strip()
-    if root:
-        print(root, end='')
-        raise SystemExit(0)
-print(str(workspace), end='')")"
-
-  local progress_py="${LUMEN_HOME}/lib/scripts/delivery_progress.py"
-  local log_dir="${workspace_root}/.lumen/logs/delivery"
-  local latest_log
-  latest_log="$(ls -t "${log_dir}"/run-*.log 2>/dev/null | head -1 || true)"
-
-  if [[ -f "${progress_py}" ]]; then
-    python3 "${progress_py}" report --workspace-root "${workspace_root}" || true
+  workspace_root="$(delivery_workspace_root_from_docs "${docs_dir}")"
+  local render_py="${LUMEN_HOME}/lib/scripts/render_delivery_dashboard.py"
+  [[ -f "${render_py}" ]] || { err "Delivery dashboard renderer not found: ${render_py}"; exit 1; }
+  local output
+  output="$(python3 "${render_py}" --workspace-root "${workspace_root}")" || exit 1
+  local html_path
+  html_path="$(printf '%s' "${output}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["html"], end="")')"
+  ok "Delivery dashboard refreshed: ${html_path}"
+  if [[ "${no_open}" != "1" ]] && command -v open >/dev/null 2>&1; then
+    open "${html_path}"
   fi
+}
 
-  if [[ -z "${latest_log}" ]]; then
-    err "No delivery logs found in ${log_dir}. Run 'lumen delivery run' first."
-    exit 1
-  fi
+delivery_docs_and_story_args() {
+  DELIVERY_DOCS_DIR="."
+  DELIVERY_STORY_REF=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --story)
+        DELIVERY_STORY_REF="${2:-}"
+        shift 2
+        ;;
+      --*)
+        err "Unknown option: $1"
+        exit 1
+        ;;
+      *)
+        DELIVERY_DOCS_DIR="$1"
+        shift
+        ;;
+    esac
+  done
+  DELIVERY_DOCS_DIR="$(cd "${DELIVERY_DOCS_DIR}" && pwd)"
+}
 
-  printf 'Watching %s\n' "${latest_log}"
-  printf 'Press Ctrl+C to stop.\n\n'
+cmd_delivery_sync() {
+  delivery_docs_and_story_args "$@"
+  local sync_py="${LUMEN_HOME}/lib/scripts/sync_delivery_workspace.py"
+  [[ -f "${sync_py}" ]] || { err "Delivery sync helper not found: ${sync_py}"; exit 1; }
+  python3 "${sync_py}" "${DELIVERY_DOCS_DIR}" --story "${DELIVERY_STORY_REF}"
+}
 
-  if command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_HOME}/lib/format_scan_log.py" ]]; then
-    tail -n 50 -f "${latest_log}" | python3 "${LUMEN_HOME}/lib/format_scan_log.py"
-  else
-    tail -f "${latest_log}"
-  fi
+cmd_delivery_prepare() {
+  delivery_docs_and_story_args "$@"
+  local prepare_py="${LUMEN_HOME}/lib/scripts/prepare_delivery_run.py"
+  [[ -f "${prepare_py}" ]] || { err "Delivery prepare helper not found: ${prepare_py}"; exit 1; }
+  python3 "${prepare_py}" "${DELIVERY_DOCS_DIR}" --story "${DELIVERY_STORY_REF}"
+}
+
+cmd_delivery_verify() {
+  delivery_docs_and_story_args "$@"
+  local workspace_root
+  workspace_root="$(delivery_workspace_root_from_docs "${DELIVERY_DOCS_DIR}")"
+  local verify_py="${LUMEN_HOME}/lib/scripts/run_delivery_verification.py"
+  local result_file="${workspace_root}/.lumen/results/delivery-result.json"
+  [[ -f "${verify_py}" ]] || { err "Delivery verification helper not found: ${verify_py}"; exit 1; }
+  [[ -f "${result_file}" ]] || { err "No delivery result found. Run delivery start first."; exit 1; }
+  python3 "${verify_py}" "${DELIVERY_DOCS_DIR}" --story "${DELIVERY_STORY_REF}" --result "${result_file}" --workspace-root "${workspace_root}"
+}
+
+cmd_delivery_pr() {
+  delivery_docs_and_story_args "$@"
+  local workspace_root
+  workspace_root="$(delivery_workspace_root_from_docs "${DELIVERY_DOCS_DIR}")"
+  local finalize_py="${LUMEN_HOME}/lib/scripts/finalize_delivery.py"
+  local result_file="${workspace_root}/.lumen/results/delivery-result.json"
+  [[ -f "${finalize_py}" ]] || { err "Delivery finalization helper not found: ${finalize_py}"; exit 1; }
+  [[ -f "${result_file}" ]] || { err "No delivery result found. Run delivery start first."; exit 1; }
+  python3 "${finalize_py}" "${DELIVERY_DOCS_DIR}" --story "${DELIVERY_STORY_REF}" --result "${result_file}"
 }
 
 cmd_delivery_run() {
-  local docs_dir=""
+  local docs_dir="."
   local story_ref=""
   local dry_run="0"
 
@@ -2286,13 +2334,6 @@ cmd_delivery_run() {
     esac
   done
 
-  if [[ -z "${docs_dir}" ]]; then
-    if [[ -t 0 && -t 1 ]]; then
-      read -r -p "Docs repository path: " docs_dir || true
-    fi
-  fi
-  [[ -n "${docs_dir}" ]] || { err "Docs repository path is required."; exit 1; }
-
   local run_script="${LUMEN_HOME}/lib/scripts/run-delivery.sh"
   if [[ ! -f "${run_script}" ]]; then
     err "Delivery runner not found: ${run_script}"
@@ -2308,7 +2349,7 @@ cmd_delivery_run() {
 }
 
 cmd_delivery_status() {
-  local docs_dir=""
+  local docs_dir="."
   local workspace_root=""
 
   while [[ $# -gt 0 ]]; do
@@ -2355,7 +2396,7 @@ cmd_delivery_status() {
 }
 
 cmd_delivery_watch() {
-  local docs_dir=""
+  local docs_dir="."
   local workspace_root=""
 
   while [[ $# -gt 0 ]]; do
@@ -2414,21 +2455,27 @@ cmd_delivery() {
   shift || true
   case "${sub}" in
     init-docs) cmd_delivery_init_docs "$@" ;;
+    configure) cmd_delivery_configure "$@" ;;
+    dashboard) cmd_delivery_dashboard "$@" ;;
+    sync) cmd_delivery_sync "$@" ;;
+    prepare) cmd_delivery_prepare "$@" ;;
+    verify) cmd_delivery_verify "$@" ;;
+    pr) cmd_delivery_pr "$@" ;;
+    start) cmd_delivery_run "$@" ;;
     run) cmd_delivery_run "$@" ;;
     status) cmd_delivery_status "$@" ;;
     watch) cmd_delivery_watch "$@" ;;
     ""|help|-h|--help)
       printf 'Usage:\n'
-      printf '  lumen set-up-docs [dir] [--name <name>] [--key <key>] [--force]\n'
-      printf '  lumen delivery init-docs [dir] [--project-name <name>] [--example-key <key>] [--force]\n'
-      printf '  lumen delivery run <docs-dir> [--story <slug-or-jira-key>] [--dry-run]\n'
-      printf '  lumen delivery status [docs-dir|--workspace <root>]\n'
-      printf '  lumen delivery watch <docs-dir|--workspace <root>>\n'
+      printf '  lumen delivery dashboard [workspace-dir] [--no-open]\n'
+      printf '  lumen delivery run [--story <slug-or-jira-key>] [--dry-run] [workspace-dir]\n'
+      printf '  lumen delivery status [workspace-dir|--workspace <root>]\n'
+      printf '  lumen delivery watch [workspace-dir|--workspace <root>]\n'
       printf '\nExamples:\n'
-      printf '  lumen set-up-docs ~/Projects/mbpass-docs --name "MBPass Delivery Docs"\n'
-      printf '  lumen delivery run ~/Projects/MBPass/mbpass-docs --story MBPAS-1505\n'
-      printf '  lumen delivery status ~/Projects/MBPass/mbpass-docs\n'
-      printf '  lumen delivery watch ~/Projects/MBPass/mbpass-docs\n'
+      printf '  cd ~/Projects/mbpass-workspace\n'
+      printf '  lumen delivery run --story MBPAS-1505\n'
+      printf '  lumen delivery status\n'
+      printf '  lumen delivery watch\n'
       ;;
     *)
       err "Unknown delivery command: ${sub}"

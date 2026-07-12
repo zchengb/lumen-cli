@@ -23,8 +23,10 @@ def render_text(text: str, values: dict[str, str]) -> str:
     return rendered
 
 
-def copy_rendered(src: Path, dest: Path, values: dict[str, str], force: bool) -> None:
+def copy_rendered(src: Path, dest: Path, values: dict[str, str], force: bool, merge: bool) -> None:
     if dest.exists() and not force:
+        if merge:
+            return
         raise FileExistsError(f"Refusing to overwrite existing file: {dest}")
     dest.parent.mkdir(parents=True, exist_ok=True)
     if src.suffix.lower() in {".md", ".json", ".txt", ".mdc"} or src.name in {"AGENTS.md", ".gitignore"}:
@@ -33,14 +35,21 @@ def copy_rendered(src: Path, dest: Path, values: dict[str, str], force: bool) ->
         shutil.copy2(src, dest)
 
 
-def init_docs(target: Path, project_name: str, example_key: str, force: bool) -> None:
+def init_docs(
+    target: Path,
+    project_name: str,
+    example_key: str,
+    force: bool,
+    merge: bool = False,
+    no_example: bool = False,
+) -> None:
     src_root = template_root()
     if not src_root.exists():
         raise FileNotFoundError(f"Delivery docs templates not found: {src_root}")
 
     target = target.expanduser().resolve()
     docs_root = target
-    if target.exists() and any(target.iterdir()) and not force:
+    if target.exists() and any(target.iterdir()) and not force and not merge:
         raise FileExistsError(f"Target is not empty: {target}. Re-run with --force to merge/overwrite templates.")
     target.mkdir(parents=True, exist_ok=True)
 
@@ -58,8 +67,10 @@ def init_docs(target: Path, project_name: str, example_key: str, force: bool) ->
         if src.is_dir():
             continue
         rel = render_text(str(src.relative_to(src_root)), values)
+        if no_example and rel.startswith("stories/") and rel != "stories/.gitkeep":
+            continue
         dest = target / rel
-        copy_rendered(src, dest, values, force)
+        copy_rendered(src, dest, values, force, merge)
 
     for keep_dir in [
         target / "topics",
@@ -77,10 +88,11 @@ def init_docs(target: Path, project_name: str, example_key: str, force: bool) ->
     print(f"✓ Workspace root: {docs_root}")
     print(f"✓ Code repositories directory: {target / 'repos'}")
     print(f"✓ Workspace config: {docs_root / '.lumen' / 'config' / 'workspace.json'}")
-    print(f"✓ Example story: stories/{story_slug(example_key)}/")
+    if not no_example:
+        print(f"✓ Example story: stories/{story_slug(example_key)}/")
     print("Next:")
     print(f"  cd {target}")
-    print("  Add repositories under repos/ or run the interactive repo setup from lumen set-up-docs")
+    print("  Add repositories under repos/; lumen init uses the same directory for scan and delivery")
     print("  git init  # optional, recommended for team sharing")
 
 
@@ -90,9 +102,18 @@ def main() -> int:
     parser.add_argument("--project-name", default="Delivery Docs")
     parser.add_argument("--example-key", default="DEMO-001")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--merge", action="store_true", help="Add missing delivery files without overwriting an existing workspace")
+    parser.add_argument("--no-example", action="store_true", help="Do not create the example Story")
     args = parser.parse_args()
     try:
-        init_docs(Path(args.target), args.project_name, args.example_key, args.force)
+        init_docs(
+            Path(args.target),
+            args.project_name,
+            args.example_key,
+            args.force,
+            args.merge,
+            args.no_example,
+        )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

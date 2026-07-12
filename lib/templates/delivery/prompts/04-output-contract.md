@@ -22,19 +22,12 @@ Schema:
       "name": "mbpass-business",
       "path": "/absolute/path/to/worktree",
       "branch": "feature/MBPAS-123-example",
-      "files_changed": ["src/main/java/..."]
+      "files_changed": ["src/main/java/..."],
+      "commit_subject": "feat: add survey filter"
     }
   ],
-  "commits": [
-    {
-      "repository": "mbpass-business",
-      "sha": "abc1234",
-      "subject": "[MBPAS-123] feat: add survey filter"
-    }
-  ],
-  "pr_urls": [
-    "https://example.com/org/mbpass-business/pull/1"
-  ],
+  "commits": [],
+  "pr_urls": [],
   "verification_results": [
     {
       "repository": "mbpass-business",
@@ -54,10 +47,10 @@ Schema:
 
 Allowed `delivery_status` values:
 
-- `completed` — plan implemented and verification recorded
+- `completed` or `ready_for_finalize` — plan implemented and ready for Lumen verification
 - `blocked` — cannot proceed safely
 - `failed` — implementation attempted but failed
 
-Do not hallucinate PR URLs, test results, or commit SHAs.
+Do not create commits, push branches, or create PRs. Do not hallucinate PR URLs, test results, or commit SHAs. Lumen fills commit and PR fields after verification succeeds.
 
 Leave `feishu` and `jira` out of the file. The Lumen wrapper fills those after your run.

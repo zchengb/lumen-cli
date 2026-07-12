@@ -4,7 +4,7 @@ Date: 2026-07-08
 
 ## Goal
 
-Complete the Lumen delivery workflow with CLI-driven implementation of approved technical plans.
+Complete the Lumen delivery workflow with CLI-driven implementation of approved technical plans, deterministic verification, PR creation, and delivery state synchronization.
 
 ## Three-loop model
 
@@ -16,17 +16,22 @@ Development Loop -> code + PR          (lumen delivery run)
 
 ## Workspace layout
 
-The docs repository is the workspace root. Code repositories live under `repos/`:
+The docs repository is the delivery workspace. It owns the stable source checkouts, delivery state, and Story-specific feature worktrees:
 
 ```text
 <docs-repo>/
+  .lumen/
+    worktrees/<story-key>/<repository>/
+    logs/delivery/
+    results/
+    history/delivery/
   repos/
-    xxxx-backend/
+    service-a/                 # base checkout; never developed on directly
+    service-b/
   stories/
-  .lumen/config/workspace.json
 ```
 
-Configured in `<docs-repo>/.lumen/config/workspace.json`.
+`lumen set-up-docs` can clone repositories into `repos/`. Lumen discovers them automatically; a Story only declares the repositories it affects in `metadata.json.linkedRepos`.
 
 ## Coding guideline location
 
@@ -40,14 +45,43 @@ The coding guideline lives in the Lumen CLI install:
 
 ## CLI orchestration
 
-`lumen delivery run <docs-dir> [--story <slug>] [--dry-run]`
+From the workspace root: `lumen delivery run [--story <slug>] [--dry-run]`
 
 Pipeline:
 
-1. `prepare_delivery_run.py` — gates, metadata, feature worktrees
-2. `compose_delivery_prompt.py` — story, plan, coding guideline, workspace context
-3. `run-delivery.sh` — Cursor agent execution
-4. `render-delivery-and-notify.py` — metadata, JIRA, Feishu
+1. `sync_delivery_workspace.py` — fetch docs and linked base checkouts without pull, reset, or branch changes
+2. `prepare_delivery_run.py` — metadata gates and Story-specific feature worktrees created from `origin/<base>`; base checkouts are never touched
+3. `compose_delivery_prompt.py` — story, plan, coding guideline, workspace context
+4. `run-delivery.sh` — Cursor agent implementation in prepared worktrees
+5. `run_delivery_verification.py` — host Java/JDK selection, PMD when configured, full Gradle test suite, and Colima/Testcontainers runtime injection
+6. `finalize_delivery.py` — commit using the Agent-proposed repository-style subject, push the feature branch, and open one PR per repository
+7. `render-delivery-and-notify.py` — metadata, JIRA status, Feishu, and run history
+
+`prepare`, `verify`, and `pr` remain internal recovery commands for interrupted runs. Normal users only use `lumen delivery run`.
+
+Multiple Story worktrees can coexist, including worktrees for the same repository. To keep the control plane deterministic, Lumen runs one automated delivery at a time per docs repository; a second `run` reports that the workspace is busy instead of overwriting shared progress, notification, or JIRA state.
+
+The Agent never commits, pushes, or transitions JIRA. Lumen only finalizes after mandatory verification passes.
+
+## Local Java Runtime
+
+Java verification runs on the host machine. For macOS/Colima Testcontainers support, initialize the profile once:
+
+```bash
+colima start --network-address
+```
+
+Lumen injects `DOCKER_HOST`, `TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE`, and `TESTCONTAINERS_HOST_OVERRIDE` for Docker-requiring checks. Use `CODEARTIFACT_AUTH_TOKEN` in the active shell, or a trusted local `CODEARTIFACT_TOKEN_COMMAND` in docs `.env.local`, when Gradle needs a private dependency token.
+
+## Visibility And Recovery
+
+```bash
+lumen delivery status ~/Projects/example-docs
+lumen delivery watch ~/Projects/example-docs
+lumen delivery dashboard ~/Projects/example-docs
+```
+
+Every completed or failed run is archived under `.lumen/history/delivery/`; a failed run preserves its Story worktree so it can be diagnosed and retried safely.
 
 ## Non-goals
 

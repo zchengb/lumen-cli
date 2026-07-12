@@ -1,10 +1,13 @@
 tmp/*
 !tmp/.gitkeep
-logs/*.log
-results/*.json
-reports/*.pdf
-reports/*.html
+logs/
+results/
+reports/
+state/
+worktrees/
 dashboard-data.js
+delivery-dashboard.html
+delivery-dashboard-data.js
 .env.local
 *.tmp
 .DS_Store
