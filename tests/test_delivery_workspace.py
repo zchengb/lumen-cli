@@ -33,7 +33,7 @@ from delivery_scheduler import current_jira_status, story_candidates  # noqa: E4
 from delivery_launchd import interval_minutes_from_cron  # noqa: E402
 from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
-from compose_delivery_prompt import compose_snippets  # noqa: E402
+from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
 
 
@@ -94,6 +94,99 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("# Workspace Scan Prompt", compose_prompt(workspace / ".lumen"))
             self.assertNotIn("Delivery Prompt", compose_prompt(workspace / ".lumen"))
             self.assertEqual("# Workspace Delivery Prompt", compose_snippets(context))
+
+    def test_remediation_prompt_contains_only_failed_verification_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            story_dir = workspace / "stories" / "MBPAS-100-demo"
+            story_dir.mkdir(parents=True)
+            story_md = story_dir / "story.md"
+            plan = story_dir / "technical-plan.md"
+            metadata = story_dir / "metadata.json"
+            story_md.write_text("# Story\n\nContext\n", encoding="utf-8")
+            plan.write_text("# Plan\n\nApproved work\n", encoding="utf-8")
+            metadata.write_text("{}\n", encoding="utf-8")
+            result = workspace / ".lumen" / "results" / "delivery-result.json"
+            result.parent.mkdir(parents=True)
+            result.write_text(
+                json.dumps(
+                    {
+                        "remediation": {"attempt": 1, "max_attempts": 2},
+                        "verification_results": [
+                            {"label": "Full test suite", "status": "failed", "summary": "Context failed"},
+                            {"label": "PMD", "status": "passed", "summary": "Passed"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=story_dir,
+                story_md=story_md,
+                technical_plan=plan,
+                metadata_path=metadata,
+                metadata={},
+                repos=[],
+                branch_name="feature/MBPAS-100-demo",
+                delivery_config={},
+                workspace_config={},
+            )
+
+            prompt = compose_delivery_prompt(context, remediation=True)
+            self.assertIn("# Verification Remediation Context", prompt)
+            self.assertIn("Full test suite", prompt)
+            self.assertNotIn('"label": "PMD"', prompt)
+
+    def test_remediation_attempt_archives_previous_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp) / "delivery-result.json"
+            result.write_text(
+                json.dumps(
+                    {
+                        "delivery_status": "ready_for_finalize",
+                        "verification_results": [{"label": "Tests", "status": "failed"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "prepare_delivery_remediation.py"),
+                    "--result",
+                    str(result),
+                    "--attempt",
+                    "1",
+                    "--max-attempts",
+                    "2",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual("in_progress", payload["delivery_status"])
+            self.assertEqual([], payload["verification_results"])
+            self.assertEqual("in_progress", payload["remediation"]["status"])
+            self.assertEqual("Tests", payload["remediation"]["attempts"][0]["failed_verification"][0]["label"])
+
+            result.write_text(json.dumps({"delivery_status": "ready_for_finalize"}), encoding="utf-8")
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "prepare_delivery_remediation.py"),
+                    "--result",
+                    str(result),
+                    "--restore",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            restored = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual(1, restored["remediation"]["attempt"])
 
     def test_delivery_notification_uses_a_card_level_jira_link(self) -> None:
         renderer = load_delivery_notification_renderer()

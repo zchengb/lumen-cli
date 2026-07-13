@@ -26,6 +26,10 @@
   "verification": {
     "auto_run_after_agent": true,
     "fail_on_error": true,
+    "remediation": {
+      "enabled": true,
+      "max_attempts": 2
+    },
     "docker": {
       "mode": "host_testcontainers",
       "required_for": ["integration_test"],

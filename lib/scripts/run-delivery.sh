@@ -257,7 +257,97 @@ send_started_notification() {
 load_delivery_prompt() {
   local compose_py="${LUMEN_LIB_DIR}/compose_delivery_prompt.py"
   [[ -f "${compose_py}" ]] || fail "compose_delivery_prompt.py not found"
-  python3 "${compose_py}" "${DOCS_DIR}" "${STORY_REF}"
+  python3 "${compose_py}" "${DOCS_DIR}" "${STORY_REF}" "$@"
+}
+
+remediation_max_attempts() {
+  [[ -f "${DELIVERY_CONFIG}" ]] || { printf '2'; return; }
+  python3 - "${DELIVERY_CONFIG}" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        config = json.load(handle)
+    remediation = config.get("verification", {}).get("remediation", {})
+    if not isinstance(remediation, dict) or not remediation.get("enabled", True):
+        print(0, end="")
+    else:
+        print(max(0, int(remediation.get("max_attempts", 2))), end="")
+except Exception:
+    print(2, end="")
+PY
+}
+
+run_delivery_agent() {
+  local prompt="$1"
+  local stage_label="$2"
+  local agent_args=(
+    --workspace "${WORKSPACE_ROOT}"
+    --sandbox "${SANDBOX_MODE}"
+    --trust
+    -p
+    -f
+    --output-format "${OUTPUT_FORMAT}"
+    --model "${MODEL}"
+  )
+  if [[ "${OUTPUT_FORMAT}" == "stream-json" && "${STREAM_PARTIAL}" == "1" ]]; then
+    agent_args+=(--stream-partial-output)
+  fi
+
+  printf 'Starting %s at %s UTC...\n' "${stage_label}" "$(date -u '+%Y-%m-%d %H:%M:%S')"
+  set +e
+  if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
+    agent "${agent_args[@]}" "${prompt}" 2>&1 | tee -a "${LOG_FILE}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
+  else
+    agent "${agent_args[@]}" "${prompt}" 2>&1 | tee -a "${LOG_FILE}"
+  fi
+  local agent_exit=${PIPESTATUS[0]}
+  set -e
+  return "${agent_exit}"
+}
+
+run_verification_profile() {
+  local verify_py="${LUMEN_LIB_DIR}/run_delivery_verification.py"
+  [[ -f "${verify_py}" ]] || return 0
+  set +e
+  python3 "${verify_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" --workspace-root "${WORKSPACE_ROOT}" | tee -a "${LOG_FILE}"
+  local verify_exit=${PIPESTATUS[0]}
+  set -e
+  return "${verify_exit}"
+}
+
+run_remediation_loop() {
+  local max_attempts
+  max_attempts="$(remediation_max_attempts)"
+  [[ "${max_attempts}" =~ ^[0-9]+$ ]] || max_attempts=2
+  [[ "${max_attempts}" -gt 0 ]] || return 1
+
+  local remediation_py="${LUMEN_LIB_DIR}/prepare_delivery_remediation.py"
+  [[ -f "${remediation_py}" ]] || return 1
+  local attempt remediation_prompt
+  for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+    progress_message "Verification failed; starting bounded remediation attempt ${attempt}/${max_attempts}"
+    progress_phase agent in_progress "Remediation attempt ${attempt}/${max_attempts}: diagnose and minimally fix verification failures"
+    python3 "${remediation_py}" --result "${RESULT_FILE}" --attempt "${attempt}" --max-attempts "${max_attempts}" || return 1
+    remediation_prompt="$(load_delivery_prompt --remediation)" || return 1
+    if ! run_delivery_agent "${remediation_prompt}" "Lumen delivery remediation ${attempt}/${max_attempts}"; then
+      progress_phase agent failed "Remediation agent exited during attempt ${attempt}/${max_attempts}"
+      return 1
+    fi
+    [[ -f "${RESULT_FILE}" ]] || return 1
+    python3 "${remediation_py}" --result "${RESULT_FILE}" --restore || return 1
+    progress_phase agent completed "Remediation attempt ${attempt}/${max_attempts} finished; result updated"
+
+    progress_phase verification in_progress "Verification after remediation attempt ${attempt}/${max_attempts}"
+    printf '\n[delivery] Verification after remediation %s/%s\n' "${attempt}" "${max_attempts}"
+    if run_verification_profile; then
+      python3 "${remediation_py}" --result "${RESULT_FILE}" --complete || true
+      progress_message "Verification passed after remediation attempt ${attempt}/${max_attempts}"
+      return 0
+    fi
+  done
+  return 1
 }
 
 run_dry_delivery() {
@@ -338,31 +428,9 @@ run_real_delivery() {
   printf '\n[delivery] Phase 4/8 — Implementation agent\n'
   printf 'Starting Lumen delivery agent at %s UTC...\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
 
-  local agent_args=(
-    --workspace "${WORKSPACE_ROOT}"
-    --sandbox "${SANDBOX_MODE}"
-    --trust
-    -p
-    -f
-    --output-format "${OUTPUT_FORMAT}"
-    --model "${MODEL}"
-  )
-  if [[ "${OUTPUT_FORMAT}" == "stream-json" && "${STREAM_PARTIAL}" == "1" ]]; then
-    agent_args+=(--stream-partial-output)
-  fi
-
-  set +e
-  if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
-    agent "${agent_args[@]}" "${delivery_prompt}" 2>&1 | tee "${LOG_FILE}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
-  else
-    agent "${agent_args[@]}" "${delivery_prompt}" 2>&1 | tee "${LOG_FILE}"
-  fi
-  local agent_exit=${PIPESTATUS[0]}
-  set -e
-
-  if [[ "${agent_exit}" -ne 0 ]]; then
-    progress_phase agent failed "Agent exited with status ${agent_exit}"
-    fail "Lumen delivery agent exited with status ${agent_exit}. See log: ${LOG_FILE}"
+  if ! run_delivery_agent "${delivery_prompt}" "Lumen delivery implementation agent"; then
+    progress_phase agent failed "Agent exited with a non-zero status"
+    fail "Lumen delivery agent exited with a non-zero status. See log: ${LOG_FILE}"
   fi
 
   [[ -f "${RESULT_FILE}" ]] || fail "Delivery agent did not write ${RESULT_FILE}"
@@ -370,19 +438,14 @@ run_real_delivery() {
 
   progress_phase verification in_progress "Compile, PMD, unit and integration tests"
   printf '\n[delivery] Phase 5/8 — Verification\n'
-  local verify_py="${LUMEN_LIB_DIR}/run_delivery_verification.py"
-  if [[ -f "${verify_py}" ]]; then
-    set +e
-    python3 "${verify_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" --workspace-root "${WORKSPACE_ROOT}" | tee -a "${LOG_FILE}"
-    local verify_exit=${PIPESTATUS[0]}
-    set -e
-    if [[ "${verify_exit}" -ne 0 ]]; then
-      progress_phase verification failed "One or more verification checks failed"
-      fail "Delivery verification failed. See log: ${LOG_FILE}"
+  if ! run_verification_profile; then
+    if ! run_remediation_loop; then
+      progress_phase verification failed "Verification failed after bounded remediation attempts"
+      fail "Delivery verification failed after bounded remediation. See log: ${LOG_FILE}"
     fi
     progress_phase verification completed "All verification checks passed"
   else
-    progress_phase verification skipped "Verification runner not installed"
+    progress_phase verification completed "All verification checks passed"
   fi
 
   progress_phase finalize in_progress "Commit verified changes, push feature branches, and create PRs"

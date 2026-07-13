@@ -25,6 +25,15 @@ When the repository uses Gradle with PMD and the approved verification profile d
 
 Lumen CLI also runs the same verification profile after the agent exits. Do not claim success if any mandatory check failed.
 
+## Verification Remediation
+
+When Lumen invokes you with a `# Verification Remediation Context` section, this is a bounded follow-up after mandatory verification failed. Work only from the provided failed-check evidence and the existing feature worktree diff:
+
+- Diagnose before editing and make the smallest correction that addresses the failure.
+- Do not restart implementation, rewrite unrelated code, weaken tests, disable checks, change the approved plan, commit, push, or create a PR.
+- Preserve all existing Story-scope changes unless they are directly incorrect.
+- Update `delivery-result.json` honestly. Lumen will rerun the full configured verification profile after your response.
+
 ## JIRA
 
 Do not move JIRA status manually. Lumen CLI moves the linked JIRA Story to `IN DEV` when delivery starts and `DEV DONE` when delivery completes, when `twg-cli` is authenticated.

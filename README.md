@@ -127,6 +127,16 @@ lumen delivery run --story MBPAS-1505
 
 Source base checkouts live under `repos/`, while Lumen creates one isolated feature worktree per Story under `.lumen/worktrees/<story-key>/<repo>/`. Auto-scan and delivery share the same repository list, secrets, JIRA setup, and workspace. Multiple Story worktrees may coexist, while automated `lumen delivery run` executions are serialized per workspace so shared verification resources and delivery state cannot collide.
 
+When mandatory verification fails, delivery remains in the same feature worktree and Lumen starts a bounded remediation loop by default: it gives the Agent the failed check evidence, permits the smallest Story-scope correction, and reruns the full verification profile. The default is two remediation attempts. After that, delivery stays `In Progress` for human review; it never commits, pushes, or opens a PR from a failing run. Configure this in `.lumen/config/delivery.json`:
+
+```json
+{
+  "verification": {
+    "remediation": { "enabled": true, "max_attempts": 2 }
+  }
+}
+```
+
 To refresh templates in an existing docs repo:
 
 ```bash

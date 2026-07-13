@@ -91,19 +91,58 @@ Delivery result file: {delivery_result_path(context.workspace_root)}
 """
 
 
-def compose_delivery_prompt(context: StoryContext) -> str:
-    return compose_snippets(context) + "\n\n" + render_context_block(context) + "\n"
+def remediation_context_block(context: StoryContext) -> str:
+    result_path = delivery_result_path(context.workspace_root)
+    payload: dict = {}
+    if result_path.is_file():
+        try:
+            loaded = json.loads(result_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    remediation = payload.get("remediation") if isinstance(payload.get("remediation"), dict) else {}
+    failed = [
+        item
+        for item in payload.get("verification_results", [])
+        if isinstance(item, dict) and item.get("status") == "failed"
+    ]
+    evidence = json.dumps(failed, indent=2, ensure_ascii=False)
+    return f"""# Verification Remediation Context
+
+This is remediation attempt {remediation.get("attempt", "?")} of {remediation.get("max_attempts", "?")}.
+
+The previous implementation already exists in the feature worktrees. Do not restart the Story or broaden its scope. Diagnose the failed mandatory checks below, make the smallest correction that addresses their cause, and leave unrelated files untouched.
+
+## Failed Verification Evidence
+
+```json
+{evidence}
+```
+"""
+
+
+def compose_delivery_prompt(context: StoryContext, remediation: bool = False) -> str:
+    prompt = compose_snippets(context) + "\n\n" + render_context_block(context)
+    if remediation:
+        prompt += "\n\n" + remediation_context_block(context)
+    return prompt + "\n"
 
 
 def main() -> int:
-    if len(sys.argv) not in {2, 3}:
-        print("Usage: compose_delivery_prompt.py <docs-dir> [story-ref]", file=sys.stderr)
+    args = sys.argv[1:]
+    remediation = False
+    if "--remediation" in args:
+        remediation = True
+        args.remove("--remediation")
+    if len(args) not in {1, 2}:
+        print("Usage: compose_delivery_prompt.py <docs-dir> [story-ref] [--remediation]", file=sys.stderr)
         return 1
-    docs_dir = Path(sys.argv[1])
-    story_ref = sys.argv[2] if len(sys.argv) == 3 else ""
+    docs_dir = Path(args[0])
+    story_ref = args[1] if len(args) == 2 else ""
     try:
         context = load_story_context(docs_dir, story_ref)
-        print(compose_delivery_prompt(context), end="")
+        print(compose_delivery_prompt(context, remediation=remediation), end="")
     except (OSError, ValueError, FileNotFoundError, json.JSONDecodeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1

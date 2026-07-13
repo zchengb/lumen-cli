@@ -237,7 +237,8 @@ During the Development Loop, Lumen CLI should:
 3. Create feature worktrees under `<workspace-root>/.lumen/worktrees/<story-key>/<repository>/`.
 4. Run the delivery agent with the Lumen coding guideline.
 5. Let Lumen run verification after the Agent exits. Java uses host JDK/Testcontainers when required; App/PHP/frontend stay on lightweight checks.
-6. Record a repository-history-compatible `commit_subject` in `delivery-result.json`, but do not commit, push, or open a PR.
+6. If mandatory verification fails, Lumen may invoke up to two bounded remediation rounds in the same worktree. Each round receives the failed-check evidence and may make only the smallest Story-scope correction. Lumen stops for human review after the configured limit.
+7. Record a repository-history-compatible `commit_subject` in `delivery-result.json`, but do not commit, push, or open a PR.
 7. Let Lumen commit, push, open PRs, update `metadata.json.deliveryStatus`, transition JIRA, send notifications, and archive the run.
 
 ## Delivery Status
