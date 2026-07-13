@@ -144,11 +144,13 @@ def build_delivery_feishu_card(
             {"tag": "markdown", "content": f"**Pull requests**\n" + "\n".join(pr_urls)},
         ])
 
-    actions: list[dict[str, Any]] = []
     if jira_url:
-        actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "Open JIRA"}, "type": "default", "url": jira_url})
-    if actions:
-        elements.append({"tag": "action", "actions": actions})
+        elements.append(
+            {
+                "tag": "markdown",
+                "content": f"[Open {jira_key or 'JIRA Story'}]({jira_url})",
+            }
+        )
 
     return {
         "msg_type": "interactive",
