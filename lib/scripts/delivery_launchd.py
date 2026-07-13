@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import plistlib
 import subprocess
@@ -93,7 +94,15 @@ def remove(args: argparse.Namespace) -> int:
 
 def status(args: argparse.Namespace) -> int:
     path = plist_path(label_for(args.project))
-    print(str(path) if path.exists() else "")
+    if not path.exists():
+        print("")
+        return 0
+    try:
+        payload = plistlib.loads(path.read_bytes())
+        interval = int(payload.get("StartInterval") or 0)
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        interval = 0
+    print(json.dumps({"path": str(path), "interval_seconds": interval}))
     return 0
 
 

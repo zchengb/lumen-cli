@@ -321,6 +321,7 @@ Usage:
                                  Schedule recurring code scans
   lumen schedule delivery add --project <slug> --every 5m
                                  Poll approved Stories and start JIRA Ready for Dev deliveries
+                                 Aliases: lumen scan schedule ..., lumen delivery schedule ...
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
                                  List tracked findings from the issue registry
@@ -1859,6 +1860,11 @@ cmd_register() {
 }
 
 cmd_scan() {
+  if [[ "${1:-}" == "schedule" ]]; then
+    shift
+    cmd_schedule_scan "$@"
+    return 0
+  fi
   local dry_run=0
   local filtered_args=()
   local arg
@@ -1995,11 +2001,6 @@ cmd_schedule_add() {
     fi
   fi
 
-  if ! command -v crontab >/dev/null 2>&1; then
-    err "'crontab' is not available on this system. Scheduling requires cron."
-    exit 1
-  fi
-
   if ! is_valid_cron_expr "${cron_expr}"; then
     err "Invalid cron expression: \"${cron_expr}\" (expected 5 space-separated fields: minute hour day-of-month month day-of-week)"
     exit 1
@@ -2034,6 +2035,25 @@ cmd_schedule_add() {
   else
     cron_path="PATH=\"${HOME}/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin\""
     cron_env="HOME=\"${HOME}\" SHELL=\"/bin/sh\" USER=\"${USER:-$(id -un)}\" LOGNAME=\"${LOGNAME:-${USER:-$(id -un)}}\""
+  fi
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local launchd_py schedule_json launchd_path description
+    launchd_py="${LUMEN_HOME}/lib/scripts/scan_launchd.py"
+    [[ -f "${launchd_py}" ]] || { err "launchd scheduler helper not found: ${launchd_py}"; exit 1; }
+    schedule_json="$(python3 "${launchd_py}" add --project "${slug}" --cron "${cron_expr}" --lumen-bin "${lumen_bin}" --lumen-home "${LUMEN_HOME}" --path "${PATH}" --log-file "${log_file}" $([ "${dry_run}" == "1" ] && printf '%s' '--dry-run'))" || exit 1
+    launchd_path="$(printf '%s' "${schedule_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"], end="")')"
+    description="$(printf '%s' "${schedule_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["description"], end="")')"
+    remove_legacy_scan_cron "${slug}"
+    ok "Scheduled scan for '${slug}': ${description} with launchd$([ "${dry_run}" == "1" ] && echo ' (dry-run)')"
+    printf 'LaunchAgent: %s\n' "${launchd_path}"
+    printf 'Log file: %s\n' "${log_file}"
+    return 0
+  fi
+
+  if ! command -v crontab >/dev/null 2>&1; then
+    err "'crontab' is not available on this system. Scheduling requires cron."
+    exit 1
   fi
 
   cron_line="${cron_expr} ${cron_path} ${cron_env} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" scan --project ${slug}${dry_run_flag} >> \"${log_file}\" 2>&1 $(schedule_marker "${slug}")"
@@ -2074,7 +2094,13 @@ cmd_schedule_remove() {
     exit 1
   fi
 
+  local removed_launchd="0"
+  if [[ "$(uname -s)" == "Darwin" && -f "${LUMEN_HOME}/lib/scripts/scan_launchd.py" ]]; then
+    python3 "${LUMEN_HOME}/lib/scripts/scan_launchd.py" remove --project "${slug}" || true
+    removed_launchd="1"
+  fi
   if ! command -v crontab >/dev/null 2>&1; then
+    [[ "${removed_launchd}" == "1" ]] && { ok "Removed scan schedule for '${slug}'."; return 0; }
     err "'crontab' is not available on this system."
     exit 1
   fi
@@ -2082,7 +2108,8 @@ cmd_schedule_remove() {
   local existing filtered
   existing="$(read_crontab)"
   if ! printf '%s\n' "${existing}" | grep -qF "$(schedule_marker "${slug}")"; then
-    warn "No schedule found for '${slug}'."
+    [[ "${removed_launchd}" == "1" ]] && { ok "Removed scan schedule for '${slug}'."; return 0; }
+    warn "No scan schedule found for '${slug}'."
     return 0
   fi
   filtered="$(printf '%s\n' "${existing}" | grep -vF "$(schedule_marker "${slug}")" || true)"
@@ -2091,7 +2118,7 @@ cmd_schedule_remove() {
   else
     write_crontab "${filtered}"
   fi
-  ok "Removed schedule for '${slug}'."
+  ok "Removed scan schedule for '${slug}'."
 }
 
 cron_label() {
@@ -2105,6 +2132,17 @@ cron_label() {
 }
 
 cmd_schedule_list() {
+  if [[ "$(uname -s)" == "Darwin" && -f "${LUMEN_HOME}/lib/scripts/scan_launchd.py" ]]; then
+    local _ slug schedule_json path description
+    while IFS=$'\t' read -r _ _ slug _ _; do
+      [[ -n "${slug}" ]] || continue
+      schedule_json="$(python3 "${LUMEN_HOME}/lib/scripts/scan_launchd.py" status --project "${slug}")"
+      [[ -n "${schedule_json}" ]] || continue
+      path="$(printf '%s' "${schedule_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"], end="")')"
+      description="$(printf '%s' "${schedule_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["description"], end="")')"
+      printf 'launchd  %-18s %-18s %s\n' "${slug}" "${description}" "${path}"
+    done < <(registry_cmd list-lines)
+  fi
   if ! command -v crontab >/dev/null 2>&1; then
     warn "'crontab' is not available on this system."
     return 0
@@ -2112,7 +2150,8 @@ cmd_schedule_list() {
   local lines
   lines="$(read_crontab | grep '# lumen-schedule:' || true)"
   if [[ -z "${lines}" ]]; then
-    printf 'No Lumen schedules configured.\n'
+    [[ "$(uname -s)" == "Darwin" ]] && return 0
+    printf 'No Lumen scan schedules configured.\n'
     printf 'Add one with: lumen schedule scan add\n'
     return 0
   fi
@@ -2123,6 +2162,22 @@ cmd_schedule_list() {
     cron_fields="$(printf '%s' "${line}" | awk '{print $1, $2, $3, $4, $5}')"
     printf '%-26s %-18s %s\n' "${cron_fields}" "${slug}" "$(cron_label "${cron_fields}")"
   done <<< "${lines}"
+}
+
+remove_legacy_scan_cron() {
+  local slug="$1"
+  command -v crontab >/dev/null 2>&1 || return 0
+  local existing filtered
+  existing="$(read_crontab)"
+  if ! printf '%s\n' "${existing}" | grep -qF "$(schedule_marker "${slug}")"; then
+    return 0
+  fi
+  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(schedule_marker "${slug}")" || true)"
+  if [[ -z "$(printf '%s' "${filtered}" | tr -d '[:space:]')" ]]; then
+    crontab -r 2>/dev/null || true
+  else
+    write_crontab "${filtered}"
+  fi
 }
 
 remove_legacy_delivery_cron() {
@@ -2295,11 +2350,19 @@ cmd_delivery_schedule_remove() {
 
 cmd_delivery_schedule_list() {
   if [[ "$(uname -s)" == "Darwin" && -f "${LUMEN_HOME}/lib/scripts/delivery_launchd.py" ]]; then
-    local project_line slug path
+    local project_line slug schedule_json path interval_seconds interval_label
     while IFS=$'\t' read -r _ _ slug _ _; do
       [[ -n "${slug}" ]] || continue
-      path="$(python3 "${LUMEN_HOME}/lib/scripts/delivery_launchd.py" status --project "${slug}")"
-      [[ -n "${path}" ]] && printf 'launchd  %-18s %s\n' "${slug}" "${path}"
+      schedule_json="$(python3 "${LUMEN_HOME}/lib/scripts/delivery_launchd.py" status --project "${slug}")"
+      [[ -n "${schedule_json}" ]] || continue
+      path="$(printf '%s' "${schedule_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["path"], end="")')"
+      interval_seconds="$(printf '%s' "${schedule_json}" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("interval_seconds", 0), end="")')"
+      if [[ "${interval_seconds}" =~ ^[1-9][0-9]*$ ]] && (( interval_seconds % 60 == 0 )); then
+        interval_label="every $((interval_seconds / 60)) minutes"
+      else
+        interval_label="every ${interval_seconds} seconds"
+      fi
+      printf 'launchd  %-18s %-18s %s\n' "${slug}" "${interval_label}" "${path}"
     done < <(registry_cmd list-lines)
   fi
   command -v crontab >/dev/null 2>&1 || { warn "'crontab' is not available on this system."; return 0; }

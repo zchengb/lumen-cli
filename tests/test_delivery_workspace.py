@@ -28,6 +28,7 @@ from init_delivery_docs import init_docs  # noqa: E402
 from sync_workspace_repositories import sync as sync_scan_repositories  # noqa: E402
 from delivery_scheduler import current_jira_status, story_candidates  # noqa: E402
 from delivery_launchd import interval_minutes_from_cron  # noqa: E402
+from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
 
 
@@ -74,6 +75,16 @@ class DeliveryWorkspaceTests(unittest.TestCase):
     def test_launchd_interval_accepts_every_n_minutes_cron(self) -> None:
         self.assertEqual(5, interval_minutes_from_cron("*/5 * * * *"))
         self.assertIsNone(interval_minutes_from_cron("0 9 * * *"))
+
+    def test_scan_launchd_translates_common_cron_expressions(self) -> None:
+        self.assertEqual(
+            ({"StartInterval": 300}, "every 5 minutes"),
+            launchd_schedule_from_cron("*/5 * * * *"),
+        )
+        self.assertEqual(
+            ({"StartCalendarInterval": {"Minute": 0, "Hour": 9}}, "daily at 09:00"),
+            launchd_schedule_from_cron("0 9 * * *"),
+        )
 
     def test_completed_delivery_worktrees_are_removed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
