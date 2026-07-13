@@ -15,12 +15,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Prepare a Lumen delivery run.")
     parser.add_argument("docs_dir")
     parser.add_argument("--story", default="")
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate the Story and describe its worktrees without creating or changing them.",
+    )
     parser.add_argument("--json", action="store_true", help="Print machine-readable context")
     args = parser.parse_args()
 
     try:
         context = load_story_context(Path(args.docs_dir), args.story)
-        messages = prepare_story_for_delivery(context)
+        messages = [] if args.dry_run else prepare_story_for_delivery(context)
         payload = {
             "docs_dir": str(context.docs_dir),
             "workspace_root": str(context.workspace_root),

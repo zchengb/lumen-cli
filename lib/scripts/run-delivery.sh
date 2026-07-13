@@ -203,7 +203,9 @@ STREAM_PARTIAL="${CURSOR_AGENT_STREAM_PARTIAL:-1}"
 prepare_delivery() {
   local prepare_py="${LUMEN_LIB_DIR}/prepare_delivery_run.py"
   [[ -f "${prepare_py}" ]] || fail "prepare_delivery_run.py not found"
-  python3 "${prepare_py}" "${DOCS_DIR}" --story "${STORY_REF}" --json
+  local dry_flag=""
+  [[ "${DRY_RUN}" == "1" ]] && dry_flag="--dry-run"
+  python3 "${prepare_py}" "${DOCS_DIR}" --story "${STORY_REF}" --json ${dry_flag}
 }
 
 sync_delivery_references() {
