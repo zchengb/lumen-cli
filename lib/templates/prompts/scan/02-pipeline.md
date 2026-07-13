@@ -12,7 +12,7 @@
 8. Confirm each worktree is on the latest default branch after the refresh script completes.
 9. Inspect commits, diffs, changed files, and directly related code from the configured scan window in `config/common.json` (`execution.scan_window_days`).
 10. Identify confirmed correctness, security, validation, reliability, data integrity, authorization, authentication, payment, caching, retry, migration, or production-impacting issues.
-11. Classify each finding using `config/prompts/09-severity-guideline.md`.
+11. Classify each finding using `prompts/scan/09-severity-guideline.md`.
 12. Commit local auto-fixes for confirmed High severity findings that meet the automated fix policy. Record `auto_fix` metadata on each finding. Do not push branches or run `gh` — the post-scan step opens PRs.
 13. Reconcile findings with the local issue registry before final output.
 14. Write the run result to `<results_dir>/scan-result-<run-timestamp>.json`, then write an identical copy to the fixed path `<results_dir>/scan-result.json` (overwrite it). Leave `report` and `feishu` at their default "not generated / not sent" values in both files.

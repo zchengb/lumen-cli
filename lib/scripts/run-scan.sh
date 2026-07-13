@@ -268,8 +268,10 @@ run_real_scan() {
   refresh_scan_worktrees refresh || true
 
   printf 'Lumen workspace: %s\n' "${WORKSPACE_ROOT}"
-  if [[ -f "${WORKSPACE_ROOT}/config/prompts/manifest.json" ]]; then
-    printf 'Prompt source: config/prompts/manifest.json (composed snippets)\n'
+  if [[ -f "${WORKSPACE_ROOT}/prompts/scan/manifest.json" ]]; then
+    printf 'Prompt source: prompts/scan/manifest.json (composed snippets)\n'
+  elif [[ -f "${WORKSPACE_ROOT}/config/prompts/manifest.json" ]]; then
+    printf 'Prompt source: config/prompts/manifest.json (legacy composed snippets)\n'
   else
     printf 'Prompt file: %s\n' "${PROMPT_FILE}"
   fi

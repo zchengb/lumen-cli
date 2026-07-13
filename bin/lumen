@@ -358,8 +358,8 @@ Usage:
                                  Remove CURSOR_API_KEY from a workspace
   lumen upgrade [--cli-only] [--project <slug>]
                                  Upgrade the installed Lumen CLI to the latest release and
-                                 refresh this workspace's bundled templates (scan-prompt.md,
-                                 config/prompts/, runtime-profiles.json, feishu-card-template.json,
+                                 refresh this workspace's bundled templates (prompts/scan/,
+                                 prompts/delivery/, runtime-profiles.json, feishu-card-template.json,
                                  dashboard.html).
                                  Add --cli-only to upgrade only the CLI without touching workspace
                                  templates. Use --project <slug> to target a specific workspace.
@@ -394,13 +394,49 @@ cmd_version() {
 
 sync_prompt_snippets() {
   local workspace="$1"
-  local src_dir="${LUMEN_TEMPLATES_DIR}/config/prompts"
-  local dest_dir="${workspace}/config/prompts"
+  local src_dir="${LUMEN_TEMPLATES_DIR}/prompts/scan"
+  local dest_dir="${workspace}/prompts/scan"
   if [[ ! -d "${src_dir}" ]]; then
     return 0
   fi
   mkdir -p "${dest_dir}"
-  cp -R "${src_dir}/." "${dest_dir}/"
+  local source relative destination
+  while IFS= read -r source; do
+    relative="${source#${src_dir}/}"
+    destination="${dest_dir}/${relative}"
+    if [[ ! -e "${destination}" ]]; then
+      mkdir -p "$(dirname "${destination}")"
+      cp "${source}" "${destination}"
+    fi
+  done < <(find "${src_dir}" -type f)
+}
+
+sync_delivery_prompt_snippets() {
+  local workspace="$1"
+  local src_dir="${LUMEN_TEMPLATES_DIR}/prompts/delivery"
+  local dest_dir="${workspace}/prompts/delivery"
+  [[ -d "${src_dir}" ]] || return 0
+  mkdir -p "${dest_dir}"
+  local source relative destination
+  while IFS= read -r source; do
+    relative="${source#${src_dir}/}"
+    destination="${dest_dir}/${relative}"
+    if [[ ! -e "${destination}" ]]; then
+      mkdir -p "$(dirname "${destination}")"
+      cp "${source}" "${destination}"
+    fi
+  done < <(find "${src_dir}" -type f)
+}
+
+migrate_legacy_scan_prompts() {
+  local workspace="$1"
+  local legacy_dir="${workspace}/config/prompts"
+  local prompts_dir="${workspace}/prompts/scan"
+  if [[ ! -d "${prompts_dir}" && -d "${legacy_dir}" ]]; then
+    mkdir -p "$(dirname "${prompts_dir}")"
+    cp -R "${legacy_dir}" "${prompts_dir}"
+    ok "Migrated editable scan prompts to prompts/scan/."
+  fi
 }
 
 sync_workspace_templates() {
@@ -411,7 +447,7 @@ sync_workspace_templates() {
   mkdir -p "${backup_dir}"
 
   local file
-  for file in scan-prompt.md runtime-profiles.json feishu-card-template.json; do
+  for file in runtime-profiles.json feishu-card-template.json; do
     if [[ -f "${workspace}/config/${file}" ]]; then
       cp "${workspace}/config/${file}" "${backup_dir}/${file}"
     fi
@@ -420,11 +456,16 @@ sync_workspace_templates() {
     fi
   done
 
-  if [[ -d "${workspace}/config/prompts" ]]; then
+  if [[ -d "${workspace}/prompts" ]]; then
     mkdir -p "${backup_dir}/prompts"
-    cp -R "${workspace}/config/prompts/." "${backup_dir}/prompts/"
+    cp -R "${workspace}/prompts/." "${backup_dir}/prompts/"
+  elif [[ -d "${workspace}/config/prompts" ]]; then
+    mkdir -p "${backup_dir}/prompts/scan"
+    cp -R "${workspace}/config/prompts/." "${backup_dir}/prompts/scan/"
   fi
+  migrate_legacy_scan_prompts "${workspace}"
   sync_prompt_snippets "${workspace}"
+  sync_delivery_prompt_snippets "${workspace}"
 
   if [[ -f "${workspace}/dashboard.html" ]]; then
     cp "${workspace}/dashboard.html" "${backup_dir}/dashboard.html"
@@ -433,7 +474,7 @@ sync_workspace_templates() {
     cp "${LUMEN_TEMPLATES_DIR}/dashboard.html" "${workspace}/dashboard.html"
   fi
 
-  ok "Refreshed scan-prompt.md, config/prompts/, runtime-profiles.json, feishu-card-template.json, and dashboard.html."
+  ok "Refreshed workspace templates. Existing prompt files were preserved; missing defaults were added."
   printf '  Workspace: %s\n' "${workspace}"
   printf '  Previous versions backed up to: %s\n' "${backup_dir}"
   printf '  config/common.json and config/repos.json were left untouched (they hold your project data).\n'
@@ -1509,14 +1550,14 @@ cmd_init() {
 
   printf 'Initializing Lumen workspace at: %s\n' "${lumen_dir}"
 
-  mkdir -p "${lumen_dir}/config" "${lumen_dir}/tmp" "${lumen_dir}/worktrees" \
+  mkdir -p "${lumen_dir}/config" "${lumen_dir}/prompts" "${lumen_dir}/tmp" "${lumen_dir}/worktrees" \
     "${lumen_dir}/reports" "${lumen_dir}/results" "${lumen_dir}/logs" "${lumen_dir}/state"
 
   cp "${LUMEN_TEMPLATES_DIR}/config/common.json" "${lumen_dir}/config/common.json"
   cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${lumen_dir}/config/repos.example.json"
   cp "${LUMEN_TEMPLATES_DIR}/config/runtime-profiles.json" "${lumen_dir}/config/runtime-profiles.json"
-  cp "${LUMEN_TEMPLATES_DIR}/config/scan-prompt.md" "${lumen_dir}/config/scan-prompt.md"
   sync_prompt_snippets "${lumen_dir}"
+  sync_delivery_prompt_snippets "${lumen_dir}"
   cp "${LUMEN_TEMPLATES_DIR}/config/feishu-card-template.json" "${lumen_dir}/config/feishu-card-template.json"
   cp "${LUMEN_TEMPLATES_DIR}/.env.common.example" "${lumen_dir}/.env.common.example"
   cp "${LUMEN_TEMPLATES_DIR}/.env.local.example" "${lumen_dir}/.env.local.example"

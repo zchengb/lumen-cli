@@ -91,7 +91,7 @@ Then:
 | `lumen config set-scan-window <days> [--project <slug>]` | Set how many days of git history each scan inspects (`execution.scan_window_days`) |
 | `lumen config show` / `lumen config unset-webhook` | Show workspace settings or remove the Feishu webhook |
 | `lumen config unset-cursor-api-key [--project <slug>]` | Remove `CURSOR_API_KEY` from a workspace |
-| `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI to the latest release and refresh bundled templates (`config/prompts/`, `scan-prompt.md`, dashboard). Use `--cli-only` to upgrade only the CLI. |
+| `lumen upgrade [--cli-only] [--project <slug>]` | Upgrade the installed CLI and add any missing workspace templates. Editable prompt files in `prompts/scan/` and `prompts/delivery/` are preserved. Use `--cli-only` to upgrade only the CLI. |
 | `lumen version` | Print the installed CLI version |
 | `lumen delivery dashboard [workspace-dir]` | Render the Delivery history dashboard |
 | `lumen help` | Show usage |
@@ -248,7 +248,7 @@ Check setup with `lumen doctor`.
 
 Findings use Lumen's three-tier operational standard: **High**, **Medium**, **Low**. This is not a CVSS score — it is a triage label for local code review, automated PR policy, and Feishu card color.
 
-The canonical rules live in `config/prompts/09-severity-guideline.md`:
+The canonical rules live in `prompts/scan/09-severity-guideline.md`:
 
 - **High** — confirmed issue with realistic production impact (security, data loss, auth bypass, critical-path failure). Eligible for automated PRs when the fix policy also passes.
 - **Medium** — confirmed but limited-impact bugs. Report only.
@@ -258,9 +258,11 @@ The agent must have code evidence, impact, and a realistic trigger before assign
 
 ### Modular scan prompts
 
-The scan agent instructions are split into snippet files under `config/prompts/` (skill-style). `config/prompts/manifest.json` defines load order; `run-scan.sh` composes them at scan time via `compose_scan_prompt.py`.
+The scan agent instructions are split into snippet files under `prompts/scan/`. `prompts/scan/manifest.json` defines load order; `run-scan.sh` composes them at scan time via `compose_scan_prompt.py`.
 
-Edit individual snippets to customize one concern (for example severity rules) without maintaining one giant file. `config/scan-prompt.md` is a human-readable index.
+Delivery instructions use the same model under `prompts/delivery/`. Its `manifest.json` defines the delivery-only load order. The two directories are intentionally never composed together.
+
+Edit individual snippets to customize one concern (for example severity rules) without maintaining one giant file. During an upgrade, Lumen preserves existing prompt files and adds only missing defaults. Older workspaces using `config/prompts/` are migrated automatically.
 
 ### Scheduled scans
 
@@ -404,11 +406,14 @@ my-project/                 ← one Lumen project workspace
       common.json           product name, execution mode, paths, retention
       repos.json            repositories to scan (edit this)
       runtime-profiles.json safety profiles per language/stack
-      scan-prompt.md        prompt index (human-readable)
-      prompts/              modular agent instructions (composed at scan time)
+      feishu-card-template.json
+    prompts/                editable, mode-isolated agent instructions
+      scan/                 composed only by `lumen scan`
         manifest.json
         09-severity-guideline.md
-      feishu-card-template.json
+      delivery/             composed only by `lumen delivery run`
+        manifest.json
+        01-role.md
     tmp/                    run metadata only
     worktrees/              scan review worktrees and <story>/<repo> delivery worktrees
     reports/                generated HTML/PDF reports

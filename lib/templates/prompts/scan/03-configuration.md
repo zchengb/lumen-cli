@@ -10,7 +10,7 @@ Use this configuration split:
 - `config/repos.json`: the only place for concrete repository names, repository paths, default branches, runtime profiles, and per-repository PR settings.
 - `config/runtime-profiles.json`: reusable safety profiles and blocked command patterns.
 - `config/feishu-card-template.json`: reusable card rendering template.
-- `config/prompts/`: modular scan instructions composed at run time.
+- `prompts/scan/`: modular scan instructions composed at run time.
 - `state/issue-registry.json`: persistent local issue registry used to avoid duplicate or inconsistent issue handling across runs.
 
 Environment loading order:
@@ -33,11 +33,11 @@ Use this local workspace layout:
     common.json
     repos.json
     runtime-profiles.json
-    scan-prompt.md
-    prompts/
+    feishu-card-template.json
+  prompts/
+    scan/
       manifest.json
       *.md
-    feishu-card-template.json
   <tmp_dir>/
     run-YYYYMMDD-HHMMSS/
       run metadata only

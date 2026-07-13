@@ -1,8 +1,8 @@
 # Lumen Scan Prompt Index
 
-This workspace uses **modular prompt snippets** (skill-style) under `config/prompts/`.
+This workspace uses **modular prompt snippets** under `prompts/scan/`.
 
-At scan time, `run-scan.sh` composes the full agent prompt from `config/prompts/manifest.json` in listed order. You normally edit individual snippets instead of this file.
+At scan time, `run-scan.sh` composes the full agent prompt from `prompts/scan/manifest.json` in listed order. You normally edit individual snippets instead of this file.
 
 ## Snippet modules
 

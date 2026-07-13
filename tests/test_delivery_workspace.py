@@ -18,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from delivery_workspace import (  # noqa: E402
     RepoTarget,
+    StoryContext,
     discover_git_repos,
     ensure_feature_worktree,
     load_workspace_config,
@@ -32,6 +33,7 @@ from delivery_launchd import interval_minutes_from_cron  # noqa: E402
 from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
 from compose_delivery_prompt import compose_snippets  # noqa: E402
+from compose_scan_prompt import compose_prompt  # noqa: E402
 
 
 def git(path: Path, *args: str) -> None:
@@ -44,11 +46,43 @@ class DeliveryWorkspaceTests(unittest.TestCase):
     def test_delivery_prompt_is_separate_from_scan_prompt_assets(self) -> None:
         delivery_prompt = compose_snippets()
         scan_manifest = json.loads(
-            (REPO_ROOT / "lib" / "templates" / "config" / "prompts" / "manifest.json").read_text(encoding="utf-8")
+            (REPO_ROOT / "lib" / "templates" / "prompts" / "scan" / "manifest.json").read_text(encoding="utf-8")
         )
         self.assertIn("# Delivery Agent Role", delivery_prompt)
         for scan_snippet in scan_manifest["snippets"]:
             self.assertNotIn(scan_snippet, delivery_prompt)
+
+    def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            scan_dir = workspace / ".lumen" / "prompts" / "scan"
+            delivery_dir = workspace / ".lumen" / "prompts" / "delivery"
+            scan_dir.mkdir(parents=True)
+            delivery_dir.mkdir(parents=True)
+            (workspace / ".lumen" / "config").mkdir(exist_ok=True)
+            (workspace / ".lumen" / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (scan_dir / "manifest.json").write_text('{"snippets":["scan.md"]}\n', encoding="utf-8")
+            (scan_dir / "scan.md").write_text("# Workspace Scan Prompt\n", encoding="utf-8")
+            (delivery_dir / "manifest.json").write_text('{"snippets":["delivery.md"]}\n', encoding="utf-8")
+            (delivery_dir / "delivery.md").write_text("# Workspace Delivery Prompt\n", encoding="utf-8")
+
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=workspace / "stories" / "demo",
+                story_md=workspace / "stories" / "demo" / "story.md",
+                technical_plan=workspace / "stories" / "demo" / "technical-plan.md",
+                metadata_path=workspace / "stories" / "demo" / "metadata.json",
+                metadata={},
+                repos=[],
+                branch_name="feature/DEMO-1",
+                delivery_config={},
+                workspace_config={},
+            )
+
+            self.assertIn("# Workspace Scan Prompt", compose_prompt(workspace / ".lumen"))
+            self.assertNotIn("Delivery Prompt", compose_prompt(workspace / ".lumen"))
+            self.assertEqual("# Workspace Delivery Prompt", compose_snippets(context))
 
     def test_installer_copies_delivery_coding_guideline(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -55,12 +55,17 @@ def runtime_context_section(workspace_root: Path) -> str:
 
 
 def compose_prompt(workspace_root: Path) -> str:
-    config_dir = workspace_root / "config"
-    prompts_dir = config_dir / "prompts"
+    prompts_dir = workspace_root / "prompts" / "scan"
     manifest_path = prompts_dir / "manifest.json"
-    legacy_prompt = config_dir / "scan-prompt.md"
+    legacy_prompts_dir = workspace_root / "config" / "prompts"
+    legacy_manifest = legacy_prompts_dir / "manifest.json"
+    legacy_prompt = workspace_root / "config" / "scan-prompt.md"
 
     parts: list[str] = [runtime_context_section(workspace_root)]
+
+    if not manifest_path.is_file() and legacy_manifest.is_file():
+        prompts_dir = legacy_prompts_dir
+        manifest_path = legacy_manifest
 
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -80,9 +85,7 @@ def compose_prompt(workspace_root: Path) -> str:
         parts.append(legacy_prompt.read_text(encoding="utf-8").strip())
         return "\n\n".join(parts) + "\n"
 
-    raise FileNotFoundError(
-        f"No scan prompt found. Expected {manifest_path} or {legacy_prompt}."
-    )
+    raise FileNotFoundError(f"No scan prompt found. Expected {manifest_path} or {legacy_prompt}.")
 
 
 def main() -> int:

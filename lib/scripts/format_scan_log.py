@@ -48,7 +48,7 @@ def shorten_path(path: str) -> str:
     if not value:
         return ""
 
-    if "/config/prompts/" in value:
+    if "/prompts/" in value:
         return "prompts/" + Path(value).name
     if "/config/" in value:
         return "config/" + Path(value).name

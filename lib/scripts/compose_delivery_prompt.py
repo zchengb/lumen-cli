@@ -22,12 +22,16 @@ def coding_guideline_path() -> Path:
     return lumen_home() / "standards" / "coding-guideline.md"
 
 
-def delivery_prompts_dir() -> Path:
-    return lumen_home() / "templates" / "delivery" / "prompts"
+def delivery_prompts_dir(context: StoryContext | None = None) -> Path:
+    if context is not None:
+        workspace_prompts = context.workspace_root / ".lumen" / "prompts" / "delivery"
+        if (workspace_prompts / "manifest.json").is_file():
+            return workspace_prompts
+    return lumen_home() / "templates" / "prompts" / "delivery"
 
 
-def compose_snippets() -> str:
-    prompts_dir = delivery_prompts_dir()
+def compose_snippets(context: StoryContext | None = None) -> str:
+    prompts_dir = delivery_prompts_dir(context)
     manifest_path = prompts_dir / "manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Delivery prompt manifest not found: {manifest_path}")
@@ -88,7 +92,7 @@ Delivery result file: {delivery_result_path(context.workspace_root)}
 
 
 def compose_delivery_prompt(context: StoryContext) -> str:
-    return compose_snippets() + "\n\n" + render_context_block(context) + "\n"
+    return compose_snippets(context) + "\n\n" + render_context_block(context) + "\n"
 
 
 def main() -> int:
