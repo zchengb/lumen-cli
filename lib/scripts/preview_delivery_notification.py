@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,10 @@ def sample_delivery(context: Any, event: str) -> dict[str, Any]:
         "pr_urls": [],
         "verification_results": [],
     }
+    if event != "delivery.started":
+        finished_at = datetime.now(timezone.utc).replace(microsecond=0)
+        delivery["started_at"] = (finished_at - timedelta(minutes=14, seconds=25)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        delivery["finished_at"] = finished_at.strftime("%Y-%m-%dT%H:%M:%SZ")
     if event == "delivery.dev_done":
         delivery["verification_results"] = [
             {"label": "Compile", "status": "passed"},

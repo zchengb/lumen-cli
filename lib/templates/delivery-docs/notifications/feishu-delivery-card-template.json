@@ -21,6 +21,7 @@
     "current_step": "{{current_step}}",
     "repos": "{{repos}}",
     "branch": "{{branch}}",
+    "duration": "{{duration}}",
     "verification_summary": "{{verification_summary}}",
     "change_records": "{{change_records}}",
     "refactor_records": "{{refactor_records}}",
@@ -37,6 +38,7 @@
       "Current Step: {{current_step}}",
       "Repos: {{repos}}",
       "Branch: {{branch}}",
+      "Duration: {{duration}}",
       "Verification: {{verification_summary}}",
       "CR: {{change_records}}",
       "RF: {{refactor_records}}"

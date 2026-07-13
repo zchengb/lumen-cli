@@ -34,6 +34,24 @@ def load_render_helpers():
 send_feishu, redact = load_render_helpers()
 
 
+def format_duration(started_at: object, finished_at: object) -> str:
+    if not isinstance(started_at, str) or not isinstance(finished_at, str):
+        return ""
+    try:
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        finish = datetime.fromisoformat(finished_at.replace("Z", "+00:00"))
+    except ValueError:
+        return ""
+    seconds = max(0, int((finish - start).total_seconds()))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes:02d}m"
+    if minutes:
+        return f"{minutes}m {seconds:02d}s"
+    return f"{seconds}s"
+
+
 def load_delivery_result(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -98,6 +116,7 @@ def build_delivery_feishu_card(
         "failed": "Failed",
         "blocked": "Blocked",
     }.get(status, status.replace("_", " ").title())
+    duration = format_duration(delivery.get("started_at"), delivery.get("finished_at"))
 
     overview = [
         f"**Status:**  {status_label}",
@@ -105,6 +124,8 @@ def build_delivery_feishu_card(
     ]
     if branch:
         overview.append(f"**Branch:**  `{branch}`")
+    if duration:
+        overview.append(f"**Duration:**  {duration}")
 
     elements: list[dict[str, Any]] = [
         {"tag": "markdown", "content": "\n".join(overview)},

@@ -122,6 +122,22 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         self.assertIn("**Branch:**", rendered)
         self.assertNotIn("Open MBPAS-1456", rendered)
 
+    def test_completed_delivery_notification_includes_duration(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        card = renderer.build_delivery_feishu_card(
+            "delivery.dev_done",
+            {
+                "delivery_status": "completed",
+                "started_at": "2026-07-13T11:35:00Z",
+                "finished_at": "2026-07-13T11:49:25Z",
+                "repos_touched": [],
+            },
+            {"title": "Demo"},
+            Path("/tmp"),
+        )
+        overview = card["card"]["body"]["elements"][0]["content"]
+        self.assertIn("**Duration:**  14m 25s", overview)
+
     def test_installer_copies_delivery_coding_guideline(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
