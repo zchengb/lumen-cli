@@ -316,12 +316,11 @@ Usage:
   lumen scan --project <slug> [--dry-run]
                                  Run a scan for a specific project
                                  Add --dry-run to mock the pipeline without the Cursor agent
-  lumen schedule add [--project <slug>] [--cron "<cron-expr>"] [--dry-run]
-                                 Schedule recurring scans via cron (e.g. "0 9 * * *" = daily at 09:00).
-                                 Run without flags for an interactive project and schedule picker.
-  lumen schedule remove --project <slug>
-                                 Remove a project's scheduled scan
-  lumen schedule list           List all configured scan schedules (alias: lumen schedule)
+  lumen schedule                List all scan and delivery schedules
+  lumen schedule scan add [--project <slug>] [--cron "<cron-expr>"] [--dry-run]
+                                 Schedule recurring code scans
+  lumen schedule delivery add --project <slug> --every 5m
+                                 Poll approved Stories and start JIRA Ready for Dev deliveries
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
                                  List tracked findings from the issue registry
@@ -1669,13 +1668,15 @@ remove_schedule_for_slug() {
     return 0
   fi
 
-  local existing filtered
+  local existing filtered marker
   existing="$(read_crontab)"
-  if ! printf '%s\n' "${existing}" | grep -qF "$(schedule_marker "${slug}")"; then
+  filtered="${existing}"
+  for marker in "$(schedule_marker "${slug}")" "$(delivery_schedule_marker "${slug}")"; do
+    filtered="$(printf '%s\n' "${filtered}" | grep -vF "${marker}" || true)"
+  done
+  if [[ "${filtered}" == "${existing}" ]]; then
     return 0
   fi
-
-  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(schedule_marker "${slug}")" || true)"
   if [[ -z "$(printf '%s' "${filtered}" | tr -d '[:space:]')" ]]; then
     crontab -r 2>/dev/null || true
   else
@@ -1936,6 +1937,10 @@ schedule_marker() {
   printf '# lumen-schedule:%s' "$1"
 }
 
+delivery_schedule_marker() {
+  printf '# lumen-delivery-schedule:%s' "$1"
+}
+
 read_crontab() {
   crontab -l 2>/dev/null || true
 }
@@ -2108,7 +2113,7 @@ cmd_schedule_list() {
   lines="$(read_crontab | grep '# lumen-schedule:' || true)"
   if [[ -z "${lines}" ]]; then
     printf 'No Lumen schedules configured.\n'
-    printf 'Add one with: lumen schedule add\n'
+    printf 'Add one with: lumen schedule scan add\n'
     return 0
   fi
   printf '%s%-26s %-18s %s%s\n' "${BOLD}" "CRON" "PROJECT" "DESCRIPTION" "${RESET}"
@@ -2120,25 +2125,207 @@ cmd_schedule_list() {
   done <<< "${lines}"
 }
 
-cmd_schedule() {
-  local sub="${1:-}"
-  if [[ -z "${sub}" ]]; then
-    cmd_schedule_list
+remove_legacy_delivery_cron() {
+  local slug="$1"
+  command -v crontab >/dev/null 2>&1 || return 0
+  local existing filtered
+  existing="$(read_crontab)"
+  if ! printf '%s\n' "${existing}" | grep -qF "$(delivery_schedule_marker "${slug}")"; then
     return 0
   fi
+  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(delivery_schedule_marker "${slug}")" || true)"
+  if [[ -z "$(printf '%s' "${filtered}" | tr -d '[:space:]')" ]]; then
+    crontab -r 2>/dev/null || true
+  else
+    write_crontab "${filtered}"
+  fi
+}
+
+cmd_schedule_scan() {
+  local sub="${1:-list}"
   shift || true
   case "${sub}" in
     add) cmd_schedule_add "$@" ;;
     remove|rm) cmd_schedule_remove "$@" ;;
     list|ls) cmd_schedule_list "$@" ;;
+    *) err "Unknown scan schedule command: ${sub}"; exit 1 ;;
+  esac
+}
+
+cmd_schedule() {
+  local sub="${1:-list}"
+  shift || true
+  case "${sub}" in
+    scan) cmd_schedule_scan "$@" ;;
+    delivery) cmd_delivery_schedule "$@" ;;
+    add|remove|rm)
+      # Compatibility with Lumen <= 1.13.1: these commands target scan schedules.
+      cmd_schedule_scan "${sub}" "$@"
+      ;;
+    list|ls)
+      printf '%sScan schedules%s\n' "${BOLD}" "${RESET}"
+      cmd_schedule_list
+      printf '\n%sDelivery schedules%s\n' "${BOLD}" "${RESET}"
+      cmd_delivery_schedule_list
+      ;;
     *)
       printf 'Usage:\n'
-      printf '  lumen schedule add [--project <slug>] [--cron "<cron-expr>"] [--dry-run]\n'
-      printf '  lumen schedule remove --project <slug>\n'
+      printf '  lumen schedule scan add --project <slug> --cron "0 9 * * *"\n'
+      printf '  lumen schedule scan remove --project <slug>\n'
+      printf '  lumen schedule delivery add --project <slug> --every 5m\n'
+      printf '  lumen schedule delivery remove --project <slug>\n'
       printf '  lumen schedule list\n'
-      printf '\nExample (daily at 09:00): lumen schedule add --project mbpass --cron "0 9 * * *"\n'
-      printf 'Or run interactively: lumen schedule add\n'
       exit 1
+      ;;
+  esac
+}
+
+delivery_docs_dir_for_project() {
+  local slug="$1" workspace
+  workspace="$(registry_cmd resolve-slug "${slug}" --workspace-only)" || return 1
+  if [[ "$(basename "${workspace}")" == ".lumen" ]]; then
+    dirname "${workspace}"
+  else
+    printf '%s' "${workspace}"
+  fi
+}
+
+cmd_delivery_schedule_run() {
+  local slug="" jira_status="Ready for Dev" dry_run="0"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project) slug="${2:-}"; shift 2 ;;
+      --jira-status) jira_status="${2:-}"; shift 2 ;;
+      --dry-run) dry_run="1"; shift ;;
+      *) err "Unknown argument: $1"; exit 1 ;;
+    esac
+  done
+  [[ -n "${slug}" ]] || { err "Usage: lumen delivery schedule run --project <slug> [--jira-status <status>]"; exit 1; }
+  local docs_dir scheduler_py dry_flag=""
+  docs_dir="$(delivery_docs_dir_for_project "${slug}")" || { err "Project not found: ${slug}"; exit 1; }
+  scheduler_py="${LUMEN_HOME}/lib/scripts/delivery_scheduler.py"
+  [[ -f "${scheduler_py}" ]] || { err "Delivery scheduler not found: ${scheduler_py}"; exit 1; }
+  [[ "${dry_run}" == "1" ]] && dry_flag="--dry-run"
+  python3 "${scheduler_py}" --docs-dir "${docs_dir}" --jira-status "${jira_status}" --lumen-bin "${LUMEN_CLI_BIN}" ${dry_flag}
+}
+
+cmd_delivery_schedule_add() {
+  local slug="" cron_expr="" every="" jira_status="Ready for Dev"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project) slug="${2:-}"; shift 2 ;;
+      --cron) cron_expr="${2:-}"; shift 2 ;;
+      --every) every="${2:-}"; shift 2 ;;
+      --jira-status) jira_status="${2:-}"; shift 2 ;;
+      *) err "Unknown argument: $1"; exit 1 ;;
+    esac
+  done
+  if [[ -n "${every}" ]]; then
+    [[ -z "${cron_expr}" ]] || { err "Use either --every or --cron, not both."; exit 1; }
+    [[ "${every}" =~ ^[1-9][0-9]*m$ ]] || { err "--every must be an interval such as 5m."; exit 1; }
+    cron_expr="*/${every%m} * * * *"
+  fi
+  [[ -n "${slug}" && -n "${cron_expr}" ]] || { err "Usage: lumen schedule delivery add --project <slug> --every 5m [--jira-status <status>]"; exit 1; }
+  is_valid_cron_expr "${cron_expr}" || { err "Invalid cron expression: ${cron_expr}"; exit 1; }
+  [[ "${jira_status}" =~ ^[A-Za-z0-9[:space:]_-]+$ ]] || { err "JIRA status may only contain letters, numbers, spaces, underscores, and hyphens."; exit 1; }
+  command -v crontab >/dev/null 2>&1 || { err "'crontab' is not available on this system."; exit 1; }
+
+  local docs_dir workspace lumen_bin log_file cron_path cron_env cron_line existing filtered updated
+  docs_dir="$(delivery_docs_dir_for_project "${slug}")" || { err "Project not found: ${slug}"; exit 1; }
+  workspace="${docs_dir}/.lumen"
+  require_workspace_initialized "${workspace}"
+  lumen_bin="$(command -v lumen || true)"
+  lumen_bin="${lumen_bin:-${LUMEN_CLI_BIN}}"
+  lumen_bin="$(cd "$(dirname "${lumen_bin}")" && pwd)/$(basename "${lumen_bin}")"
+  log_file="${workspace}/logs/delivery/schedule.log"
+  mkdir -p "$(dirname "${log_file}")"
+  source "${LUMEN_HOME}/lib/scripts/ensure-path.sh"
+  cron_path="$(schedule_path_export "${lumen_bin}")"
+  cron_env="$(schedule_env_export)"
+  if [[ "$(uname -s)" == "Darwin" && "${cron_expr}" =~ ^\*/[1-9][0-9]*\ \*\ \*\ \*\ \*$ ]]; then
+    local launchd_py launchd_path
+    launchd_py="${LUMEN_HOME}/lib/scripts/delivery_launchd.py"
+    [[ -f "${launchd_py}" ]] || { err "launchd scheduler helper not found: ${launchd_py}"; exit 1; }
+    launchd_path="$(python3 "${launchd_py}" add --project "${slug}" --cron "${cron_expr}" --jira-status "${jira_status}" --lumen-bin "${lumen_bin}" --lumen-home "${LUMEN_HOME}" --path "${PATH}" --log-file "${log_file}")" || exit 1
+    local interval="${cron_expr%% *}"
+    interval="${interval#*/}"
+    remove_legacy_delivery_cron "${slug}"
+    ok "Scheduled delivery polling for '${slug}' every ${interval} minute(s) with launchd (JIRA: ${jira_status})"
+    printf 'LaunchAgent: %s\n' "${launchd_path}"
+    printf 'Log file: %s\n' "${log_file}"
+    return 0
+  fi
+  cron_line="${cron_expr} ${cron_path} ${cron_env} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" delivery schedule run --project ${slug} --jira-status \"${jira_status}\" >> \"${log_file}\" 2>&1 $(delivery_schedule_marker "${slug}")"
+  existing="$(read_crontab)"
+  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(delivery_schedule_marker "${slug}")" || true)"
+  updated="$(printf '%s\n%s' "${filtered}" "${cron_line}")"
+  write_crontab "${updated}"
+  ok "Scheduled delivery polling for '${slug}': ${cron_expr} (JIRA: ${jira_status})"
+  printf 'Log file: %s\n' "${log_file}"
+}
+
+cmd_delivery_schedule_remove() {
+  local slug=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project) slug="${2:-}"; shift 2 ;;
+      *) err "Unknown argument: $1"; exit 1 ;;
+    esac
+  done
+  [[ -n "${slug}" ]] || { err "Usage: lumen delivery schedule remove --project <slug>"; exit 1; }
+  local removed_launchd="0"
+  if [[ "$(uname -s)" == "Darwin" && -f "${LUMEN_HOME}/lib/scripts/delivery_launchd.py" ]]; then
+    python3 "${LUMEN_HOME}/lib/scripts/delivery_launchd.py" remove --project "${slug}" || true
+    removed_launchd="1"
+  fi
+  command -v crontab >/dev/null 2>&1 || {
+    [[ "${removed_launchd}" == "1" ]] && { ok "Removed delivery schedule for '${slug}'."; return 0; }
+    err "'crontab' is not available on this system."; exit 1;
+  }
+  local existing filtered
+  existing="$(read_crontab)"
+  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(delivery_schedule_marker "${slug}")" || true)"
+  if [[ "${filtered}" == "${existing}" ]]; then
+    warn "No delivery schedule found for '${slug}'."
+    return 0
+  fi
+  write_crontab "${filtered}"
+  ok "Removed delivery schedule for '${slug}'."
+}
+
+cmd_delivery_schedule_list() {
+  if [[ "$(uname -s)" == "Darwin" && -f "${LUMEN_HOME}/lib/scripts/delivery_launchd.py" ]]; then
+    local project_line slug path
+    while IFS=$'\t' read -r _ _ slug _ _; do
+      [[ -n "${slug}" ]] || continue
+      path="$(python3 "${LUMEN_HOME}/lib/scripts/delivery_launchd.py" status --project "${slug}")"
+      [[ -n "${path}" ]] && printf 'launchd  %-18s %s\n' "${slug}" "${path}"
+    done < <(registry_cmd list-lines)
+  fi
+  command -v crontab >/dev/null 2>&1 || { warn "'crontab' is not available on this system."; return 0; }
+  local lines
+  lines="$(read_crontab | grep '# lumen-delivery-schedule:' || true)"
+  if [[ -z "${lines}" ]]; then
+    [[ "$(uname -s)" == "Darwin" ]] && return 0
+    printf 'No Lumen delivery schedules configured.\n'
+    return 0
+  fi
+  printf '%s\n' "${lines}"
+}
+
+cmd_delivery_schedule() {
+  local sub="${1:-list}"
+  shift || true
+  case "${sub}" in
+    add) cmd_delivery_schedule_add "$@" ;;
+    remove|rm) cmd_delivery_schedule_remove "$@" ;;
+    list|ls) cmd_delivery_schedule_list "$@" ;;
+    run) cmd_delivery_schedule_run "$@" ;;
+    *)
+      printf 'Usage:\n'
+      printf '  lumen schedule delivery add --project <slug> --every 5m [--jira-status "Ready for Dev"]\n'
+      printf '  lumen schedule delivery remove --project <slug>\n'
+      printf '  lumen schedule delivery list\n'
       ;;
   esac
 }
@@ -2595,6 +2782,7 @@ cmd_delivery() {
     init-docs) cmd_delivery_init_docs "$@" ;;
     configure) cmd_delivery_configure "$@" ;;
     dashboard) cmd_delivery_dashboard "$@" ;;
+    schedule) cmd_delivery_schedule "$@" ;;
     sync) cmd_delivery_sync "$@" ;;
     prepare) cmd_delivery_prepare "$@" ;;
     verify) cmd_delivery_verify "$@" ;;
@@ -2609,6 +2797,7 @@ cmd_delivery() {
       printf '  lumen delivery run [--story <slug-or-jira-key>] [--dry-run] [workspace-dir]\n'
       printf '  lumen delivery status [workspace-dir|--workspace <root>]\n'
       printf '  lumen delivery watch [workspace-dir|--workspace <root>]\n'
+      printf '  lumen delivery schedule add --project <slug> --cron "*/5 * * * *"\n'
       printf '\nExamples:\n'
       printf '  cd ~/Projects/mbpass-workspace\n'
       printf '  lumen delivery run --story MBPAS-1505\n'

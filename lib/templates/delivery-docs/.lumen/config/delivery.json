@@ -16,6 +16,13 @@
       "enabled": true
     }
   },
+  "automation": {
+    "cleanup_worktrees_on_success": true,
+    "scheduled_delivery": {
+      "enabled": false,
+      "required_jira_status": "Ready for Dev"
+    }
+  },
   "verification": {
     "auto_run_after_agent": true,
     "fail_on_error": true,

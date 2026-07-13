@@ -136,6 +136,13 @@ archive_delivery() {
     --log-file "${LOG_FILE}" >/dev/null
 }
 
+cleanup_completed_worktrees() {
+  local cleanup_py="${LUMEN_LIB_DIR}/cleanup_delivery_worktrees.py"
+  [[ -f "${cleanup_py}" ]] || return 0
+  python3 "${cleanup_py}" "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}" || \
+    printf 'Warning: completed delivery worktree cleanup failed. See log: %s\n' "${LOG_FILE}" >&2
+}
+
 progress_phase() {
   local phase_id="$1"
   local status="$2"
@@ -406,6 +413,7 @@ run_real_delivery() {
   progress_phase notify completed "Notifications sent"
   finish_delivery_progress completed "Delivery run finished"
   archive_delivery
+  cleanup_completed_worktrees
   printf '\nLumen delivery run finished at %s UTC.\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
 }
 

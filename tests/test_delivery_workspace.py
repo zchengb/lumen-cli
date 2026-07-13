@@ -26,6 +26,9 @@ from delivery_workspace import (  # noqa: E402
 from render_delivery_dashboard import render  # noqa: E402
 from init_delivery_docs import init_docs  # noqa: E402
 from sync_workspace_repositories import sync as sync_scan_repositories  # noqa: E402
+from delivery_scheduler import current_jira_status, story_candidates  # noqa: E402
+from delivery_launchd import interval_minutes_from_cron  # noqa: E402
+from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
 
 
 def git(path: Path, *args: str) -> None:
@@ -35,6 +38,84 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_scheduled_delivery_selects_only_ready_and_approved_unstarted_stories(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            stories = Path(temp) / "stories"
+            ready = stories / "MBPAS-100-ready"
+            changed = stories / "MBPAS-101-changed"
+            active = stories / "MBPAS-102-active"
+            for directory, metadata in (
+                (ready, {"jiraKey": "MBPAS-100", "businessStatus": "ready", "technicalStatus": "approved", "deliveryStatus": "not_started"}),
+                (changed, {"jiraKey": "MBPAS-101", "businessStatus": "changed", "technicalStatus": "approved", "deliveryStatus": "not_started"}),
+                (active, {"jiraKey": "MBPAS-102", "businessStatus": "ready", "technicalStatus": "approved", "deliveryStatus": "in_progress"}),
+            ):
+                directory.mkdir(parents=True)
+                (directory / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+            selected = story_candidates(Path(temp))
+            self.assertEqual([ready], [story for story, _ in selected])
+
+    def test_scheduler_reads_twg_list_shaped_workitem_status(self) -> None:
+        import delivery_scheduler
+
+        original_ready = delivery_scheduler.twg_ready
+        original_run = delivery_scheduler.run_twg
+        try:
+            delivery_scheduler.twg_ready = lambda: (True, "")
+            delivery_scheduler.run_twg = lambda _args: (
+                0,
+                json.dumps({"data": [{"key": "MBPAS-100", "status": {"name": "Ready for Dev"}}]}),
+            )
+            self.assertEqual("Ready for Dev", current_jira_status("MBPAS-100"))
+        finally:
+            delivery_scheduler.twg_ready = original_ready
+            delivery_scheduler.run_twg = original_run
+
+    def test_launchd_interval_accepts_every_n_minutes_cron(self) -> None:
+        self.assertEqual(5, interval_minutes_from_cron("*/5 * * * *"))
+        self.assertIsNone(interval_minutes_from_cron("0 9 * * *"))
+
+    def test_completed_delivery_worktrees_are_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            repo = workspace / "repos" / "service"
+            remote = workspace / "remote.git"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+            git(repo, "config", "user.email", "lumen@example.test")
+            git(repo, "config", "user.name", "Lumen Test")
+            (repo / "README.md").write_text("base\n", encoding="utf-8")
+            git(repo, "add", "README.md")
+            git(repo, "commit", "-m", "initial commit")
+            git(repo, "remote", "add", "origin", str(remote))
+            git(repo, "push", "-u", "origin", "main")
+            story_dir = workspace / "stories" / "MBPAS-999-cleanup"
+            story_dir.mkdir(parents=True)
+            (story_dir / "story.md").write_text("# Story\n\n" + "Business context. " * 10, encoding="utf-8")
+            (story_dir / "technical-plan.md").write_text("# Plan\n\n" + "Implementation detail. " * 10, encoding="utf-8")
+            (story_dir / "metadata.json").write_text(
+                json.dumps(
+                    {
+                        "jiraKey": "MBPAS-999",
+                        "businessStatus": "ready",
+                        "technicalStatus": "approved",
+                        "linkedRepos": ["service"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            context = load_workspace_config(workspace)
+            self.assertEqual(workspace.resolve(), context[0])
+            target = RepoTarget("service", repo, workspace / ".lumen" / "worktrees" / "MBPAS-999" / "service")
+            ok, detail = ensure_feature_worktree(target, "feature/MBPAS-999-cleanup", workspace, {"jiraKey": "MBPAS-999"}, story_dir)
+            self.assertTrue(ok, detail)
+            self.assertTrue(target.worktree_path.exists())
+
+            cleanup_delivery_worktrees(workspace, "MBPAS-999")
+            self.assertFalse(target.worktree_path.exists())
+            metadata = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
+            self.assertIn("deliveryWorktreesCleanedAt", metadata)
+
     def test_project_registry_remove_clears_registration_and_default_only(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

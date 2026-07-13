@@ -79,9 +79,9 @@ Then:
 | `lumen use [slug]` | Set or show the default project slug |
 | `lumen register [dir]` | Register an existing workspace (e.g. an `.auto-scan` folder) as a project |
 | `lumen scan --project <slug> [--dry-run]` | Run a scan; add `--dry-run` to mock the pipeline without the Cursor agent |
-| `lumen schedule add [--project <slug>] [--cron "<expr>"] [--dry-run]` | Schedule recurring scans via cron. Run without flags for an interactive project and schedule picker. |
-| `lumen schedule remove --project <slug>` | Remove a project's scheduled scan |
-| `lumen schedule list` / `lumen schedule` | List all configured scan schedules |
+| `lumen schedule` / `lumen schedule list` | List scan and delivery schedules for all registered projects. |
+| `lumen schedule scan add [--project <slug>] [--cron "<expr>"] [--dry-run]` | Schedule recurring scans via cron. |
+| `lumen schedule delivery add --project <slug> --every 5m` | On macOS, poll approved Stories using launchd and start one matching JIRA Ready for Dev delivery. |
 | `lumen watch --project <slug>` | Tail the latest scan log with readable formatting |
 | `lumen dashboard --project <slug> [--no-open]` | Refresh `dashboard-data.js` and open `dashboard.html`; pass `--no-open` to skip opening a browser |
 | `lumen doctor` | Check installed prerequisites (agent, git, python3, gh, webhook) |
@@ -264,15 +264,24 @@ Edit individual snippets to customize one concern (for example severity rules) w
 
 ### Scheduled scans
 
-Lumen can run scans on a recurring schedule via cron:
+Lumen keeps scan and delivery schedules under one command family:
 
 ```bash
-lumen schedule add                                      # interactive picker
-lumen schedule add --project mbpass --cron "0 9 * * *"  # daily at 09:00
-lumen schedule list                                     # view configured jobs
-lumen schedule                                          # same as list
-lumen schedule remove --project mbpass
+lumen schedule scan add --project mbpass --cron "0 9 * * *"
+lumen schedule delivery add --project mbpass --every 5m
+lumen schedule list
+lumen schedule scan remove --project mbpass
+lumen schedule delivery remove --project mbpass
 ```
+
+Delivery is intentionally opt-in. To poll every five minutes, Lumen pulls a clean docs checkout and starts at most one Story only when its business and technical metadata are approved and its JIRA status is `Ready for Dev`:
+
+```bash
+lumen schedule delivery add --project mbpass --every 5m
+lumen schedule delivery list
+```
+
+Completed delivery feature worktrees are removed automatically. Failed runs retain their worktrees for investigation.
 
 The cron expression uses the standard 5-field format (`minute hour day-of-month month day-of-week`). Scheduled runs are appended to `crontab` with a `# lumen-schedule:<slug>` marker and log to `<workspace>/logs/schedule.log`. Add `--dry-run` to schedule mock runs (no Cursor agent, no PRs, no Feishu).
 
