@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import importlib.util
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -34,6 +35,16 @@ from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
 from compose_delivery_prompt import compose_snippets  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
+
+
+def load_delivery_notification_renderer():
+    path = SCRIPTS / "render-delivery-and-notify.py"
+    spec = importlib.util.spec_from_file_location("delivery_notification_renderer_test", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load delivery notification renderer")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def git(path: Path, *args: str) -> None:
@@ -83,6 +94,33 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("# Workspace Scan Prompt", compose_prompt(workspace / ".lumen"))
             self.assertNotIn("Delivery Prompt", compose_prompt(workspace / ".lumen"))
             self.assertEqual("# Workspace Delivery Prompt", compose_snippets(context))
+
+    def test_delivery_notification_uses_a_card_level_jira_link(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        card = renderer.build_delivery_feishu_card(
+            "delivery.started",
+            {
+                "jira_key": "MBPAS-1456",
+                "delivery_status": "in_progress",
+                "branch": "feature/MBPAS-1456-demo",
+                "repos_touched": [{"name": "mbpass-admin"}],
+            },
+            {
+                "title": "Tailor-made audience setting",
+                "jiraUrl": "https://inspire.atlassian.net/browse/MBPAS-1456",
+            },
+            Path("/tmp"),
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+        self.assertEqual("MBPAS-1456 · Tailor-made audience setting", card["card"]["header"]["subtitle"]["content"])
+        self.assertEqual(
+            {"url": "https://inspire.atlassian.net/browse/MBPAS-1456"},
+            card["card"]["card_link"],
+        )
+        self.assertIn("**Status:**", rendered)
+        self.assertIn("**Scope:**", rendered)
+        self.assertIn("**Branch:**", rendered)
+        self.assertNotIn("Open MBPAS-1456", rendered)
 
     def test_installer_copies_delivery_coding_guideline(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

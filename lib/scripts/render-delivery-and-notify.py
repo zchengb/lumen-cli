@@ -100,12 +100,11 @@ def build_delivery_feishu_card(
     }.get(status, status.replace("_", " ").title())
 
     overview = [
-        f"**Story**  {title}",
-        f"**Status**  {status_label}",
-        f"**Scope**  {repos or 'No repository recorded'}",
+        f"**Status:**  {status_label}",
+        f"**Scope:**  {repos or 'No repository recorded'}",
     ]
     if branch:
-        overview.append(f"**Branch**  `{branch}`")
+        overview.append(f"**Branch:**  `{branch}`")
 
     elements: list[dict[str, Any]] = [
         {"tag": "markdown", "content": "\n".join(overview)},
@@ -144,21 +143,13 @@ def build_delivery_feishu_card(
             {"tag": "markdown", "content": f"**Pull requests**\n" + "\n".join(pr_urls)},
         ])
 
-    if jira_url:
-        elements.append(
-            {
-                "tag": "markdown",
-                "content": f"[Open {jira_key or 'JIRA Story'}]({jira_url})",
-            }
-        )
-
-    return {
+    card: dict[str, Any] = {
         "msg_type": "interactive",
         "card": {
             "schema": "2.0",
             "header": {
                 "title": {"tag": "plain_text", "content": event_title},
-                "subtitle": {"tag": "plain_text", "content": jira_key or title},
+                "subtitle": {"tag": "plain_text", "content": " · ".join(part for part in (jira_key, title) if part)},
                 "template": template,
             },
             "body": {
@@ -166,6 +157,9 @@ def build_delivery_feishu_card(
             },
         },
     }
+    if jira_url:
+        card["card"]["card_link"] = {"url": jira_url}
+    return card
 
 
 def update_story_metadata(
