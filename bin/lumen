@@ -307,6 +307,10 @@ Usage:
                                  .lumen folder and starts again. Use --force to replace a fully
                                  configured workspace.
   lumen list                    List all registered scan projects (name and slug)
+  lumen remove <slug> [--yes]   Remove a registered project and its scheduled scan
+                                 Add --delete-workspace --yes to also delete its .lumen workspace
+  lumen rename <slug> --slug <new-slug>
+                                 Change a project's unique registry slug
   lumen use [slug]              Set or show the default project slug
   lumen register [dir]          Register an existing workspace as a scan project
   lumen scan --project <slug> [--dry-run]
@@ -1659,6 +1663,140 @@ cmd_list() {
   registry_cmd list
 }
 
+remove_schedule_for_slug() {
+  local slug="$1"
+  if ! command -v crontab >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local existing filtered
+  existing="$(read_crontab)"
+  if ! printf '%s\n' "${existing}" | grep -qF "$(schedule_marker "${slug}")"; then
+    return 0
+  fi
+
+  filtered="$(printf '%s\n' "${existing}" | grep -vF "$(schedule_marker "${slug}")" || true)"
+  if [[ -z "$(printf '%s' "${filtered}" | tr -d '[:space:]')" ]]; then
+    crontab -r 2>/dev/null || true
+  else
+    write_crontab "${filtered}"
+  fi
+}
+
+cmd_remove() {
+  local project_ref="" assume_yes="" delete_workspace=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --yes|-y) assume_yes="1"; shift ;;
+      --delete-workspace) delete_workspace="1"; shift ;;
+      --help|-h)
+        printf 'Usage: lumen remove <project-slug-or-name> [--yes] [--delete-workspace]\n'
+        printf '\n'
+        printf 'Removes the project registration, clears it as the default when applicable, and removes its scheduled scan.\n'
+        printf 'The workspace is retained by default. Use --delete-workspace --yes to also delete the registered .lumen folder.\n'
+        return 0
+        ;;
+      --*) err "Unknown option: $1"; exit 1 ;;
+      *)
+        if [[ -z "${project_ref}" ]]; then
+          project_ref="$1"
+        else
+          err "Unexpected argument: $1"
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "${project_ref}" ]]; then
+    err "Usage: lumen remove <project-slug-or-name> [--yes] [--delete-workspace]"
+    exit 1
+  fi
+  if [[ -n "${delete_workspace}" && -z "${assume_yes}" ]]; then
+    err "--delete-workspace requires --yes because it permanently deletes the registered workspace."
+    exit 1
+  fi
+
+  require_python3
+  local project_json name slug workspace answer
+  project_json="$(registry_cmd resolve "${project_ref}")" || { err "Project not found: ${project_ref}"; exit 1; }
+  name="$(json_get "${project_json}" name)"
+  slug="$(json_get "${project_json}" slug)"
+  workspace="$(json_get "${project_json}" workspace)"
+
+  if [[ -z "${assume_yes}" ]]; then
+    printf 'Remove registered project %s (%s)?\n' "${name}" "${slug}"
+    printf 'Workspace: %s\n' "${workspace}"
+    if [[ -n "${delete_workspace}" ]]; then
+      printf '%sThis will permanently delete that workspace directory.%s\n' "${YELLOW}" "${RESET}"
+    else
+      printf 'The workspace directory will be kept.\n'
+    fi
+    printf 'Continue? [y/N] '
+    read -r answer || true
+    if [[ ! "${answer}" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+      printf 'Cancelled.\n'
+      return 0
+    fi
+  fi
+
+  if [[ -n "${delete_workspace}" ]]; then
+    if [[ "$(basename "${workspace}")" != ".lumen" ]]; then
+      err "Refusing to delete a workspace that is not named .lumen: ${workspace}"
+      exit 1
+    fi
+    rm -rf "${workspace}"
+  fi
+
+  remove_schedule_for_slug "${slug}"
+  registry_cmd remove "${slug}"
+  ok "Removed registered project '${name}' (slug: ${slug})."
+  if [[ -n "${delete_workspace}" ]]; then
+    ok "Deleted workspace: ${workspace}"
+  else
+    printf 'Workspace kept at: %s\n' "${workspace}"
+  fi
+}
+
+cmd_rename() {
+  local project_ref="" new_slug=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --slug)
+        new_slug="${2:-}"
+        shift 2
+        ;;
+      --help|-h)
+        printf 'Usage: lumen rename <project-slug-or-name> --slug <new-slug>\n'
+        return 0
+        ;;
+      --*) err "Unknown option: $1"; exit 1 ;;
+      *)
+        if [[ -z "${project_ref}" ]]; then
+          project_ref="$1"
+        else
+          err "Unexpected argument: $1"
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "${project_ref}" || -z "${new_slug}" ]]; then
+    err "Usage: lumen rename <project-slug-or-name> --slug <new-slug>"
+    exit 1
+  fi
+
+  require_python3
+  local project_json name slug
+  project_json="$(registry_cmd set-slug "${project_ref}" --slug "${new_slug}")" || exit 1
+  name="$(json_get "${project_json}" name)"
+  slug="$(json_get "${project_json}" slug)"
+  ok "Updated '${name}' to slug: ${slug}"
+}
+
 cmd_use() {
   local arg="${1:-}"
 
@@ -2584,6 +2722,8 @@ main() {
   case "${command}" in
     init) cmd_init "$@" ;;
     list|ls) cmd_list "$@" ;;
+    remove|rm|unregister) cmd_remove "$@" ;;
+    rename) cmd_rename "$@" ;;
     use) cmd_use "$@" ;;
     register) cmd_register "$@" ;;
     scan) cmd_scan "$@" ;;

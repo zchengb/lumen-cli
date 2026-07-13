@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "lib" / "scripts"
+PROJECTS_REGISTRY = SCRIPTS / "projects_registry.py"
 sys.path.insert(0, str(SCRIPTS))
 
 from delivery_workspace import (  # noqa: E402
@@ -33,6 +35,79 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_project_registry_remove_clears_registration_and_default_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "project" / ".lumen"
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "common.json").write_text(
+                json.dumps({"project": {"display_name": "Legacy MBPass"}}), encoding="utf-8"
+            )
+            lumen_home = root / "lumen-home"
+            env = {**os.environ, "LUMEN_HOME": str(lumen_home)}
+
+            added = subprocess.run(
+                [sys.executable, str(PROJECTS_REGISTRY), "add", str(workspace)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            project = json.loads(added.stdout)
+            subprocess.run(
+                [sys.executable, str(PROJECTS_REGISTRY), "set-default", project["slug"]],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            subprocess.run(
+                [sys.executable, str(PROJECTS_REGISTRY), "remove", project["slug"]],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+
+            registry = json.loads((lumen_home / "projects.json").read_text(encoding="utf-8"))
+            self.assertEqual([], registry["projects"])
+            config = json.loads((lumen_home / "config.json").read_text(encoding="utf-8"))
+            self.assertNotIn("default_project_id", config)
+            self.assertTrue(workspace.exists())
+
+    def test_project_registry_can_reclaim_a_slug_after_old_project_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lumen_home = root / "lumen-home"
+            env = {**os.environ, "LUMEN_HOME": str(lumen_home)}
+            workspaces = [root / "old" / ".lumen", root / "current" / ".lumen"]
+            for workspace in workspaces:
+                (workspace / "config").mkdir(parents=True)
+                (workspace / "config" / "common.json").write_text(
+                    json.dumps({"project": {"display_name": "MBPass"}}), encoding="utf-8"
+                )
+
+            old = subprocess.run(
+                [sys.executable, str(PROJECTS_REGISTRY), "add", str(workspaces[0])],
+                check=True, capture_output=True, text=True, env=env,
+            )
+            current = subprocess.run(
+                [sys.executable, str(PROJECTS_REGISTRY), "add", str(workspaces[1])],
+                check=True, capture_output=True, text=True, env=env,
+            )
+            old_project = json.loads(old.stdout)
+            current_project = json.loads(current.stdout)
+            self.assertEqual("mbpass-2", current_project["slug"])
+            subprocess.run(
+                [sys.executable, str(PROJECTS_REGISTRY), "remove", old_project["slug"]],
+                check=True, capture_output=True, text=True, env=env,
+            )
+            renamed = subprocess.run(
+                [sys.executable, str(PROJECTS_REGISTRY), "set-slug", current_project["slug"], "--slug", "mbpass"],
+                check=True, capture_output=True, text=True, env=env,
+            )
+            self.assertEqual("mbpass", json.loads(renamed.stdout)["slug"])
+
     def test_metadata_is_the_single_delivery_gate_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

@@ -238,6 +238,28 @@ def remove_project(project_id: str) -> None:
         save_config(config)
 
 
+def set_project_slug(project_ref: str, slug: str) -> dict:
+    registry = load_registry()
+    project = find_by_ref(registry, project_ref)
+    if not project:
+        raise RuntimeError(f"Project not found: {project_ref}")
+
+    requested = str(slug or "").strip().lower()
+    normalized = make_slug(requested)
+    if not requested or requested != normalized:
+        raise RuntimeError("Slug must use lowercase letters, numbers, and hyphens only.")
+    if any(
+        entry.get("slug") == normalized and entry.get("id") != project.get("id")
+        for entry in registry.get("projects", [])
+    ):
+        raise RuntimeError(f"Project slug already in use: {normalized}")
+
+    project["slug"] = normalized
+    project["updated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    save_registry(registry)
+    return project
+
+
 def resolve_ref(ref: str) -> dict:
     registry = load_registry()
     project = find_by_ref(registry, ref)
@@ -282,6 +304,7 @@ def usage() -> None:
   projects_registry.py clear-default
   projects_registry.py get-default [--workspace-only]
   projects_registry.py remove <project-ref>
+  projects_registry.py set-slug <project-ref> --slug <slug>
 """
     )
     raise SystemExit(1)
@@ -297,6 +320,9 @@ def parse_args(argv: list[str]):
             flags["json"] = True
         elif arg == "--name":
             flags["name"] = argv[index + 1]
+            index += 1
+        elif arg == "--slug":
+            flags["slug"] = argv[index + 1]
             index += 1
         elif arg == "--workspace-only":
             flags["workspace_only"] = True
@@ -398,6 +424,12 @@ def main() -> int:
                 usage()
             project = resolve_ref(ref)
             remove_project(project["id"])
+        elif command == "set-slug":
+            ref = positional[0] if positional else None
+            slug = flags.get("slug")
+            if not ref or not slug:
+                usage()
+            sys.stdout.write(json.dumps(set_project_slug(ref, slug)) + "\n")
         else:
             usage()
     except SystemExit:

@@ -74,6 +74,8 @@ Then:
 |---|---|
 | `lumen init [dir] [--yes] [--force]` | Create one integrated scan + delivery workspace and configure it interactively (default: current directory). Re-runs after an interrupted init automatically clean up the incomplete `.lumen` folder. Use `--force` to replace a fully configured workspace. |
 | `lumen list` | List all registered scan projects (name, slug, workspace) |
+| `lumen remove <slug> [--yes]` | Remove a project from Lumen's registry and remove its scheduled scan. The workspace is kept by default; add `--delete-workspace --yes` to permanently delete the registered `.lumen` folder. |
+| `lumen rename <slug> --slug <new-slug>` | Change a registered project's slug, for example after removing an older project that was holding the preferred name. |
 | `lumen use [slug]` | Set or show the default project slug |
 | `lumen register [dir]` | Register an existing workspace (e.g. an `.auto-scan` folder) as a project |
 | `lumen scan --project <slug> [--dry-run]` | Run a scan; add `--dry-run` to mock the pipeline without the Cursor agent |
