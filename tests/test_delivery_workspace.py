@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "lib" / "scripts"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 PROJECTS_REGISTRY = SCRIPTS / "projects_registry.py"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -30,6 +31,7 @@ from delivery_scheduler import current_jira_status, story_candidates  # noqa: E4
 from delivery_launchd import interval_minutes_from_cron  # noqa: E402
 from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
+from compose_delivery_prompt import compose_snippets  # noqa: E402
 
 
 def git(path: Path, *args: str) -> None:
@@ -39,6 +41,30 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_delivery_prompt_is_separate_from_scan_prompt_assets(self) -> None:
+        delivery_prompt = compose_snippets()
+        scan_manifest = json.loads(
+            (REPO_ROOT / "lib" / "templates" / "config" / "prompts" / "manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertIn("# Delivery Agent Role", delivery_prompt)
+        for scan_snippet in scan_manifest["snippets"]:
+            self.assertNotIn(scan_snippet, delivery_prompt)
+
+    def test_installer_copies_delivery_coding_guideline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lumen_home = root / "lumen-home"
+            bin_dir = root / "bin"
+            completed = subprocess.run(
+                ["bash", str(REPO_ROOT / "install.sh")],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "LUMEN_HOME": str(lumen_home), "LUMEN_BIN_DIR": str(bin_dir)},
+            )
+            self.assertEqual(0, completed.returncode)
+            self.assertTrue((lumen_home / "lib" / "standards" / "coding-guideline.md").is_file())
+
     def test_scheduled_delivery_selects_only_ready_and_approved_unstarted_stories(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             stories = Path(temp) / "stories"
