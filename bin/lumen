@@ -429,14 +429,29 @@ sync_delivery_prompt_snippets() {
 }
 
 migrate_legacy_scan_prompts() {
-  local workspace="$1"
+  local workspace="$1" backup_dir="$2"
   local legacy_dir="${workspace}/config/prompts"
   local prompts_dir="${workspace}/prompts/scan"
-  if [[ ! -d "${prompts_dir}" && -d "${legacy_dir}" ]]; then
+  [[ -d "${legacy_dir}" ]] || return 0
+
+  if [[ ! -d "${prompts_dir}" ]]; then
     mkdir -p "$(dirname "${prompts_dir}")"
-    cp -R "${legacy_dir}" "${prompts_dir}"
-    ok "Migrated editable scan prompts to prompts/scan/."
+    mv "${legacy_dir}" "${prompts_dir}"
+    ok "Moved editable scan prompts to prompts/scan/."
+    return 0
   fi
+
+  local source relative destination
+  while IFS= read -r source; do
+    relative="${source#${legacy_dir}/}"
+    destination="${prompts_dir}/${relative}"
+    if [[ ! -e "${destination}" ]]; then
+      mkdir -p "$(dirname "${destination}")"
+      cp "${source}" "${destination}"
+    fi
+  done < <(find "${legacy_dir}" -type f)
+  mv "${legacy_dir}" "${backup_dir}/legacy-scan-prompts"
+  ok "Archived legacy config/prompts/ after preserving any missing snippets."
 }
 
 sync_workspace_templates() {
@@ -463,7 +478,7 @@ sync_workspace_templates() {
     mkdir -p "${backup_dir}/prompts/scan"
     cp -R "${workspace}/config/prompts/." "${backup_dir}/prompts/scan/"
   fi
-  migrate_legacy_scan_prompts "${workspace}"
+  migrate_legacy_scan_prompts "${workspace}" "${backup_dir}"
   sync_prompt_snippets "${workspace}"
   sync_delivery_prompt_snippets "${workspace}"
 

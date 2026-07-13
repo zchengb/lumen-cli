@@ -262,7 +262,7 @@ The scan agent instructions are split into snippet files under `prompts/scan/`. 
 
 Delivery instructions use the same model under `prompts/delivery/`. Its `manifest.json` defines the delivery-only load order. The two directories are intentionally never composed together.
 
-Edit individual snippets to customize one concern (for example severity rules) without maintaining one giant file. During an upgrade, Lumen preserves existing prompt files and adds only missing defaults. Older workspaces using `config/prompts/` are migrated automatically.
+Edit individual snippets to customize one concern (for example severity rules) without maintaining one giant file. During an upgrade, Lumen preserves existing prompt files and adds only missing defaults. Older workspaces using `config/prompts/` are moved to the new layout; the old directory is retained only in the timestamped template backup.
 
 ### Scheduled scans
 
