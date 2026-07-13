@@ -147,15 +147,16 @@ def verification_steps(delivery_config: dict, repo_path: Path) -> list[dict[str,
     if not isinstance(verification, dict):
         verification = {}
 
+    configured_steps = verification.get("steps", {}).get(repo_path.name)
+    if isinstance(configured_steps, list) and configured_steps:
+        return configured_steps
+
     if detect_java_gradle(repo_path):
         configured = verification.get("java_gradle", {}).get("steps")
         if isinstance(configured, list) and configured:
             return configured
         return java_gradle_steps(repo_path)
 
-    configured_steps = verification.get("steps", {}).get(repo_path.name)
-    if isinstance(configured_steps, list) and configured_steps:
-        return configured_steps
     php_step = php_lint_step(repo_path)
     if php_step:
         return [php_step]
@@ -266,6 +267,7 @@ def resolve_codeartifact_token(env: dict[str, str]) -> tuple[dict[str, str], str
 def runtime_environment(
     repo_path: Path,
     requires_docker: bool,
+    step_environment: Optional[dict[str, Any]] = None,
 ) -> tuple[dict[str, str], list[str], Optional[str]]:
     env = dict(os.environ)
     details: list[str] = []
@@ -289,6 +291,8 @@ def runtime_environment(
             return env, details, docker_detail
         env.update(docker_env)
         details.append(docker_detail)
+    if isinstance(step_environment, dict):
+        env.update({str(key): str(value) for key, value in step_environment.items()})
     return env, details, None
 
 
@@ -388,7 +392,11 @@ def run_step(
             "status": "failed",
         }
 
-    environment, runtime_details, runtime_error = runtime_environment(repo_path, requires_docker)
+    environment, runtime_details, runtime_error = runtime_environment(
+        repo_path,
+        requires_docker,
+        step.get("environment"),
+    )
     if runtime_error:
         return {
             "id": step_id,

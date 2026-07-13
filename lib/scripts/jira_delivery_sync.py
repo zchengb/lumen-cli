@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from jira_sync import add_pr_link_to_jira, run_twg, site_args, truncate_error, twg_ready
+from jira_sync import add_pr_link_to_jira, parse_twg_json, run_twg, site_args, truncate_error, twg_ready
 
 
 def jira_delivery_config(delivery_config: dict) -> dict:
@@ -47,6 +47,13 @@ def transition_issue(jira_key: str, status_name: str, config: dict) -> None:
     )
     if returncode != 0:
         raise RuntimeError(truncate_error(output or f"twg status update failed with status {returncode}"))
+    payload = parse_twg_json(output)
+    data = payload.get("data") if isinstance(payload, dict) else None
+    transition = data.get("transition") if isinstance(data, dict) else None
+    if isinstance(data, dict) and data.get("success") is False or isinstance(transition, dict) and transition.get("success") is False:
+        errors = transition.get("errors") if isinstance(transition, dict) else data.get("errors", [])
+        detail = "; ".join(str(item) for item in errors if str(item).strip())
+        raise RuntimeError(truncate_error(detail or f"JIRA transition to '{status_name}' was rejected"))
 
 
 def add_delivery_comment(jira_key: str, comment: str, config: dict) -> None:

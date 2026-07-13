@@ -69,34 +69,86 @@ def build_delivery_feishu_card(
         for item in delivery.get("repos_touched", [])
         if isinstance(item, dict) and item.get("name")
     )
-    pr_urls = delivery.get("pr_urls") or []
-    pr_text = "\n".join(str(url) for url in pr_urls if str(url).strip()) or "None"
-    verification = delivery.get("verification_results") or []
-    verification_text = "; ".join(
-        f"{item.get('command', 'check')}={item.get('exit_code', '?')}"
-        for item in verification
-        if isinstance(item, dict)
-    ) or "Not recorded"
+    jira_url = str(story_metadata.get("jiraUrl") or "").strip()
+    pr_urls = [str(url).strip() for url in delivery.get("pr_urls") or [] if str(url).strip()]
+    verification = [item for item in delivery.get("verification_results") or [] if isinstance(item, dict)]
+    passed = [item for item in verification if item.get("status") == "passed"]
+    failed = [item for item in verification if item.get("status") == "failed"]
+    skipped = [item for item in verification if item.get("status") == "skipped"]
 
     event_titles = {
-        "delivery.started": "🚀 Delivery Started",
-        "delivery.dev_done": "✅ Delivery Completed",
-        "delivery.failed": "❌ Delivery Failed",
-        "delivery.blocked": "⛔ Delivery Blocked",
+        "delivery.started": "Delivery Started",
+        "delivery.dev_done": "Delivery Completed",
+        "delivery.failed": "Delivery Needs Attention",
+        "delivery.blocked": "Delivery Blocked",
     }
-    event_title = event_titles.get(event, f"📦 {event}")
+    event_templates = {
+        "delivery.started": "blue",
+        "delivery.dev_done": "green",
+        "delivery.failed": "red",
+        "delivery.blocked": "orange",
+    }
+    event_title = event_titles.get(event, "Delivery Update")
+    template = event_templates.get(event, "grey")
 
-    body = (
-        f"**Status:** {status}\n"
-        f"**Story:** {title}\n"
-        f"**Branch:** {branch or 'n/a'}\n"
-        f"**Repos:** {repos or 'n/a'}\n"
-        f"**Verification:** {verification_text}\n"
-        f"**PR:** {pr_text}\n"
-        f"**Docs:** {docs_dir}"
-    )
-    if jira_key:
-        body += f"\n**JIRA:** {jira_key}"
+    status_label = {
+        "in_progress": "In progress",
+        "completed": "Completed",
+        "ready_for_finalize": "Ready for finalization",
+        "failed": "Failed",
+        "blocked": "Blocked",
+    }.get(status, status.replace("_", " ").title())
+
+    overview = [
+        f"**Story**  {title}",
+        f"**Status**  {status_label}",
+        f"**Scope**  {repos or 'No repository recorded'}",
+    ]
+    if branch:
+        overview.append(f"**Branch**  `{branch}`")
+
+    elements: list[dict[str, Any]] = [
+        {"tag": "markdown", "content": "\n".join(overview)},
+        {"tag": "hr"},
+    ]
+
+    if event == "delivery.started":
+        elements.append(
+            {
+                "tag": "markdown",
+                "content": "**What happens next**\nLumen has prepared isolated feature worktrees and started the implementation agent.",
+            }
+        )
+    elif event == "delivery.failed":
+        failed_labels = ", ".join(str(item.get("label") or "verification") for item in failed) or "Delivery verification"
+        failure_detail = "The full verification profile did not pass. No commit or pull request was created."
+        if any("suitable driver class" in str(item.get("summary", "")).lower() for item in failed):
+            failure_detail = "The full test suite could not initialise its test database configuration. No commit or pull request was created."
+        elements.append(
+            {
+                "tag": "markdown",
+                "content": f"**Action required**\n{failure_detail}\n\n**Failed check**  {failed_labels}",
+            }
+        )
+    else:
+        summary = f"**Verification**\nPassed: **{len(passed)}**"
+        if failed:
+            summary += f"  |  Failed: **{len(failed)}**"
+        if skipped:
+            summary += f"  |  Skipped: **{len(skipped)}**"
+        elements.append({"tag": "markdown", "content": summary})
+
+    if pr_urls:
+        elements.extend([
+            {"tag": "hr"},
+            {"tag": "markdown", "content": f"**Pull requests**\n" + "\n".join(pr_urls)},
+        ])
+
+    actions: list[dict[str, Any]] = []
+    if jira_url:
+        actions.append({"tag": "button", "text": {"tag": "plain_text", "content": "Open JIRA"}, "type": "default", "url": jira_url})
+    if actions:
+        elements.append({"tag": "action", "actions": actions})
 
     return {
         "msg_type": "interactive",
@@ -105,15 +157,10 @@ def build_delivery_feishu_card(
             "header": {
                 "title": {"tag": "plain_text", "content": event_title},
                 "subtitle": {"tag": "plain_text", "content": jira_key or title},
-                "template": "blue" if event == "delivery.started" else "green",
+                "template": template,
             },
             "body": {
-                "elements": [
-                    {
-                        "tag": "markdown",
-                        "content": body,
-                    }
-                ]
+                "elements": elements
             },
         },
     }

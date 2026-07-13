@@ -2783,6 +2783,32 @@ cmd_delivery_status() {
   python3 "${progress_py}" report --workspace-root "${workspace_root}"
 }
 
+cmd_delivery_notify() {
+  local docs_dir="." story_ref="" event="" send="0"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --story) story_ref="${2:-}"; shift 2 ;;
+      --event) event="${2:-}"; shift 2 ;;
+      --send) send="1"; shift ;;
+      --*) err "Unknown argument: $1"; exit 1 ;;
+      *) docs_dir="$1"; shift ;;
+    esac
+  done
+  [[ -n "${story_ref}" && -n "${event}" ]] || {
+    err "Usage: lumen delivery notify --story <slug-or-jira-key> --event <started|completed|failed|blocked> [--send] [workspace-dir]"
+    exit 1
+  }
+  case "${event}" in started|completed|failed|blocked) ;; *) err "Unsupported delivery notification event: ${event}"; exit 1 ;; esac
+  docs_dir="$(cd "${docs_dir}" && pwd)"
+  load_env_file_if_present "${docs_dir}/.lumen/.env.common"
+  load_env_file_if_present "${docs_dir}/.lumen/.env.local"
+  local preview_py="${LUMEN_HOME}/lib/scripts/preview_delivery_notification.py"
+  [[ -f "${preview_py}" ]] || { err "Delivery notification helper not found: ${preview_py}"; exit 1; }
+  local args=("${docs_dir}" --story "${story_ref}" --event "${event}")
+  [[ "${send}" == "1" ]] && args+=(--send)
+  python3 "${preview_py}" "${args[@]}"
+}
+
 cmd_delivery_watch() {
   local docs_dir="."
   local workspace_root=""
@@ -2853,12 +2879,14 @@ cmd_delivery() {
     start) cmd_delivery_run "$@" ;;
     run) cmd_delivery_run "$@" ;;
     status) cmd_delivery_status "$@" ;;
+    notify) cmd_delivery_notify "$@" ;;
     watch) cmd_delivery_watch "$@" ;;
     ""|help|-h|--help)
       printf 'Usage:\n'
       printf '  lumen delivery dashboard [workspace-dir] [--no-open]\n'
       printf '  lumen delivery run [--story <slug-or-jira-key>] [--dry-run] [workspace-dir]\n'
       printf '  lumen delivery status [workspace-dir|--workspace <root>]\n'
+      printf '  lumen delivery notify --story <slug-or-jira-key> --event <started|completed|failed|blocked> [--send] [workspace-dir]\n'
       printf '  lumen delivery watch [workspace-dir|--workspace <root>]\n'
       printf '  lumen delivery schedule add --project <slug> --cron "*/5 * * * *"\n'
       printf '\nExamples:\n'
