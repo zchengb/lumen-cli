@@ -188,6 +188,64 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             restored = json.loads(result.read_text(encoding="utf-8"))
             self.assertEqual(1, restored["remediation"]["attempt"])
 
+    def test_delivery_docs_sync_commits_only_story_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            remote = root / "remote.git"
+            docs = root / "docs"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-b", "main", str(docs)], check=True, capture_output=True)
+            git(docs, "config", "user.email", "lumen@example.test")
+            git(docs, "config", "user.name", "Lumen Test")
+            (docs / ".gitignore").write_text("repos/\n", encoding="utf-8")
+            story = docs / "stories" / "MBPAS-100-demo"
+            story.mkdir(parents=True)
+            (story / "story.md").write_text("# Story\n", encoding="utf-8")
+            (story / "technical-plan.md").write_text("# Plan\n", encoding="utf-8")
+            metadata = story / "metadata.json"
+            metadata.write_text(
+                json.dumps({"jiraKey": "MBPAS-100", "deliveryStatus": "not_started", "linkedRepos": ["service"]}),
+                encoding="utf-8",
+            )
+            git(docs, "add", ".")
+            git(docs, "commit", "-m", "Initialize story")
+            git(docs, "remote", "add", "origin", str(remote))
+            git(docs, "push", "-u", "origin", "main")
+
+            service = docs / "repos" / "service"
+            subprocess.run(["git", "init", "-b", "main", str(service)], check=True, capture_output=True)
+            git(service, "config", "user.email", "lumen@example.test")
+            git(service, "config", "user.name", "Lumen Test")
+            (service / "README.md").write_text("service\n", encoding="utf-8")
+            git(service, "add", "README.md")
+            git(service, "commit", "-m", "Initialize service")
+            metadata.write_text(
+                json.dumps({"jiraKey": "MBPAS-100", "deliveryStatus": "dev_done", "linkedRepos": ["service"]}),
+                encoding="utf-8",
+            )
+            unrelated = docs / "notes.md"
+            unrelated.write_text("Leave me alone\n", encoding="utf-8")
+            subprocess.run(
+                [sys.executable, str(SCRIPTS / "sync_delivery_docs.py"), str(docs), "--story", "MBPAS-100-demo"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            log = subprocess.run(
+                ["git", "-C", str(docs), "log", "-1", "--format=%s"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual("Update MBPAS-100 delivery status", log.stdout.strip())
+            status = subprocess.run(
+                ["git", "-C", str(docs), "status", "--short"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual("?? notes.md", status.stdout.strip())
+
     def test_delivery_notification_uses_a_card_level_jira_link(self) -> None:
         renderer = load_delivery_notification_renderer()
         card = renderer.build_delivery_feishu_card(

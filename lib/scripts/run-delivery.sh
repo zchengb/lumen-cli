@@ -122,6 +122,7 @@ fail() {
       python3 "${render_py}" "${RESULT_FILE}" --event delivery.failed | tee -a "${LOG_FILE}" || true
     fi
   fi
+  sync_delivery_docs_metadata
   archive_delivery || true
   printf 'Error: %s\n' "${message}" >&2
   exit 1
@@ -141,6 +142,21 @@ cleanup_completed_worktrees() {
   [[ -f "${cleanup_py}" ]] || return 0
   python3 "${cleanup_py}" "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}" || \
     printf 'Warning: completed delivery worktree cleanup failed. See log: %s\n' "${LOG_FILE}" >&2
+}
+
+sync_delivery_docs_metadata() {
+  local sync_py="${LUMEN_LIB_DIR}/sync_delivery_docs.py"
+  [[ -f "${sync_py}" ]] || return 0
+  set +e
+  python3 "${sync_py}" "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}"
+  local sync_exit=${PIPESTATUS[0]}
+  set -e
+  if [[ "${sync_exit}" -ne 0 ]]; then
+    progress_message "Warning: delivery metadata commit/push failed; see ${LOG_FILE}"
+    printf 'Warning: delivery metadata commit/push failed. See log: %s\n' "${LOG_FILE}" >&2
+  else
+    progress_message "Delivery metadata committed and pushed to docs repository"
+  fi
 }
 
 progress_phase() {
@@ -474,6 +490,7 @@ run_real_delivery() {
     python3 "${render_py}" "${RESULT_FILE}" --event delivery.dev_done | tee -a "${LOG_FILE}" || \
       printf 'Warning: delivery notification step failed. See log for details.\n' >&2
   fi
+  sync_delivery_docs_metadata
   progress_phase jira_done completed "JIRA sync attempted"
   progress_phase notify completed "Notifications sent"
   finish_delivery_progress completed "Delivery run finished"

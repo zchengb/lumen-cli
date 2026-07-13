@@ -137,6 +137,8 @@ When mandatory verification fails, delivery remains in the same feature worktree
 }
 ```
 
+At the end of every real delivery, Lumen commits and pushes only the current Story's `metadata.json` to the docs repository using `Update <story-key> delivery status`. Other dirty or staged docs files are deliberately excluded.
+
 To refresh templates in an existing docs repo:
 
 ```bash
