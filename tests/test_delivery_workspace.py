@@ -8,6 +8,7 @@ import tempfile
 import importlib.util
 import unittest
 import threading
+import urllib.error
 import urllib.request
 from contextlib import redirect_stdout
 from io import StringIO
@@ -58,6 +59,35 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_dashboard_serves_report_artifacts_without_exposing_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            reports = workspace / "reports"
+            reports.mkdir()
+            (reports / "scan.html").write_text("<h1>Scan report</h1>", encoding="utf-8")
+            (reports / "scan.pdf").write_bytes(b"%PDF-demo")
+            (workspace / "config").mkdir()
+            (workspace / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "config" / "repos.json").write_text('{"repositories": []}\n', encoding="utf-8")
+            server = DashboardServer(("127.0.0.1", 0), workspace, "demo", "lumen", str(REPO_ROOT))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                base_url = f"http://127.0.0.1:{server.server_port}"
+                with urllib.request.urlopen(f"{base_url}/reports/scan.html") as response:
+                    self.assertEqual("text/html", response.headers.get_content_type())
+                    self.assertIn("Scan report", response.read().decode("utf-8"))
+                with urllib.request.urlopen(f"{base_url}/reports/scan.pdf") as response:
+                    self.assertEqual("application/pdf", response.headers.get_content_type())
+                    self.assertEqual(b"%PDF-demo", response.read())
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    urllib.request.urlopen(f"{base_url}/reports/../config/common.json")
+                self.assertEqual(404, error.exception.code)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_dashboard_ignore_api_updates_only_local_issue_registry(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)

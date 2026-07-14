@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import mimetypes
 import os
 import sys
 from datetime import datetime, timezone
@@ -13,7 +14,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from delivery_launchd import install as install_delivery_schedule
 from delivery_launchd import remove as remove_delivery_schedule
@@ -26,6 +27,7 @@ from scan_launchd import status as scan_schedule_status
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+WORKSPACE_STATIC_DIRECTORIES = {"reports", "logs", "results"}
 
 
 def load_dashboard_renderer() -> Any:
@@ -75,6 +77,20 @@ def safe_prompt_path(workspace: Path, mode: str, relative: str) -> Path:
     path = (root / relative).resolve()
     if root not in path.parents or path.suffix != ".md":
         raise ValueError("Invalid prompt path")
+    return path
+
+
+def safe_workspace_static_path(workspace: Path, request_path: str) -> Path:
+    """Resolve a dashboard artifact without exposing the rest of the workspace."""
+    relative = Path(unquote(request_path).lstrip("/"))
+    if not relative.parts or relative.parts[0] not in WORKSPACE_STATIC_DIRECTORIES:
+        raise ValueError("Unknown workspace artifact")
+    root = (workspace / relative.parts[0]).resolve()
+    path = (workspace / relative).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Invalid workspace artifact path") from exc
     return path
 
 
@@ -237,7 +253,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self.serve_file(self.server.workspace / "dashboard-data.js", "application/javascript; charset=utf-8")
         if parsed.path == "/assets/lumen-mark.png":
             return self.serve_file(self.server.workspace / "assets" / "lumen-mark.png", "image/png")
-        return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
+        try:
+            path = safe_workspace_static_path(self.server.workspace, parsed.path)
+        except ValueError:
+            return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
+        content_type, _ = mimetypes.guess_type(path.name)
+        return self.serve_file(path, content_type or "application/octet-stream")
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
