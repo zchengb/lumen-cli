@@ -21,6 +21,7 @@ from delivery_launchd import remove as remove_delivery_schedule
 from delivery_launchd import status as delivery_schedule_status
 from delivery_workspace import read_json as read_delivery_json
 from issue_registry import set_issue_status
+from projects_registry import find_by_slug, load_registry
 from scan_launchd import install as install_scan_schedule
 from scan_launchd import remove as remove_scan_schedule
 from scan_launchd import status as scan_schedule_status
@@ -138,6 +139,21 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
     }
 
 
+def update_env_value(workspace: Path, key: str, value: str) -> None:
+    if not key or not key.replace("_", "").isalnum() or key.upper() != key:
+        raise ValueError("Integration key must use uppercase letters, numbers, and underscores")
+    path = workspace / ".env.local"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    entry = f"{key}={value}"
+    for index, line in enumerate(lines):
+        if line.split("=", 1)[0].strip() == key:
+            lines[index] = entry
+            break
+    else:
+        lines.append(entry)
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+
+
 def delivery_payload(workspace: Path) -> dict[str, Any]:
     history_dir = workspace / "history" / "delivery"
     runs: list[dict[str, Any]] = []
@@ -146,6 +162,18 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
             item = read_delivery_json(source, {})
             delivery = item.get("delivery") if isinstance(item.get("delivery"), dict) else {}
             progress = item.get("progress") if isinstance(item.get("progress"), dict) else {}
+            touched = delivery.get("repos_touched") if isinstance(delivery.get("repos_touched"), list) else []
+            pull_requests = [
+                {"repository": str(repo.get("name") or "Repository"), "url": str(repo.get("pr_url"))}
+                for repo in touched
+                if isinstance(repo, dict) and str(repo.get("pr_url") or "").strip()
+            ]
+            if not pull_requests:
+                pull_requests = [
+                    {"repository": "Pull request", "url": str(url)}
+                    for url in delivery.get("pr_urls") or []
+                    if str(url).strip()
+                ]
             runs.append(
                 {
                     "run_id": item.get("run_id") or source.stem,
@@ -153,14 +181,23 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
                     "story": delivery.get("story_id") or progress.get("story_id") or "",
                     "jira_key": delivery.get("jira_key") or progress.get("jira_key") or "",
                     "branch": delivery.get("branch") or progress.get("branch") or "",
-                    "prs": delivery.get("pr_urls") or [],
+                    "pull_requests": pull_requests,
                     "verification": delivery.get("verification_results") or progress.get("verification") or [],
                     "started_at": delivery.get("started_at") or progress.get("started_at") or "",
                     "finished_at": delivery.get("finished_at") or progress.get("finished_at") or "",
                 }
             )
+    progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
+    result = read_delivery_json(workspace / "results" / "delivery-result.json", {})
+    terminal_states = {"completed", "failed", "blocked", "dev_done", "pr_open"}
+    if str(result.get("delivery_status") or "") in terminal_states:
+        current = {**progress, **result}
+        current["current_phase"] = "completed" if result.get("delivery_status") == "completed" else result.get("delivery_status")
+        current["verification"] = result.get("verification_results") or progress.get("verification") or []
+    else:
+        current = progress
     return {
-        "current": read_delivery_json(workspace / "results" / "delivery-progress.json", {}),
+        "current": current,
         "runs": runs,
         "config": read_delivery_json(workspace / "config" / "delivery.json", {}),
     }
@@ -174,39 +211,53 @@ class DashboardServer(ThreadingHTTPServer):
         self.lumen_bin = lumen_bin
         self.lumen_home = lumen_home
 
-    def dashboard_state(self) -> dict[str, Any]:
-        data = RENDERER.build_payload(self.workspace)
+    def project_context(self, slug: str | None = None) -> tuple[Path, str, list[dict[str, Any]]]:
+        registry = load_registry()
+        entries = [
+            {"name": str(entry.get("name") or entry.get("slug") or "Workspace"), "slug": str(entry.get("slug") or ""), "workspace": str(entry.get("workspace") or "")}
+            for entry in registry.get("projects", [])
+            if str(entry.get("slug") or "") and (Path(str(entry.get("workspace") or "")) / "config" / "common.json").is_file()
+        ]
+        selected = find_by_slug(registry, slug) if slug else None
+        if selected and (Path(str(selected.get("workspace") or "")) / "config" / "common.json").is_file():
+            return Path(str(selected["workspace"])).resolve(), str(selected["slug"]), entries
+        return self.workspace, self.project, entries
+
+    def dashboard_state(self, slug: str | None = None) -> dict[str, Any]:
+        workspace, project, projects = self.project_context(slug)
+        data = RENDERER.build_payload(workspace)
         data["interactive"] = {
             "enabled": True,
-            "project": self.project,
-            "prompts": prompt_files(self.workspace),
-            "schedules": schedule_payload(self.workspace, self.project),
-            "workspace": workspace_payload(self.workspace),
+            "project": project,
+            "projects": projects,
+            "prompts": prompt_files(workspace),
+            "schedules": schedule_payload(workspace, project),
+            "workspace": workspace_payload(workspace),
         }
-        data["delivery"] = delivery_payload(self.workspace)
+        data["delivery"] = delivery_payload(workspace)
         return data
 
-    def update_schedule(self, body: dict[str, Any]) -> dict[str, Any]:
+    def update_schedule(self, body: dict[str, Any], workspace: Path, project: str) -> dict[str, Any]:
         kind = str(body.get("kind", ""))
         action = str(body.get("action", ""))
         if kind not in {"scan", "delivery"} or action not in {"save", "remove"}:
             raise ValueError("Invalid schedule request")
         if action == "remove":
             func = remove_scan_schedule if kind == "scan" else remove_delivery_schedule
-            func(argparse.Namespace(project=self.project))
-            return schedule_payload(self.workspace, self.project)
+            func(argparse.Namespace(project=project))
+            return schedule_payload(workspace, project)
 
         if kind == "scan":
             cron = str(body.get("cron", "")).strip()
             if not cron:
                 raise ValueError("A scan cron expression is required")
             args = argparse.Namespace(
-                project=self.project,
+                project=project,
                 cron=cron,
                 lumen_bin=self.lumen_bin,
                 lumen_home=self.lumen_home,
                 path=os.environ.get("PATH", ""),
-                log_file=str(self.workspace / "logs" / "schedule.log"),
+                log_file=str(workspace / "logs" / "schedule.log"),
                 dry_run=False,
             )
             if install_scan_schedule(args) != 0:
@@ -217,17 +268,17 @@ class DashboardServer(ThreadingHTTPServer):
                 raise ValueError("Delivery interval must be at least one minute")
             jira_status = str(body.get("jira_status", "Ready for Dev")).strip() or "Ready for Dev"
             args = argparse.Namespace(
-                project=self.project,
+                project=project,
                 cron=f"*/{interval} * * * *",
                 jira_status=jira_status,
                 lumen_bin=self.lumen_bin,
                 lumen_home=self.lumen_home,
                 path=os.environ.get("PATH", ""),
-                log_file=str(self.workspace / "logs" / "delivery-schedule.log"),
+                log_file=str(workspace / "logs" / "delivery-schedule.log"),
             )
             if install_delivery_schedule(args) != 0:
                 raise RuntimeError("Unable to install delivery schedule")
-        return schedule_payload(self.workspace, self.project)
+        return schedule_payload(workspace, project)
 
 
 class DashboardHandler(SimpleHTTPRequestHandler):
@@ -238,12 +289,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+        workspace, project, _ = self.server.project_context(query.get("project", [""])[0])
         if parsed.path == "/api/state":
-            return self.respond_json(HTTPStatus.OK, self.server.dashboard_state())
+            return self.respond_json(HTTPStatus.OK, self.server.dashboard_state(project))
         if parsed.path == "/api/prompt":
-            query = parse_qs(parsed.query)
             try:
-                path = safe_prompt_path(self.server.workspace, query.get("mode", [""])[0], query.get("path", [""])[0])
+                path = safe_prompt_path(workspace, query.get("mode", [""])[0], query.get("path", [""])[0])
                 return self.respond_json(HTTPStatus.OK, {"content": path.read_text(encoding="utf-8")})
             except (OSError, ValueError) as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
@@ -254,7 +306,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/assets/lumen-mark.png":
             return self.serve_file(self.server.workspace / "assets" / "lumen-mark.png", "image/png")
         try:
-            path = safe_workspace_static_path(self.server.workspace, parsed.path)
+            path = safe_workspace_static_path(workspace, parsed.path)
         except ValueError:
             return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
         content_type, _ = mimetypes.guess_type(path.name)
@@ -264,16 +316,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             body = self.read_json_body()
+            workspace, project, _ = self.server.project_context(str(body.get("project", "")))
             if parsed.path == "/api/issue/ignore":
                 issue_id = str(body.get("issue_id", "")).strip()
                 if not issue_id:
                     raise ValueError("Issue id is required")
-                issue = set_issue_status(self.server.workspace, issue_id, "ignored", str(body.get("reason", "")).strip())
+                issue = set_issue_status(workspace, issue_id, "ignored", str(body.get("reason", "")).strip())
                 return self.respond_json(HTTPStatus.OK, {"issue": issue})
             if parsed.path == "/api/schedule":
-                return self.respond_json(HTTPStatus.OK, {"schedules": self.server.update_schedule(body)})
+                return self.respond_json(HTTPStatus.OK, {"schedules": self.server.update_schedule(body, workspace, project)})
             if parsed.path == "/api/prompt":
-                path = safe_prompt_path(self.server.workspace, str(body.get("mode", "")), str(body.get("path", "")))
+                path = safe_prompt_path(workspace, str(body.get("mode", "")), str(body.get("path", "")))
                 if not path.is_file():
                     raise ValueError("Prompt file does not exist")
                 path.write_text(str(body.get("content", "")).rstrip() + "\n", encoding="utf-8")
@@ -282,14 +335,17 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 days = int(body.get("scan_window_days", 0))
                 if days < 1 or days > 365:
                     raise ValueError("Scan window must be between 1 and 365 days")
-                path = self.server.workspace / "config" / "common.json"
+                path = workspace / "config" / "common.json"
                 config = load_json(path, {})
                 execution = config.setdefault("execution", {})
                 if not isinstance(execution, dict):
                     raise ValueError("Invalid workspace execution configuration")
                 execution["scan_window_days"] = days
                 write_json(path, config)
-                return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(self.server.workspace)})
+                return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
+            if parsed.path == "/api/integration":
+                update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))
+                return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
             return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
         except (OSError, ValueError, RuntimeError) as exc:
             return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))

@@ -39,7 +39,7 @@ from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # 
 from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  # noqa: E402
 from delivery_progress import print_progress_report  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
-from dashboard_server import DashboardServer  # noqa: E402
+from dashboard_server import DashboardServer, delivery_payload  # noqa: E402
 
 
 def load_delivery_notification_renderer():
@@ -59,6 +59,34 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_dashboard_current_delivery_prefers_terminal_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            results = workspace / "results"
+            results.mkdir()
+            (results / "delivery-progress.json").write_text(
+                json.dumps({"delivery_status": "in_progress", "current_phase": "notify", "story_id": "NOVA-42"}),
+                encoding="utf-8",
+            )
+            (results / "delivery-result.json").write_text(
+                json.dumps(
+                    {
+                        "delivery_status": "completed",
+                        "story_id": "NOVA-42",
+                        "finished_at": "2026-07-14T06:00:00Z",
+                        "verification_results": [{"status": "passed"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            current = delivery_payload(workspace)["current"]
+
+            self.assertEqual("completed", current["delivery_status"])
+            self.assertEqual("completed", current["current_phase"])
+            self.assertEqual("2026-07-14T06:00:00Z", current["finished_at"])
+            self.assertEqual("passed", current["verification"][0]["status"])
+
     def test_dashboard_serves_report_artifacts_without_exposing_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
