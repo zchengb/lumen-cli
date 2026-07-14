@@ -106,7 +106,7 @@ def build_delivery_feishu_card(
         "delivery.failed": "red",
         "delivery.blocked": "orange",
     }
-    event_title = event_titles.get(event, "Delivery Update")
+    event_title = f"Lumen · {event_titles.get(event, 'Delivery Update')}"
     template = event_templates.get(event, "grey")
 
     status_label = {
