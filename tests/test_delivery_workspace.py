@@ -40,6 +40,8 @@ from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  #
 from delivery_progress import print_progress_report  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
 from dashboard_server import DashboardServer, delivery_payload  # noqa: E402
+from capture_jira_context import image_urls, values_for_keys  # noqa: E402
+from jira_delivery_sync import completion_comment  # noqa: E402
 
 
 def load_delivery_notification_renderer():
@@ -59,6 +61,36 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_jira_completion_comment_includes_repo_named_prs_and_verification(self) -> None:
+        comment = completion_comment(
+            {
+                "branch": "feature/NOVA-42-contract",
+                "started_at": "2026-07-14T06:00:00Z",
+                "finished_at": "2026-07-14T06:14:30Z",
+                "repos_touched": [
+                    {"name": "portal", "pr_url": "https://example.test/org/portal/pull/7"},
+                    {"name": "service", "pr_url": "https://example.test/org/service/pull/9"},
+                ],
+                "verification_results": [{"status": "passed"}, {"status": "passed"}, {"status": "skipped"}],
+            }
+        )
+
+        self.assertIn("Duration: 14m", comment)
+        self.assertIn("Verification: 2 passed, 0 failed, 1 skipped", comment)
+        self.assertIn("portal: https://example.test/org/portal/pull/7", comment)
+        self.assertIn("service: https://example.test/org/service/pull/9", comment)
+
+    def test_jira_context_extracts_nested_comments_and_image_urls(self) -> None:
+        payload = {
+            "fields": {
+                "comments": [{"body": "A decision"}],
+                "attachments": [{"content": "https://example.test/diagram.png"}],
+            }
+        }
+
+        self.assertEqual([[{"body": "A decision"}]], values_for_keys(payload, {"comments", "comment"}))
+        self.assertEqual(["https://example.test/diagram.png"], image_urls(payload))
+
     def test_dashboard_current_delivery_prefers_terminal_result(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)

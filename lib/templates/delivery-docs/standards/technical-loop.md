@@ -7,6 +7,7 @@ The Technical Loop turns one concrete, business-ready `story.md` into one execut
 - `story.md`
 - `metadata.json`
 - Existing `technical-plan.md` when refining a previous draft
+- `lumen/context/<story>/jira-context.json` when the Story is linked to JIRA
 - Relevant repository context from `repos/<repository>/`
 - `standards/business-loop.md`
 - `templates/technical-plan.md`
@@ -50,13 +51,15 @@ Do not start the Development Loop until:
 2. Inspect the real repositories before drafting: architecture and package boundaries, modules, endpoints, jobs, tables, tests, architecture guard tests, Dockerfile, build files, permission conventions, and recent patterns.
 3. Keep `technicalStatus` as `draft` while planning or asking questions.
 4. Build an initial impact map: repositories, modules, API/data/config/permission/test surfaces.
-5. Ask derived technical questions progressively when an answer affects design, delivery boundary, verification, or rollout.
-6. Record every confirmed answer in `technical-plan.md`; do not leave decisions only in chat.
-7. Derive a concise business Delivery Checklist from confirmed Acceptance Criteria and Business Rules. Each item must describe an observable business result, not a technical task.
-8. Add a business flow diagram only when cross-system flow, asynchronous processing, scheduled work, state transitions, or complex filtering would otherwise be hard to understand.
-9. Produce a file-level implementation plan detailed enough for another engineer or Agent to implement without guessing.
-10. Ask the user to review the plan and choose whether to approve, build, or keep refining.
-11. After explicit approval, set `technicalStatus` to `approved`.
+5. Build a domain-concept map before choosing a class, table, API, method, or variable name. Compare every Story term with existing domain objects, APIs, database fields, and recent refactors. Explicitly distinguish the same concept with a new label, a specialization, and a genuinely new concept.
+6. Ask derived technical questions progressively when an answer affects concept mapping, design, delivery boundary, verification, or rollout. When an ambiguous business term may map to an existing model, ask and confirm this before drafting class-level changes.
+7. Record every confirmed answer in `technical-plan.md`; do not leave decisions only in chat.
+8. Derive a concise business Delivery Checklist from confirmed Acceptance Criteria and Business Rules. Each item must describe an observable business result, not a technical task.
+9. For a non-trivial behavior, data, or multi-class change, add both a business flow diagram and an implementation interaction/class diagram. Name the existing and proposed classes, entry methods, and hand-off points that the Delivery Agent must use.
+10. Publish a naming contract for changed/new public methods, persisted fields, API fields, DTO properties, and key local variables whose semantics can be confused with an existing concept.
+11. Produce a file-level implementation plan detailed enough for another engineer or Agent to implement without guessing.
+12. Ask the user to review the plan and choose whether to approve, build, or keep refining.
+13. After explicit approval, set `technicalStatus` to `approved`.
 
 ## Progressive Technical Q&A
 
@@ -90,6 +93,7 @@ D. Other: describe your answer.
 The Agent should actively check these areas and ask only when the answer is not clear from docs or code:
 
 - Repository scope: which repos must change, and which repos are explicitly read-only for this story.
+- Domain concept mapping: whether each business term is identical to, a specialization of, or distinct from an existing domain concept. Ask this before proposing new tables, classes, enums, fields, or parallel flows. Give the user concrete alternatives from repository evidence.
 - Base branch and worktree boundary: target branch, feature branch naming, and whether multi-repo PRs are needed.
 - Architecture placement: controller/service/repository/job/component ownership and existing module conventions.
 - Code conventions and architecture guards: existing naming, error/logging/transaction patterns and any ArchUnit, package-boundary, PMD, Checkstyle, ESLint, or equivalent guard. The plan must preserve them; it must not invent a parallel structure.
@@ -110,11 +114,13 @@ The Agent should actively check these areas and ask only when the answer is not 
 
 - Goal and delivery scope tied to Acceptance Criteria
 - Business Delivery Checklist derived from Acceptance Criteria and Business Rules
-- Optional business flow diagram when the delivery flow is non-obvious
+- Domain Concept And Naming Contract: business term -> existing model or new model -> canonical API/table/class/property/method names -> explicitly forbidden duplicate concepts or names
+- Business flow diagram and implementation interaction/class diagram for every non-trivial behavior, data-model, or multi-class change
 - Technical clarifications with confirmed answers
 - Impacted repositories and why each is touched
 - Architecture summary and layer placement
 - File-level change list per repository
+- Public and behavior-significant method/variable/property naming contract, including the semantic reason for each name
 - API, schema, migration, config, permission, and integration changes
 - Repository coding conventions, layer boundaries, and architecture guard impact
 - Step-by-step implementation sequence
@@ -159,6 +165,9 @@ Use a Mermaid flowchart only when it helps a Developer understand a non-obvious 
 Reject your own draft and keep refining when:
 
 - Steps say only "update service" without naming files or methods.
+- A business term can map to more than one existing concept and the plan does not explicitly resolve the mapping.
+- A non-trivial plan omits its flow and implementation interaction/class diagrams.
+- The plan introduces a class, method, variable, API property, or persisted field without naming it and defining its relation to existing terminology.
 - Verification says only "run tests" without naming the expected command or scenario.
 - A repository is listed but has no concrete change list.
 - Business scope changed but `story.md` was not updated.

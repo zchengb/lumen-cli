@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any, Dict
 
 from jira_sync import add_pr_link_to_jira, parse_twg_json, run_twg, site_args, truncate_error, twg_ready
@@ -77,6 +78,74 @@ def add_delivery_comment(jira_key: str, comment: str, config: dict) -> None:
         raise RuntimeError(truncate_error(output or f"twg comment update failed with status {returncode}"))
 
 
+def delivery_duration(delivery: dict) -> str:
+    try:
+        started = datetime.fromisoformat(str(delivery.get("started_at", "")).replace("Z", "+00:00"))
+        finished = datetime.fromisoformat(str(delivery.get("finished_at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        return "not recorded"
+    seconds = max(0, int((finished - started).total_seconds()))
+    hours, seconds = divmod(seconds, 3600)
+    minutes = seconds // 60
+    return f"{hours}h {minutes}m" if hours else f"{minutes}m"
+
+
+def delivery_pr_lines(delivery: dict) -> list[str]:
+    lines: list[str] = []
+    for item in delivery.get("repos_touched", []):
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("pr_url") or "").strip()
+        if url:
+            lines.append(f"- {item.get('name') or 'Repository'}: {url}")
+    if lines:
+        return lines
+    return [f"- Pull request: {url}" for url in delivery.get("pr_urls", []) if str(url).strip()]
+
+
+def completion_comment(delivery: dict) -> str:
+    verification = [item for item in delivery.get("verification_results", []) if isinstance(item, dict)]
+    passed = sum(item.get("status") == "passed" for item in verification)
+    failed = sum(item.get("status") == "failed" for item in verification)
+    skipped = sum(item.get("status") == "skipped" for item in verification)
+    repositories = ", ".join(
+        str(item.get("name", "")).strip()
+        for item in delivery.get("repos_touched", [])
+        if isinstance(item, dict) and item.get("name")
+    ) or "n/a"
+    lines = [
+        "Lumen Delivery Completed",
+        "",
+        f"- Branch: `{str(delivery.get('branch') or 'n/a')}`",
+        f"- Repositories: {repositories}",
+        f"- Duration: {delivery_duration(delivery)}",
+        f"- Verification: {passed} passed, {failed} failed, {skipped} skipped",
+    ]
+    pr_lines = delivery_pr_lines(delivery)
+    if pr_lines:
+        lines.extend(["", "Pull requests:", *pr_lines])
+    return "\n".join(lines)
+
+
+def attention_comment(delivery: dict) -> str:
+    status = str(delivery.get("delivery_status") or "blocked").replace("_", " ")
+    failures = [
+        str(item.get("label") or "verification")
+        for item in delivery.get("verification_results", [])
+        if isinstance(item, dict) and item.get("status") == "failed"
+    ]
+    detail = ", ".join(failures) if failures else "See Lumen delivery logs for the blocking detail."
+    return "\n".join(
+        [
+            f"Lumen Delivery {status.title()}",
+            "",
+            f"- Branch: `{str(delivery.get('branch') or 'n/a')}`",
+            f"- Reason: {detail}",
+            "- No completion status was applied by Lumen.",
+        ]
+    )
+
+
 def sync_delivery_jira(
     delivery: dict,
     delivery_config: dict,
@@ -139,6 +208,10 @@ def sync_delivery_jira(
             if dev_done_status:
                 transition_issue(jira_key, dev_done_status, config)
                 transitions.append(dev_done_status)
+            add_delivery_comment(jira_key, completion_comment(delivery), config)
+
+        if event in {"delivery.failed", "delivery.blocked"} or delivery_status in {"failed", "blocked"}:
+            add_delivery_comment(jira_key, attention_comment(delivery), config)
 
         result["status"] = "synced"
         result["jira_key"] = jira_key

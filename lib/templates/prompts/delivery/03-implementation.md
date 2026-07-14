@@ -2,15 +2,16 @@
 
 Implement the approved technical plan step by step.
 
-1. Read `story.md`, `technical-plan.md`, and the injected Lumen coding guideline.
-2. For each implementation step in the plan:
+1. Read `story.md`, `technical-plan.md`, the injected Lumen coding guideline, and the optional JIRA context snapshot.
+2. Treat `Domain Concept And Naming Contract` and `Method, Property, And Variable Contract` in `technical-plan.md` as binding. Reuse the agreed existing concept and identifiers; do not introduce a parallel domain model because the Story wording differs.
+3. For each implementation step in the plan:
    - Announce the step and target repository.
    - Inspect the relevant files before editing.
    - Apply the smallest safe change.
    - Run the verification command listed for that step when tooling is available.
-3. Before finishing, run the approved repository-specific verification profile in each impacted worktree. For Java repositories, include compile, static analysis, focused unit, integration, and architecture-guard tests when the repository supports them. For App/PHP/frontend repositories, run only the syntax/type/lint and explicitly allowed focused checks in the plan.
-4. Record verification results honestly in `delivery-result.json`.
-5. When the plan scope is complete, create the PR unless the user disabled PR creation.
+4. Before finishing, run the approved repository-specific verification profile in each impacted worktree. For Java repositories, include compile, static analysis, focused unit, integration, and architecture-guard tests when the repository supports them. For App/PHP/frontend repositories, run only the syntax/type/lint and explicitly allowed focused checks in the plan.
+5. Record verification results honestly in `delivery-result.json`.
+6. When the plan scope is complete, create the PR unless the user disabled PR creation.
 
 ## Mandatory Java / Gradle Commands
 
@@ -47,5 +48,7 @@ Allowed project commands:
 Stop and set `delivery_status` to `blocked` when:
 
 - The plan is missing file-level detail for a non-trivial change
+- The plan lacks a required Domain Concept And Naming Contract, implementation diagram, or method/property/variable contract for a non-trivial change
+- A required concept mapping or identifier is ambiguous, conflicts with repository evidence, or is absent from the approved plan
 - A required repository path or worktree is unavailable
 - Verification fails and the plan does not describe a fallback

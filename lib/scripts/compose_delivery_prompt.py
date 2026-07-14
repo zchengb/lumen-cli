@@ -63,6 +63,8 @@ def render_context_block(context: StoryContext) -> str:
     story_text = context.story_md.read_text(encoding="utf-8") if context.story_md.is_file() else ""
     plan_text = context.technical_plan.read_text(encoding="utf-8") if context.technical_plan.is_file() else ""
     metadata_text = json.dumps(context.metadata, indent=2, ensure_ascii=False)
+    jira_context = workspace_lumen_dir(context.workspace_root) / "context" / context.story_dir.name / "jira-context.json"
+    jira_context_text = jira_context.read_text(encoding="utf-8") if jira_context.is_file() else "No JIRA context snapshot was captured."
 
     return f"""# Delivery Context
 
@@ -89,6 +91,10 @@ Delivery result file: {delivery_result_path(context.workspace_root)}
 ## technical-plan.md
 
 {plan_text}
+
+## JIRA Context Snapshot
+
+{jira_context_text}
 
 ## Lumen Coding Guideline
 

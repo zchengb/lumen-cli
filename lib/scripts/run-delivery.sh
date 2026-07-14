@@ -277,6 +277,18 @@ send_started_notification() {
   python3 "${render_py}" "${starter_result}" --event delivery.started | tee -a "${LOG_FILE}" || true
 }
 
+capture_jira_context() {
+  local capture_py="${LUMEN_LIB_DIR}/capture_jira_context.py"
+  [[ -f "${capture_py}" ]] || return 0
+  set +e
+  python3 "${capture_py}" "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}"
+  local capture_exit=${PIPESTATUS[0]}
+  set -e
+  if [[ "${capture_exit}" -ne 0 ]]; then
+    printf 'Warning: JIRA context snapshot was not captured. The Story and approved plan remain authoritative.\n' >&2
+  fi
+}
+
 load_delivery_prompt() {
   local compose_py="${LUMEN_LIB_DIR}/compose_delivery_prompt.py"
   [[ -f "${compose_py}" ]] || fail "compose_delivery_prompt.py not found"
@@ -426,6 +438,7 @@ run_real_delivery() {
 
   progress_phase jira_start in_progress "Notify JIRA IN DEV"
   printf '[delivery] Phase 3/8 — JIRA IN DEV\n'
+  capture_jira_context
   send_started_notification
   progress_phase jira_start completed "Started notification sent"
 

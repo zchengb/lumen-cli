@@ -26,6 +26,14 @@ Record confirmed answers from progressive technical Q&A. Do not keep important d
 |---|---|---|
 | TBD | TBD | TBD |
 
+## Domain Concept And Naming Contract
+
+This is an implementation contract, not a brainstorming list. Reuse the established model when the Story term means the same thing. Do not create a parallel concept, table, class, enum, API field, method, or variable merely because the Story uses a different label.
+
+| Business term in Story | Existing concept / evidence in repository | Relationship | Canonical implementation names | Explicitly not a separate concept |
+|---|---|---|---|---|
+| TBD | File, API, table, or recent refactor | Same / specialization / new | Class, method, field, property, and key variable names | TBD |
+
 ## Impacted Repositories
 
 | Repository | Role in this delivery | Change summary | Runtime / verification level |
@@ -41,6 +49,29 @@ Example:
 mbpass-admin -> controller validation + request mapping
 mbpass-business -> application service + repository query
 ```
+
+## Implementation Interaction / Class Diagram
+
+Required for a non-trivial behavior, data-model, or multi-class change. Show existing and changed classes/components, their entry methods, and the data hand-off. For a simple local change, state why it is not required.
+
+```mermaid
+classDiagram
+    class ExistingEntryPoint {
+        +existingMethod(request)
+    }
+    class ExistingApplicationService {
+        +handle(existingModel)
+    }
+    ExistingEntryPoint --> ExistingApplicationService : calls
+```
+
+## Method, Property, And Variable Contract
+
+List every changed or new public method, API property, persistence field, DTO property, and semantic local variable that could otherwise be confused with an existing concept. Reuse existing names where the concept is unchanged.
+
+| Location | Identifier | Kind | Type / shape | Meaning and relationship to existing model |
+|---|---|---|---|---|
+| `path/to/File` | `existingMethod` | method | `(ExistingType) -> Result` | TBD |
 
 ## Repository Conventions And Architecture Guards
 
