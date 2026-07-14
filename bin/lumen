@@ -2825,7 +2825,7 @@ cmd_delivery_run() {
 }
 
 cmd_delivery_status() {
-  local docs_dir="."
+  local docs_dir=""
   local workspace_root=""
 
   while [[ $# -gt 0 ]]; do
@@ -2844,6 +2844,18 @@ cmd_delivery_status() {
         ;;
     esac
   done
+
+  if [[ -z "${workspace_root}" && -z "${docs_dir}" ]]; then
+    local default_workspace
+    default_workspace="$(registry_cmd get-default --workspace-only 2>/dev/null || true)"
+    if [[ -n "${default_workspace}" ]]; then
+      if [[ "$(basename "${default_workspace}")" == "${LUMEN_DIR_NAME}" || "$(basename "${default_workspace}")" == "${LEGACY_LUMEN_DIR_NAME}" ]]; then
+        workspace_root="$(dirname "${default_workspace}")"
+      else
+        workspace_root="${default_workspace}"
+      fi
+    fi
+  fi
 
   if [[ -z "${workspace_root}" && -n "${docs_dir}" ]]; then
     docs_dir="$(cd "${docs_dir}" && pwd)"
