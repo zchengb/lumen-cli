@@ -19,7 +19,11 @@ def lumen_home() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def coding_guideline_path() -> Path:
+def coding_guideline_path(context: StoryContext | None = None) -> Path:
+    if context is not None:
+        workspace_guideline = workspace_lumen_dir(context.workspace_root) / "prompts" / "delivery" / "coding-guideline.md"
+        if workspace_guideline.is_file():
+            return workspace_guideline
     return lumen_home() / "standards" / "coding-guideline.md"
 
 
@@ -54,7 +58,7 @@ def render_context_block(context: StoryContext) -> str:
             f"- {repo.name}: source={repo.path} worktree={repo.worktree_path} branch={context.branch_name}"
         )
     repos_text = "\n".join(repo_lines)
-    guideline = coding_guideline_path()
+    guideline = coding_guideline_path(context)
     guideline_text = guideline.read_text(encoding="utf-8") if guideline.is_file() else ""
     story_text = context.story_md.read_text(encoding="utf-8") if context.story_md.is_file() else ""
     plan_text = context.technical_plan.read_text(encoding="utf-8") if context.technical_plan.is_file() else ""

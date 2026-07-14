@@ -173,6 +173,40 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertNotIn("Delivery Prompt", compose_prompt(workspace / "lumen"))
             self.assertEqual("# Workspace Delivery Prompt", compose_snippets(context))
 
+    def test_workspace_coding_guideline_overrides_cli_default_for_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            story_dir = workspace / "stories" / "NOVA-101-demo"
+            story_dir.mkdir(parents=True)
+            (workspace / "lumen" / "prompts" / "delivery").mkdir(parents=True)
+            (workspace / "lumen" / "prompts" / "delivery" / "coding-guideline.md").write_text(
+                "# Workspace Coding Guideline\n\nUse the local rule.\n",
+                encoding="utf-8",
+            )
+            story_md = story_dir / "story.md"
+            plan = story_dir / "technical-plan.md"
+            metadata = story_dir / "metadata.json"
+            story_md.write_text("# Story\n", encoding="utf-8")
+            plan.write_text("# Plan\n", encoding="utf-8")
+            metadata.write_text("{}\n", encoding="utf-8")
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=story_dir,
+                story_md=story_md,
+                technical_plan=plan,
+                metadata_path=metadata,
+                metadata={},
+                repos=[],
+                branch_name="feature/NOVA-101-demo",
+                delivery_config={},
+                workspace_config={},
+            )
+
+            from compose_delivery_prompt import render_context_block
+
+            self.assertIn("Use the local rule.", render_context_block(context))
+
     def test_remediation_prompt_contains_only_failed_verification_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)

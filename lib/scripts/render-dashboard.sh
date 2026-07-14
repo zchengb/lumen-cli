@@ -6,6 +6,8 @@ WORKSPACE_ROOT="${1:-${LUMEN_WORKSPACE:-$(pwd)}}"
 LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
 DASHBOARD_TEMPLATE="${LUMEN_HOME}/lib/templates/dashboard.html"
 WORKSPACE_DASHBOARD="${WORKSPACE_ROOT}/dashboard.html"
+DASHBOARD_ASSET_DIR="${LUMEN_HOME}/lib/templates/assets"
+WORKSPACE_ASSET_DIR="${WORKSPACE_ROOT}/assets"
 
 if ! command -v python3 >/dev/null 2>&1; then
   printf 'Error: Python 3 is required to regenerate dashboard-data.js.\n' >&2
@@ -30,5 +32,17 @@ sync_dashboard_html() {
   fi
 }
 
+sync_dashboard_assets() {
+  [[ -d "${DASHBOARD_ASSET_DIR}" ]] || return 0
+  mkdir -p "${WORKSPACE_ASSET_DIR}"
+  local source target
+  while IFS= read -r source; do
+    target="${WORKSPACE_ASSET_DIR}/${source#${DASHBOARD_ASSET_DIR}/}"
+    mkdir -p "$(dirname "${target}")"
+    cp "${source}" "${target}"
+  done < <(find "${DASHBOARD_ASSET_DIR}" -type f)
+}
+
 sync_dashboard_html
+sync_dashboard_assets
 exec python3 "${SCRIPT_DIR}/render-dashboard.py" "${WORKSPACE_ROOT}"

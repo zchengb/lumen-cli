@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlparse
 from delivery_launchd import install as install_delivery_schedule
 from delivery_launchd import remove as remove_delivery_schedule
 from delivery_launchd import status as delivery_schedule_status
+from delivery_workspace import read_json as read_delivery_json
 from issue_registry import set_issue_status
 from scan_launchd import install as install_scan_schedule
 from scan_launchd import remove as remove_scan_schedule
@@ -121,6 +122,34 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
     }
 
 
+def delivery_payload(workspace: Path) -> dict[str, Any]:
+    history_dir = workspace / "history" / "delivery"
+    runs: list[dict[str, Any]] = []
+    if history_dir.is_dir():
+        for source in sorted(history_dir.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)[:20]:
+            item = read_delivery_json(source, {})
+            delivery = item.get("delivery") if isinstance(item.get("delivery"), dict) else {}
+            progress = item.get("progress") if isinstance(item.get("progress"), dict) else {}
+            runs.append(
+                {
+                    "run_id": item.get("run_id") or source.stem,
+                    "status": delivery.get("delivery_status") or progress.get("delivery_status") or "unknown",
+                    "story": delivery.get("story_id") or progress.get("story_id") or "",
+                    "jira_key": delivery.get("jira_key") or progress.get("jira_key") or "",
+                    "branch": delivery.get("branch") or progress.get("branch") or "",
+                    "prs": delivery.get("pr_urls") or [],
+                    "verification": delivery.get("verification_results") or progress.get("verification") or [],
+                    "started_at": delivery.get("started_at") or progress.get("started_at") or "",
+                    "finished_at": delivery.get("finished_at") or progress.get("finished_at") or "",
+                }
+            )
+    return {
+        "current": read_delivery_json(workspace / "results" / "delivery-progress.json", {}),
+        "runs": runs,
+        "config": read_delivery_json(workspace / "config" / "delivery.json", {}),
+    }
+
+
 class DashboardServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], workspace: Path, project: str, lumen_bin: str, lumen_home: str):
         super().__init__(address, DashboardHandler)
@@ -138,6 +167,7 @@ class DashboardServer(ThreadingHTTPServer):
             "schedules": schedule_payload(self.workspace, self.project),
             "workspace": workspace_payload(self.workspace),
         }
+        data["delivery"] = delivery_payload(self.workspace)
         return data
 
     def update_schedule(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -205,6 +235,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             return self.serve_file(self.server.workspace / "dashboard.html", "text/html; charset=utf-8")
         if parsed.path == "/dashboard-data.js":
             return self.serve_file(self.server.workspace / "dashboard-data.js", "application/javascript; charset=utf-8")
+        if parsed.path == "/assets/lumen-mark.png":
+            return self.serve_file(self.server.workspace / "assets" / "lumen-mark.png", "image/png")
         return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def do_POST(self) -> None:  # noqa: N802

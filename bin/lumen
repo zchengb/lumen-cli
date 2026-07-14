@@ -351,7 +351,7 @@ Usage:
                                  List tracked findings from the issue registry
   lumen issue ignore <issue-id> [--project <slug>]
                                  Mark a tracked finding as ignored in the issue registry
-  lumen dashboard --project <slug> [--no-open] [--static]
+  lumen dashboard [stop] --project <slug> [--no-open] [--static]
                                  Open the local interactive dashboard for issues, schedules,
                                  prompts, and workspace configuration. Pass --static for the
                                  read-only generated HTML file.
@@ -451,6 +451,11 @@ sync_delivery_prompt_snippets() {
       cp "${source}" "${destination}"
     fi
   done < <(find "${src_dir}" -type f)
+  local guideline_source="${LUMEN_HOME}/lib/standards/coding-guideline.md"
+  local guideline_destination="${dest_dir}/coding-guideline.md"
+  if [[ -f "${guideline_source}" && ! -e "${guideline_destination}" ]]; then
+    cp "${guideline_source}" "${guideline_destination}"
+  fi
 }
 
 migrate_legacy_scan_prompts() {
@@ -512,6 +517,10 @@ sync_workspace_templates() {
   fi
   if [[ -f "${LUMEN_TEMPLATES_DIR}/dashboard.html" ]]; then
     cp "${LUMEN_TEMPLATES_DIR}/dashboard.html" "${workspace}/dashboard.html"
+  fi
+  if [[ -d "${LUMEN_TEMPLATES_DIR}/assets" ]]; then
+    mkdir -p "${workspace}/assets"
+    cp -R "${LUMEN_TEMPLATES_DIR}/assets/." "${workspace}/assets/"
   fi
 
   ok "Refreshed workspace templates. Existing prompt files were preserved; missing defaults were added."
@@ -1604,6 +1613,8 @@ cmd_init() {
   cp "${LUMEN_TEMPLATES_DIR}/.env.local.example" "${lumen_dir}/.env.local.example"
   cp "${LUMEN_TEMPLATES_DIR}/.gitignore" "${lumen_dir}/.gitignore"
   cp "${LUMEN_TEMPLATES_DIR}/dashboard.html" "${lumen_dir}/dashboard.html"
+  mkdir -p "${lumen_dir}/assets"
+  cp "${LUMEN_TEMPLATES_DIR}/assets/lumen-mark.png" "${lumen_dir}/assets/lumen-mark.png"
 
   touch "${lumen_dir}/tmp/.gitkeep" "${lumen_dir}/worktrees/.gitkeep" "${lumen_dir}/reports/.gitkeep" \
     "${lumen_dir}/results/.gitkeep" "${lumen_dir}/logs/.gitkeep" "${lumen_dir}/state/.gitkeep"
@@ -1967,6 +1978,24 @@ cmd_scan() {
 }
 
 cmd_dashboard() {
+  if [[ "${1:-}" == "stop" ]]; then
+    shift
+    resolve_command_workspace "$@"
+    local stop_state="${RESOLVED_WORKSPACE}/state/dashboard-server.json" stop_pid=""
+    if [[ -f "${stop_state}" ]]; then
+      stop_pid="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('pid',''), end='')" "${stop_state}" 2>/dev/null || true)"
+      if [[ "${stop_pid}" =~ ^[0-9]+$ ]] && kill -0 "${stop_pid}" 2>/dev/null; then
+        kill "${stop_pid}"
+        ok "Stopped interactive dashboard (PID ${stop_pid})."
+      else
+        warn "No running dashboard process was found."
+      fi
+      rm -f "${stop_state}"
+    else
+      warn "No interactive dashboard state found for this workspace."
+    fi
+    return 0
+  fi
   local static_mode="0" filtered_args=() arg
   for arg in "$@"; do
     if [[ "${arg}" == "--static" ]]; then
