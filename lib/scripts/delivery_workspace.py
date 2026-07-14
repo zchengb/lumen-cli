@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+WORKSPACE_DIR_NAME = "lumen"
+LEGACY_WORKSPACE_DIR_NAME = ".lumen"
+
 
 @dataclass
 class RepoTarget:
@@ -51,7 +54,11 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def workspace_lumen_dir(workspace_root: Path) -> Path:
-    return workspace_root / ".lumen"
+    visible = workspace_root / WORKSPACE_DIR_NAME
+    legacy = workspace_root / LEGACY_WORKSPACE_DIR_NAME
+    if visible.exists() or not legacy.exists():
+        return visible
+    return legacy
 
 
 def delivery_results_dir(workspace_root: Path) -> Path:
@@ -87,11 +94,11 @@ def workspace_config_path(workspace_root: Path) -> Path:
 
 
 def docs_lumen_config_dir(docs_dir: Path) -> Path:
-    return docs_dir / ".lumen" / "config"
+    return workspace_lumen_dir(docs_dir) / "config"
 
 
 def legacy_parent_lumen_config_dir(docs_dir: Path) -> Path:
-    return docs_dir.parent / ".lumen" / "config"
+    return workspace_lumen_dir(docs_dir.parent) / "config"
 
 
 def delivery_config_path(workspace_root: Path) -> Path:

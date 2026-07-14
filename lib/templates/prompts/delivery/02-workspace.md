@@ -4,9 +4,9 @@ The docs repository is the delivery workspace root.
 
 - Stories live under `stories/<story>/`
 - Code repositories live under `repos/<repository>/`
-- Delivery runtime state lives under `.lumen/`
+- Delivery runtime state lives under `lumen/`
 
-Use only the repository worktrees prepared by Lumen under `<workspace-root>/.lumen/worktrees/<story-key>/<repository-name>/`.
+Use only the repository worktrees prepared by Lumen under `<workspace-root>/lumen/worktrees/<story-key>/<repository-name>/`.
 
 Rules:
 

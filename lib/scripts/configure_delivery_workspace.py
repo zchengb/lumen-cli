@@ -10,14 +10,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from delivery_workspace import docs_lumen_config_dir, read_json, write_json
+from delivery_workspace import docs_lumen_config_dir, read_json, workspace_lumen_dir, write_json
 
 
 def ensure_delivery_config(workspace_root: Path) -> Path:
-    target = workspace_root / ".lumen" / "config" / "delivery.json"
+    target = workspace_lumen_dir(workspace_root) / "config" / "delivery.json"
     if target.is_file():
         return target
-    template = Path(__file__).resolve().parents[1] / "templates" / "delivery-docs" / ".lumen" / "config" / "delivery.json"
+    template = Path(__file__).resolve().parents[1] / "templates" / "delivery-docs" / "lumen" / "config" / "delivery.json"
     if not template.is_file():
         raise FileNotFoundError(f"Delivery config template not found: {template}")
     target.parent.mkdir(parents=True, exist_ok=True)

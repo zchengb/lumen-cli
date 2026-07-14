@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from discover_repos import infer_profile
-from delivery_workspace import read_json, write_json, workspace_config_path
+from delivery_workspace import read_json, workspace_lumen_dir, write_json, workspace_config_path
 
 
 def repos_dir_for_docs(docs_dir: Path, workspace_config: dict[str, Any]) -> Path:
@@ -60,7 +60,7 @@ def default_branch(repo_path: Path) -> str:
 
 def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str) -> None:
     """Keep auto-scan and delivery pointed at the same repos/ checkout."""
-    scan_path = docs_dir / ".lumen" / "config" / "repos.json"
+    scan_path = workspace_lumen_dir(docs_dir) / "config" / "repos.json"
     scan_config = read_json(scan_path, {"repositories": []})
     repositories = scan_config.get("repositories")
     if not isinstance(repositories, list):

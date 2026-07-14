@@ -20,7 +20,7 @@ The docs repository is the delivery workspace. It owns the stable source checkou
 
 ```text
 <docs-repo>/
-  .lumen/
+  lumen/
     worktrees/<story-key>/<repository>/
     logs/delivery/
     results/
@@ -81,7 +81,7 @@ lumen delivery watch ~/Projects/example-docs
 lumen delivery dashboard ~/Projects/example-docs
 ```
 
-Every completed or failed run is archived under `.lumen/history/delivery/`; a failed run preserves its Story worktree so it can be diagnosed and retried safely.
+Every completed or failed run is archived under `lumen/history/delivery/`; a failed run preserves its Story worktree so it can be diagnosed and retried safely.
 
 ## Non-goals
 

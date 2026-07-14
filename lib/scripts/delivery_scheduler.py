@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from delivery_workspace import workspace_lumen_dir
 from jira_sync import parse_twg_json, run_twg, twg_ready
 
 
@@ -75,7 +76,7 @@ def sync_docs_checkout(docs_dir: Path) -> None:
 
 
 def delivery_lock_exists(docs_dir: Path) -> bool:
-    return (docs_dir / ".lumen" / "locks" / "delivery-run").is_dir()
+    return (workspace_lumen_dir(docs_dir) / "locks" / "delivery-run").is_dir()
 
 
 def main() -> int:

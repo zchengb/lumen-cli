@@ -66,12 +66,12 @@ class DeliveryWorkspaceTests(unittest.TestCase):
     def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
-            scan_dir = workspace / ".lumen" / "prompts" / "scan"
-            delivery_dir = workspace / ".lumen" / "prompts" / "delivery"
+            scan_dir = workspace / "lumen" / "prompts" / "scan"
+            delivery_dir = workspace / "lumen" / "prompts" / "delivery"
             scan_dir.mkdir(parents=True)
             delivery_dir.mkdir(parents=True)
-            (workspace / ".lumen" / "config").mkdir(exist_ok=True)
-            (workspace / ".lumen" / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "lumen" / "config").mkdir(exist_ok=True)
+            (workspace / "lumen" / "config" / "common.json").write_text("{}\n", encoding="utf-8")
             (scan_dir / "manifest.json").write_text('{"snippets":["scan.md"]}\n', encoding="utf-8")
             (scan_dir / "scan.md").write_text("# Workspace Scan Prompt\n", encoding="utf-8")
             (delivery_dir / "manifest.json").write_text('{"snippets":["delivery.md"]}\n', encoding="utf-8")
@@ -91,8 +91,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 workspace_config={},
             )
 
-            self.assertIn("# Workspace Scan Prompt", compose_prompt(workspace / ".lumen"))
-            self.assertNotIn("Delivery Prompt", compose_prompt(workspace / ".lumen"))
+            self.assertIn("# Workspace Scan Prompt", compose_prompt(workspace / "lumen"))
+            self.assertNotIn("Delivery Prompt", compose_prompt(workspace / "lumen"))
             self.assertEqual("# Workspace Delivery Prompt", compose_snippets(context))
 
     def test_remediation_prompt_contains_only_failed_verification_evidence(self) -> None:
@@ -106,7 +106,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             story_md.write_text("# Story\n\nContext\n", encoding="utf-8")
             plan.write_text("# Plan\n\nApproved work\n", encoding="utf-8")
             metadata.write_text("{}\n", encoding="utf-8")
-            result = workspace / ".lumen" / "results" / "delivery-result.json"
+            result = workspace / "lumen" / "results" / "delivery-result.json"
             result.parent.mkdir(parents=True)
             result.write_text(
                 json.dumps(
@@ -382,7 +382,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             )
             context = load_workspace_config(workspace)
             self.assertEqual(workspace.resolve(), context[0])
-            target = RepoTarget("service", repo, workspace / ".lumen" / "worktrees" / "MBPAS-999" / "service")
+            target = RepoTarget("service", repo, workspace / "lumen" / "worktrees" / "MBPAS-999" / "service")
             ok, detail = ensure_feature_worktree(target, "feature/MBPAS-999-cleanup", workspace, {"jiraKey": "MBPAS-999"}, story_dir)
             self.assertTrue(ok, detail)
             self.assertTrue(target.worktree_path.exists())
@@ -494,7 +494,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             git(source, "push", "-u", "origin", "main")
             (source / "README.md").write_text("dirty local edit\n", encoding="utf-8")
 
-            repo = RepoTarget("service", source, workspace / ".lumen" / "worktrees" / "service")
+            repo = RepoTarget("service", source, workspace / "lumen" / "worktrees" / "service")
             metadata = {"jiraKey": "DEMO-123"}
             story_dir = root / "stories" / "demo-story"
             story_dir.mkdir(parents=True)
@@ -514,7 +514,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("base\n", (repo.worktree_path / "README.md").read_text(encoding="utf-8"))
             self.assertTrue((repo.worktree_path / ".git").exists())
 
-            second_repo = RepoTarget("service", source, workspace / ".lumen" / "worktrees" / "service")
+            second_repo = RepoTarget("service", source, workspace / "lumen" / "worktrees" / "service")
             second_metadata = {"jiraKey": "DEMO-124"}
             second_story = root / "stories" / "another-story"
             second_story.mkdir()
@@ -537,9 +537,9 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             docs = root / "docs"
             repo = docs / "repos" / "service"
             (docs / "stories").mkdir(parents=True)
-            (docs / ".lumen" / "config").mkdir(parents=True)
+            (docs / "lumen" / "config").mkdir(parents=True)
             subprocess.run(["git", "init", str(repo)], check=True, capture_output=True)
-            (docs / ".lumen" / "config" / "workspace.json").write_text(
+            (docs / "lumen" / "config" / "workspace.json").write_text(
                 """{
   "schema_version": "1.0",
   "layout": "nested",
@@ -562,7 +562,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
     def test_delivery_dashboard_renders_archived_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
-            history = workspace / ".lumen" / "history" / "delivery"
+            history = workspace / "lumen" / "history" / "delivery"
             history.mkdir(parents=True)
             (history / "DEMO-1.json").write_text(
                 """{
@@ -582,7 +582,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
     def test_init_merges_delivery_assets_into_an_existing_scan_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp) / "workspace"
-            common = workspace / ".lumen" / "config" / "common.json"
+            common = workspace / "lumen" / "config" / "common.json"
             common.parent.mkdir(parents=True)
             common.write_text('{"scan": "preserved"}\n', encoding="utf-8")
 
@@ -592,17 +592,17 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual('{"scan": "preserved"}\n', common.read_text(encoding="utf-8"))
             self.assertTrue((workspace / "AGENTS.md").is_file())
             self.assertFalse((workspace / "stories" / "mini-web-welcome").exists())
-            self.assertTrue((workspace / ".lumen" / "config" / "delivery.json").is_file())
+            self.assertTrue((workspace / "lumen" / "config" / "delivery.json").is_file())
 
     def test_repos_directory_is_shared_with_auto_scan(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp) / "workspace"
             repo = workspace / "repos" / "service"
-            (workspace / ".lumen" / "config").mkdir(parents=True)
+            (workspace / "lumen" / "config").mkdir(parents=True)
             subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
 
             repositories = sync_scan_repositories(workspace)
-            saved = json.loads((workspace / ".lumen" / "config" / "repos.json").read_text(encoding="utf-8"))
+            saved = json.loads((workspace / "lumen" / "config" / "repos.json").read_text(encoding="utf-8"))
 
             self.assertEqual("service", repositories[0]["name"])
             self.assertEqual(str(repo.resolve()), saved["repositories"][0]["path"])

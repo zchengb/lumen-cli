@@ -76,10 +76,10 @@ def init_docs(
         target / "topics",
         target / "stories",
         target / "repos",
-        docs_root / ".lumen" / "config",
-        docs_root / ".lumen" / "worktrees",
-        docs_root / ".lumen" / "results",
-        docs_root / ".lumen" / "logs" / "delivery",
+        docs_root / "lumen" / "config",
+        docs_root / "lumen" / "worktrees",
+        docs_root / "lumen" / "results",
+        docs_root / "lumen" / "logs" / "delivery",
     ]:
         keep_dir.mkdir(parents=True, exist_ok=True)
         (keep_dir / ".gitkeep").touch()
@@ -87,7 +87,7 @@ def init_docs(
     print(f"✓ Initialized delivery docs project: {target}")
     print(f"✓ Workspace root: {docs_root}")
     print(f"✓ Code repositories directory: {target / 'repos'}")
-    print(f"✓ Workspace config: {docs_root / '.lumen' / 'config' / 'workspace.json'}")
+    print(f"✓ Workspace config: {docs_root / 'lumen' / 'config' / 'workspace.json'}")
     if not no_example:
         print(f"✓ Example story: stories/{story_slug(example_key)}/")
     print("Next:")

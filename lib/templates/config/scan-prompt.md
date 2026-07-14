@@ -31,5 +31,5 @@ At scan time, `run-scan.sh` composes the full agent prompt from `prompts/scan/ma
 ## Compose manually
 
 ```bash
-python3 ~/.lumen/lib/scripts/compose_scan_prompt.py /path/to/workspace/.lumen
+python3 ~/.lumen/lib/scripts/compose_scan_prompt.py /path/to/workspace/lumen
 ```

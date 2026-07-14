@@ -37,7 +37,7 @@ Code repositories live inside the docs project under `repos/`:
     xxxx-backend/
     xxxx-frontend/
   stories/
-  .lumen/
+  lumen/
 ```
 
 Use the workspace paths provided in the delivery prompt. Repositories are not siblings of the docs project anymore; they are nested under `repos/`.

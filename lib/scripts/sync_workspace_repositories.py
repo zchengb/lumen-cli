@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from discover_repos import discover
-from delivery_workspace import read_json, write_json
+from delivery_workspace import read_json, workspace_lumen_dir, write_json
 
 
 def scan_entry(repo: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
@@ -27,7 +27,7 @@ def scan_entry(repo: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]
 def sync(workspace_root: Path) -> list[dict[str, Any]]:
     workspace_root = workspace_root.expanduser().resolve()
     repos_root = workspace_root / "repos"
-    config_path = workspace_root / ".lumen" / "config" / "repos.json"
+    config_path = workspace_lumen_dir(workspace_root) / "config" / "repos.json"
     config = read_json(config_path, {"repositories": []})
     existing_items = config.get("repositories") if isinstance(config.get("repositories"), list) else []
     existing = {

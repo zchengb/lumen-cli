@@ -7,6 +7,7 @@ LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
 DOCS_DIR=""
 STORY_REF=""
 DRY_RUN="${LUMEN_DRY_RUN:-0}"
+WORKSPACE_DIR_NAME="lumen"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -62,7 +63,9 @@ workspace_root_from_docs() {
   python3 -c "from pathlib import Path
 import json
 docs = Path('${DOCS_DIR}').resolve()
-config = docs / '.lumen' / 'config' / 'workspace.json'
+config = docs / 'lumen' / 'config' / 'workspace.json'
+if not config.is_file():
+    config = docs / '.lumen' / 'config' / 'workspace.json'
 if config.is_file():
     data = json.loads(config.read_text())
     root = str(data.get('workspace_root', '')).strip()
@@ -76,22 +79,26 @@ print(str(docs), end='')"
 }
 
 WORKSPACE_ROOT="$(workspace_root_from_docs)"
-DELIVERY_CONFIG="${WORKSPACE_ROOT}/.lumen/config/delivery.json"
+if [[ ! -d "${WORKSPACE_ROOT}/${WORKSPACE_DIR_NAME}" && -d "${WORKSPACE_ROOT}/.lumen" ]]; then
+  WORKSPACE_DIR_NAME=".lumen"
+fi
+WORKSPACE_DIR="${WORKSPACE_ROOT}/${WORKSPACE_DIR_NAME}"
+DELIVERY_CONFIG="${WORKSPACE_DIR}/config/delivery.json"
 RUN_ID="$(date -u '+%Y%m%d-%H%M%S')"
-LOG_DIR="${WORKSPACE_ROOT}/.lumen/logs/delivery"
+LOG_DIR="${WORKSPACE_DIR}/logs/delivery"
 LOG_FILE="${LOG_DIR}/run-${RUN_ID}.log"
-RESULT_FILE="${WORKSPACE_ROOT}/.lumen/results/delivery-result.json"
-STARTED_FILE="${WORKSPACE_ROOT}/.lumen/results/delivery-started.json"
+RESULT_FILE="${WORKSPACE_DIR}/results/delivery-result.json"
+STARTED_FILE="${WORKSPACE_DIR}/results/delivery-started.json"
 PROGRESS_PY="${LUMEN_LIB_DIR}/delivery_progress.py"
 ARCHIVE_PY="${LUMEN_LIB_DIR}/archive_delivery_run.py"
 
-mkdir -p "${LOG_DIR}" "${WORKSPACE_ROOT}/.lumen/results" "${WORKSPACE_ROOT}/.lumen/config" "${WORKSPACE_ROOT}/.lumen/worktrees"
+mkdir -p "${LOG_DIR}" "${WORKSPACE_DIR}/results" "${WORKSPACE_DIR}/config" "${WORKSPACE_DIR}/worktrees"
 
 # Feature worktrees are Story-isolated, but one docs workspace has one delivery
 # control plane. Serializing agent runs prevents shared result/progress state,
 # JIRA transitions, and expensive verification resources from colliding.
-LOCK_DIR="${WORKSPACE_ROOT}/.lumen/locks/delivery-run"
-mkdir -p "${WORKSPACE_ROOT}/.lumen/locks"
+LOCK_DIR="${WORKSPACE_DIR}/locks/delivery-run"
+mkdir -p "${WORKSPACE_DIR}/locks"
 if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
   printf 'Error: another Lumen delivery run is already active for this docs workspace. Check `lumen delivery status %s`.\n' "${DOCS_DIR}" >&2
   exit 1
@@ -101,8 +108,8 @@ trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
 # Scan and delivery share the workspace-local environment. Root-level files are
 # read only as a compatibility fallback for docs projects created before init
 # became the unified initializer.
-load_env_file "${DOCS_DIR}/.lumen/.env.common"
-load_env_file "${DOCS_DIR}/.lumen/.env.local"
+load_env_file "${DOCS_DIR}/${WORKSPACE_DIR_NAME}/.env.common"
+load_env_file "${DOCS_DIR}/${WORKSPACE_DIR_NAME}/.env.local"
 load_env_file "${DOCS_DIR}/.env.common"
 load_env_file "${DOCS_DIR}/.env.local"
 
@@ -133,7 +140,7 @@ archive_delivery() {
   python3 "${ARCHIVE_PY}" \
     --workspace-root "${WORKSPACE_ROOT}" \
     --result "${RESULT_FILE}" \
-    --progress "${WORKSPACE_ROOT}/.lumen/results/delivery-progress.json" \
+    --progress "${WORKSPACE_DIR}/results/delivery-progress.json" \
     --log-file "${LOG_FILE}" >/dev/null
 }
 

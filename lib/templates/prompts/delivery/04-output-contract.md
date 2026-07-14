@@ -2,7 +2,7 @@
 
 Write the run result to:
 
-`<workspace-root>/.lumen/results/delivery-result.json`
+`<workspace-root>/lumen/results/delivery-result.json`
 
 Overwrite any previous file for this run.
 

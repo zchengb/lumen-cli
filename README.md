@@ -48,17 +48,17 @@ cd ~/Projects/my-project
 lumen init
 ```
 
-This creates one Lumen workspace: `.lumen/` holds shared runtime/configuration, `repos/` holds stable code checkouts, and `stories/` holds business and technical delivery documents.
+This creates one Lumen workspace: `lumen/` holds shared runtime/configuration, `repos/` holds stable code checkouts, and `stories/` holds business and technical delivery documents.
 
 `lumen init` asks you a few questions interactively — no manual JSON editing required for a first run:
 
 - Project display name; repositories live together under `repos/`
 - Scan window (days) and which Cursor model to use
-- Your Feishu webhook URL (optional — written to `.lumen/.env.local` for this project only)
-- Your Cursor API key (optional — written to `.lumen/.env.local` as `CURSOR_API_KEY` for scheduled/cron scans)
+- Your Feishu webhook URL (optional — written to `lumen/.env.local` for this project only)
+- Your Cursor API key (optional — written to `lumen/.env.local` as `CURSOR_API_KEY` for scheduled/cron scans)
 - Repositories to scan: Lumen scans your project root for local git repositories and opens an interactive checklist (`○` / `●`). Use ↑↓ to move, **Space** to toggle a repository, **Enter** to confirm, `a` to select all, and choose **Continue** when done. You can also add repositories manually by clone URL or local path
 
-You can add, remove, or edit repositories and settings at any time by editing `.lumen/config/repos.json` and `.lumen/config/common.json` directly. If `lumen init` was interrupted, run `lumen init` again — it detects the incomplete `.lumen` folder, removes it, and starts fresh. To skip the prompts and get the raw templates instead (e.g. for scripting), run `lumen init --yes` or pipe input from a non-interactive shell.
+You can add, remove, or edit repositories and settings at any time by editing `lumen/config/repos.json` and `lumen/config/common.json` directly. If `lumen init` was interrupted, run `lumen init` again — it detects the incomplete `lumen` folder, removes it, and starts fresh. To skip the prompts and get the raw templates instead (e.g. for scripting), run `lumen init --yes` or pipe input from a non-interactive shell.
 
 ```text
 Then:
@@ -72,9 +72,9 @@ Then:
 
 | Command | Description |
 |---|---|
-| `lumen init [dir] [--yes] [--force]` | Create one integrated scan + delivery workspace and configure it interactively (default: current directory). Re-runs after an interrupted init automatically clean up the incomplete `.lumen` folder. Use `--force` to replace a fully configured workspace. |
+| `lumen init [dir] [--yes] [--force]` | Create one integrated scan + delivery workspace and configure it interactively (default: current directory). Re-runs after an interrupted init automatically clean up the incomplete `lumen` folder. Use `--force` to replace a fully configured workspace. |
 | `lumen list` | List all registered scan projects (name, slug, workspace) |
-| `lumen remove <slug> [--yes]` | Remove a project from Lumen's registry and remove its scheduled scan. The workspace is kept by default; add `--delete-workspace --yes` to permanently delete the registered `.lumen` folder. |
+| `lumen remove <slug> [--yes]` | Remove a project from Lumen's registry and remove its scheduled scan. The workspace is kept by default; add `--delete-workspace --yes` to permanently delete the registered `lumen` folder. |
 | `lumen rename <slug> --slug <new-slug>` | Change a registered project's slug, for example after removing an older project that was holding the preferred name. |
 | `lumen use [slug]` | Set or show the default project slug |
 | `lumen register [dir]` | Register an existing workspace (e.g. an `.auto-scan` folder) as a project |
@@ -125,9 +125,9 @@ lumen delivery run --story MBPAS-1505
 
 `AGENTS.md` is the primary agent contract. Status lives in each story's `metadata.json`.
 
-Source base checkouts live under `repos/`, while Lumen creates one isolated feature worktree per Story under `.lumen/worktrees/<story-key>/<repo>/`. Auto-scan and delivery share the same repository list, secrets, JIRA setup, and workspace. Multiple Story worktrees may coexist, while automated `lumen delivery run` executions are serialized per workspace so shared verification resources and delivery state cannot collide.
+Source base checkouts live under `repos/`, while Lumen creates one isolated feature worktree per Story under `lumen/worktrees/<story-key>/<repo>/`. Auto-scan and delivery share the same repository list, secrets, JIRA setup, and workspace. Multiple Story worktrees may coexist, while automated `lumen delivery run` executions are serialized per workspace so shared verification resources and delivery state cannot collide.
 
-When mandatory verification fails, delivery remains in the same feature worktree and Lumen starts a bounded remediation loop by default: it gives the Agent the failed check evidence, permits the smallest Story-scope correction, and reruns the full verification profile. The default is two remediation attempts. After that, delivery stays `In Progress` for human review; it never commits, pushes, or opens a PR from a failing run. Configure this in `.lumen/config/delivery.json`:
+When mandatory verification fails, delivery remains in the same feature worktree and Lumen starts a bounded remediation loop by default: it gives the Agent the failed check evidence, permits the smallest Story-scope correction, and reruns the full verification profile. The default is two remediation attempts. After that, delivery stays `In Progress` for human review; it never commits, pushes, or opens a PR from a failing run. Configure this in `lumen/config/delivery.json`:
 
 ```json
 {
@@ -361,14 +361,14 @@ lumen register /path/to/your/project
 lumen scan --project mbpass
 ```
 
-Legacy layouts with config at the project root (not under `.lumen/`) are still supported for `lumen register` and `lumen scan --workspace`.
+Legacy layouts with config at the project root (not under `lumen/`) are still supported for `lumen register` and `lumen scan --workspace`.
 
 Every scan-related command resolves the workspace in this order:
 
 1. `--project <slug>`
 2. `LUMEN_PROJECT` environment variable (slug)
 3. `--workspace <dir>`
-4. `./.lumen/` in the current directory
+4. `./lumen/` in the current directory
 5. Current directory if it is already a Lumen workspace (legacy layout)
 6. Default project (`lumen use <slug>`)
 7. Single registered project (auto-selected)
@@ -407,7 +407,7 @@ my-project/                 ← one Lumen project workspace
   repos/                     ← stable base checkouts shared by scan and delivery
     service-a/
     web-app/
-  .lumen/                    ← shared scan + delivery runtime
+  lumen/                     ← shared scan + delivery runtime
     .env.common.example
     .env.local.example
     .env.local              (create this; never commit it)

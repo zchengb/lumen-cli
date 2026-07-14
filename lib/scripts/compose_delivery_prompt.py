@@ -11,6 +11,7 @@ from delivery_workspace import (
     StoryContext,
     delivery_result_path,
     load_story_context,
+    workspace_lumen_dir,
 )
 
 
@@ -24,7 +25,7 @@ def coding_guideline_path() -> Path:
 
 def delivery_prompts_dir(context: StoryContext | None = None) -> Path:
     if context is not None:
-        workspace_prompts = context.workspace_root / ".lumen" / "prompts" / "delivery"
+        workspace_prompts = workspace_lumen_dir(context.workspace_root) / "prompts" / "delivery"
         if (workspace_prompts / "manifest.json").is_file():
             return workspace_prompts
     return lumen_home() / "templates" / "prompts" / "delivery"

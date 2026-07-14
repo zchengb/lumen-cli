@@ -14,7 +14,7 @@ This repository stores lightweight Lumen Delivery documents for business explora
 
 ```text
 <docs-repo>/
-  .lumen/
+  lumen/
     config/
       workspace.json
       delivery.json
@@ -28,7 +28,7 @@ This repository stores lightweight Lumen Delivery documents for business explora
   stories/
 ```
 
-Configure repositories in `<docs-repo>/.lumen/config/workspace.json`. Cloned code lives under `repos/` and is ignored by the docs repository git history.
+Configure repositories in `<docs-repo>/lumen/config/workspace.json`. Cloned code lives under `repos/` and is ignored by the docs repository git history.
 
 ## Structure
 
@@ -63,7 +63,7 @@ notifications/
 - Story folders use a plain business slug before JIRA publication and `<JIRA-KEY>-<slug>` after JIRA is created or bound.
 - Technical plans must be detailed enough for `lumen delivery run` to implement without guessing.
 - Coding standards come from the Lumen CLI install, not from this docs repo.
-- Delivery runtime state lives under `<docs-repo>/.lumen/`.
+- Delivery runtime state lives under `<docs-repo>/lumen/`.
 - Code repositories live under `<docs-repo>/repos/` and are gitignored in the docs project.
 
 ## Typical Flow

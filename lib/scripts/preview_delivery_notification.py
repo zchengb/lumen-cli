@@ -98,7 +98,7 @@ def main() -> int:
     if args.send:
         webhook = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
         if not webhook:
-            raise RuntimeError("FEISHU_WEBHOOK_URL is not configured in .lumen/.env.local")
+            raise RuntimeError("FEISHU_WEBHOOK_URL is not configured in lumen/.env.local")
         send_feishu(card, webhook)
         result["sent"] = True
     print(json.dumps(result, ensure_ascii=False, indent=2))

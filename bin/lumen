@@ -59,7 +59,8 @@ lumen_version() {
   fi
 }
 
-LUMEN_DIR_NAME=".lumen"
+LUMEN_DIR_NAME="lumen"
+LEGACY_LUMEN_DIR_NAME=".lumen"
 
 is_lumen_workspace() {
   [[ -f "$1/config/common.json" ]]
@@ -81,7 +82,30 @@ resolve_lumen_workspace_path() {
     printf '%s' "$(cd "${input}/${LUMEN_DIR_NAME}" && pwd)"
     return 0
   fi
+  if is_lumen_workspace "${input}/${LEGACY_LUMEN_DIR_NAME}"; then
+    printf '%s' "$(cd "${input}/${LEGACY_LUMEN_DIR_NAME}" && pwd)"
+    return 0
+  fi
   return 1
+}
+
+migrate_workspace_dir() {
+  local workspace="$1" root target
+  [[ "$(basename "${workspace}")" == "${LEGACY_LUMEN_DIR_NAME}" ]] || { printf '%s' "${workspace}"; return 0; }
+  root="$(dirname "${workspace}")"
+  target="${root}/${LUMEN_DIR_NAME}"
+  if [[ -e "${target}" ]]; then
+    printf '%s' "${workspace}"
+    return 0
+  fi
+  if find "${workspace}/worktrees" -mindepth 2 -maxdepth 2 -type f -name .git -print -quit 2>/dev/null | grep -q .; then
+    warn "Workspace migration deferred: ${LEGACY_LUMEN_DIR_NAME}/ contains active Git worktrees. Use Git worktree move or clean them up before migrating to ${LUMEN_DIR_NAME}/." >&2
+    printf '%s' "${workspace}"
+    return 0
+  fi
+  mv "${workspace}" "${target}"
+  ok "Migrated workspace directory: ${LEGACY_LUMEN_DIR_NAME}/ -> ${LUMEN_DIR_NAME}/" >&2
+  printf '%s' "${target}"
 }
 
 resolve_workspace() {
@@ -290,7 +314,7 @@ require_workspace_initialized() {
   local workspace="$1"
   if ! is_lumen_workspace "${workspace}"; then
     err "No Lumen workspace found at: ${workspace}"
-    printf 'Run: %slumen init%s in your project root to create %s/.lumen, or pass --workspace <dir>.\n' "${BOLD}" "${RESET}" "${LUMEN_DIR_NAME}"
+    printf 'Run: %slumen init%s in your project root to create %s/, or pass --workspace <dir>.\n' "${BOLD}" "${RESET}" "${LUMEN_DIR_NAME}"
     exit 1
   fi
 }
@@ -304,11 +328,11 @@ Usage:
                                  Includes scan, delivery docs, shared repos/, Cursor model, and Feishu setup.
                                  Pass --yes (or run non-interactively) to skip prompts and use templates.
                                  If a previous init was interrupted, init removes the incomplete
-                                 .lumen folder and starts again. Use --force to replace a fully
+                                 lumen folder and starts again. Use --force to replace a fully
                                  configured workspace.
   lumen list                    List all registered scan projects (name and slug)
   lumen remove <slug> [--yes]   Remove a registered project and its scheduled scan
-                                 Add --delete-workspace --yes to also delete its .lumen workspace
+                                 Add --delete-workspace --yes to also delete its lumen workspace
   lumen rename <slug> --slug <new-slug>
                                  Change a project's unique registry slug
   lumen use [slug]              Set or show the default project slug
@@ -534,6 +558,7 @@ cmd_upgrade() {
 
   if [[ "${sync_prompts}" == "1" ]]; then
     if resolve_command_workspace "${passthrough_args[@]+"${passthrough_args[@]}"}" 2>/dev/null; then
+      RESOLVED_WORKSPACE="$(migrate_workspace_dir "${RESOLVED_WORKSPACE}")"
       sync_workspace_templates "${RESOLVED_WORKSPACE}"
     elif [[ -t 0 && -t 1 ]]; then
       printf '\n%sSelect a workspace to refresh bundled templates:%s\n' "${BOLD}" "${RESET}"
@@ -1558,7 +1583,7 @@ cmd_init() {
       ok "Removed previous workspace."
     else
       warn "A legacy Lumen workspace already exists at: ${target}"
-      printf 'Nothing was overwritten. Consider migrating to %s/.lumen or run %slumen init --force%s.\n' "${LUMEN_DIR_NAME}" "${BOLD}" "${RESET}"
+      printf 'Nothing was overwritten. Consider migrating to %s/ or run %slumen init --force%s.\n' "${LUMEN_DIR_NAME}" "${BOLD}" "${RESET}"
       return 0
     fi
   fi
@@ -1751,7 +1776,7 @@ cmd_remove() {
         printf 'Usage: lumen remove <project-slug-or-name> [--yes] [--delete-workspace]\n'
         printf '\n'
         printf 'Removes the project registration, clears it as the default when applicable, and removes its scheduled scan.\n'
-        printf 'The workspace is retained by default. Use --delete-workspace --yes to also delete the registered .lumen folder.\n'
+        printf 'The workspace is retained by default. Use --delete-workspace --yes to also delete the registered lumen folder.\n'
         return 0
         ;;
       --*) err "Unknown option: $1"; exit 1 ;;
@@ -1800,8 +1825,8 @@ cmd_remove() {
   fi
 
   if [[ -n "${delete_workspace}" ]]; then
-    if [[ "$(basename "${workspace}")" != ".lumen" ]]; then
-      err "Refusing to delete a workspace that is not named .lumen: ${workspace}"
+    if [[ "$(basename "${workspace}")" != "${LUMEN_DIR_NAME}" && "$(basename "${workspace}")" != "${LEGACY_LUMEN_DIR_NAME}" ]]; then
+      err "Refusing to delete a workspace not named ${LUMEN_DIR_NAME}: ${workspace}"
       exit 1
     fi
     rm -rf "${workspace}"
@@ -2294,7 +2319,7 @@ cmd_schedule() {
 delivery_docs_dir_for_project() {
   local slug="$1" workspace
   workspace="$(registry_cmd resolve-slug "${slug}" --workspace-only)" || return 1
-  if [[ "$(basename "${workspace}")" == ".lumen" ]]; then
+  if [[ "$(basename "${workspace}")" == "${LUMEN_DIR_NAME}" || "$(basename "${workspace}")" == "${LEGACY_LUMEN_DIR_NAME}" ]]; then
     dirname "${workspace}"
   else
     printf '%s' "${workspace}"
@@ -2343,7 +2368,8 @@ cmd_delivery_schedule_add() {
 
   local docs_dir workspace lumen_bin log_file cron_path cron_env cron_line existing filtered updated
   docs_dir="$(delivery_docs_dir_for_project "${slug}")" || { err "Project not found: ${slug}"; exit 1; }
-  workspace="${docs_dir}/.lumen"
+  workspace="${docs_dir}/${LUMEN_DIR_NAME}"
+  [[ -d "${workspace}" ]] || workspace="${docs_dir}/${LEGACY_LUMEN_DIR_NAME}"
   require_workspace_initialized "${workspace}"
   lumen_bin="$(command -v lumen || true)"
   lumen_bin="${lumen_bin:-${LUMEN_CLI_BIN}}"
@@ -2460,7 +2486,9 @@ delivery_workspace_root_from_docs() {
   python3 -c "from pathlib import Path
 import json
 docs = Path('${docs_dir}').resolve()
-config = docs / '.lumen' / 'config' / 'workspace.json'
+config = docs / 'lumen' / 'config' / 'workspace.json'
+if not config.is_file():
+    config = docs / '.lumen' / 'config' / 'workspace.json'
 if config.is_file():
     data = json.loads(config.read_text())
     root = str(data.get('workspace_root', '')).strip()
@@ -2732,10 +2760,12 @@ cmd_delivery_prepare() {
 
 cmd_delivery_verify() {
   delivery_docs_and_story_args "$@"
-  local workspace_root
+  local workspace_root workspace_dir
   workspace_root="$(delivery_workspace_root_from_docs "${DELIVERY_DOCS_DIR}")"
   local verify_py="${LUMEN_HOME}/lib/scripts/run_delivery_verification.py"
-  local result_file="${workspace_root}/.lumen/results/delivery-result.json"
+  workspace_dir="${workspace_root}/${LUMEN_DIR_NAME}"
+  [[ -d "${workspace_dir}" ]] || workspace_dir="${workspace_root}/${LEGACY_LUMEN_DIR_NAME}"
+  local result_file="${workspace_dir}/results/delivery-result.json"
   [[ -f "${verify_py}" ]] || { err "Delivery verification helper not found: ${verify_py}"; exit 1; }
   [[ -f "${result_file}" ]] || { err "No delivery result found. Run delivery start first."; exit 1; }
   python3 "${verify_py}" "${DELIVERY_DOCS_DIR}" --story "${DELIVERY_STORY_REF}" --result "${result_file}" --workspace-root "${workspace_root}"
@@ -2743,10 +2773,12 @@ cmd_delivery_verify() {
 
 cmd_delivery_pr() {
   delivery_docs_and_story_args "$@"
-  local workspace_root
+  local workspace_root workspace_dir
   workspace_root="$(delivery_workspace_root_from_docs "${DELIVERY_DOCS_DIR}")"
   local finalize_py="${LUMEN_HOME}/lib/scripts/finalize_delivery.py"
-  local result_file="${workspace_root}/.lumen/results/delivery-result.json"
+  workspace_dir="${workspace_root}/${LUMEN_DIR_NAME}"
+  [[ -d "${workspace_dir}" ]] || workspace_dir="${workspace_root}/${LEGACY_LUMEN_DIR_NAME}"
+  local result_file="${workspace_dir}/results/delivery-result.json"
   [[ -f "${finalize_py}" ]] || { err "Delivery finalization helper not found: ${finalize_py}"; exit 1; }
   [[ -f "${result_file}" ]] || { err "No delivery result found. Run delivery start first."; exit 1; }
   python3 "${finalize_py}" "${DELIVERY_DOCS_DIR}" --story "${DELIVERY_STORY_REF}" --result "${result_file}"
@@ -2856,8 +2888,10 @@ cmd_delivery_notify() {
   }
   case "${event}" in started|completed|failed|blocked) ;; *) err "Unsupported delivery notification event: ${event}"; exit 1 ;; esac
   docs_dir="$(cd "${docs_dir}" && pwd)"
-  load_env_file_if_present "${docs_dir}/.lumen/.env.common"
-  load_env_file_if_present "${docs_dir}/.lumen/.env.local"
+  local workspace_dir="${docs_dir}/${LUMEN_DIR_NAME}"
+  [[ -d "${workspace_dir}" ]] || workspace_dir="${docs_dir}/${LEGACY_LUMEN_DIR_NAME}"
+  load_env_file_if_present "${workspace_dir}/.env.common"
+  load_env_file_if_present "${workspace_dir}/.env.local"
   local preview_py="${LUMEN_HOME}/lib/scripts/preview_delivery_notification.py"
   [[ -f "${preview_py}" ]] || { err "Delivery notification helper not found: ${preview_py}"; exit 1; }
   local args=("${docs_dir}" --story "${story_ref}" --event "${event}")
@@ -2894,8 +2928,10 @@ cmd_delivery_watch() {
   [[ -n "${workspace_root}" ]] || { err "Docs repository path or workspace root is required."; exit 1; }
 
   local progress_py="${LUMEN_HOME}/lib/scripts/delivery_progress.py"
-  local progress_file="${workspace_root}/.lumen/results/delivery-progress.json"
-  local log_dir="${workspace_root}/.lumen/logs/delivery"
+  local workspace_dir="${workspace_root}/${LUMEN_DIR_NAME}"
+  [[ -d "${workspace_dir}" ]] || workspace_dir="${workspace_root}/${LEGACY_LUMEN_DIR_NAME}"
+  local progress_file="${workspace_dir}/results/delivery-progress.json"
+  local log_dir="${workspace_dir}/logs/delivery"
   local latest_log
   latest_log="$(ls -t "${log_dir}"/run-*.log 2>/dev/null | head -1 || true)"
 

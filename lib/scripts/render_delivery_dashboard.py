@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from delivery_workspace import delivery_config_path, delivery_history_dir, read_json
+from delivery_workspace import delivery_config_path, delivery_history_dir, read_json, workspace_lumen_dir
 
 
 def relative(root: Path, value: str) -> str:
@@ -52,7 +52,8 @@ def render(workspace_root: Path) -> tuple[Path, Path]:
             data = read_json(source, {})
             if data:
                 runs.append(run_for_dashboard(workspace_root, data, source))
-    current = read_json(workspace_root / ".lumen" / "results" / "delivery-progress.json", {})
+    lumen_dir = workspace_lumen_dir(workspace_root)
+    current = read_json(lumen_dir / "results" / "delivery-progress.json", {})
     delivery_config = read_json(delivery_config_path(workspace_root), {})
     payload = {
         "workspace_root": str(workspace_root),
@@ -64,10 +65,10 @@ def render(workspace_root: Path) -> tuple[Path, Path]:
             "docker_mode": delivery_config.get("verification", {}).get("docker", {}).get("mode", "host_testcontainers"),
         },
     }
-    data_path = workspace_root / ".lumen" / "delivery-dashboard-data.js"
+    data_path = lumen_dir / "delivery-dashboard-data.js"
     data_path.write_text("window.LUMEN_DELIVERY_DATA = " + json.dumps(payload, ensure_ascii=False) + ";\n", encoding="utf-8")
     template = Path(__file__).resolve().parents[1] / "templates" / "delivery-dashboard.html"
-    html_path = workspace_root / ".lumen" / "delivery-dashboard.html"
+    html_path = lumen_dir / "delivery-dashboard.html"
     shutil.copy2(template, html_path)
     return html_path, data_path
 

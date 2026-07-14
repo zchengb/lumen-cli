@@ -75,7 +75,7 @@ def read_display_name(workspace: str) -> str:
     except Exception:
         pass
     base = Path(workspace).name
-    if base in {".lumen", ".auto-scan"}:
+    if base in {"lumen", ".lumen", ".auto-scan"}:
         return Path(workspace).parent.name
     return base
 
@@ -110,6 +110,12 @@ def migrate_registry(registry: dict) -> None:
         if not project.get("slug"):
             project["slug"] = unique_slug(registry, make_slug(project.get("name", "")), project.get("id"))
             changed = True
+        workspace = Path(str(project.get("workspace", "")))
+        if workspace.name == ".lumen":
+            visible = workspace.parent / "lumen"
+            if not workspace.exists() and is_workspace(str(visible)):
+                project["workspace"] = str(visible.resolve())
+                changed = True
     if changed:
         save_registry(registry)
 
