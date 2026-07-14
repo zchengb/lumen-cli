@@ -412,7 +412,7 @@ my-project/                 ← one Lumen project workspace
     .env.local.example
     .env.local              (create this; never commit it)
     .gitignore
-    dashboard.html          standalone dashboard (open directly in a browser)
+    dashboard.html          read-only dashboard fallback (use `lumen dashboard` for interactive mode)
     dashboard-data.js       generated after each scan
     config/
       common.json           product name, execution mode, paths, retention
