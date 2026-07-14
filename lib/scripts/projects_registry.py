@@ -107,8 +107,8 @@ def unique_slug(registry: dict, base_slug: str, exclude_id: Optional[str] = None
 def migrate_registry(registry: dict) -> None:
     changed = False
     for project in registry.get("projects", []):
-        if not project.get("slug"):
-            project["slug"] = unique_slug(registry, make_slug(project.get("name", "")), project.get("id"))
+        if not project.get("id"):
+            project["id"] = new_project_id()
             changed = True
         workspace = Path(str(project.get("workspace", "")))
         if workspace.name == ".lumen":
@@ -120,6 +120,13 @@ def migrate_registry(registry: dict) -> None:
             if is_workspace(str(visible)) and not is_workspace(str(workspace)):
                 project["workspace"] = str(visible.resolve())
                 changed = True
+                workspace = visible
+        if not str(project.get("name", "")).strip() and is_workspace(str(workspace)):
+            project["name"] = read_display_name(str(workspace))
+            changed = True
+        if not project.get("slug"):
+            project["slug"] = unique_slug(registry, make_slug(project.get("name", "")), project.get("id"))
+            changed = True
     if changed:
         save_registry(registry)
 
