@@ -113,7 +113,11 @@ def migrate_registry(registry: dict) -> None:
         workspace = Path(str(project.get("workspace", "")))
         if workspace.name == ".lumen":
             visible = workspace.parent / "lumen"
-            if not workspace.exists() and is_workspace(str(visible)):
+            # A legacy directory may be recreated later by an old launchd job
+            # solely for its log file. Treat it as legacy when it no longer has
+            # a valid workspace configuration, so the registry still follows
+            # the visible control plane.
+            if is_workspace(str(visible)) and not is_workspace(str(workspace)):
                 project["workspace"] = str(visible.resolve())
                 changed = True
     if changed:
