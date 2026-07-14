@@ -11,7 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from delivery_workspace import delivery_results_dir, load_story_context, read_json, write_json
+from delivery_workspace import (
+    delivery_result_path,
+    delivery_results_dir,
+    load_story_context,
+    read_json,
+    write_json,
+)
 
 
 PHASES = [
@@ -24,6 +30,8 @@ PHASES = [
     ("jira_done", "JIRA DEV DONE"),
     ("notify", "Notifications"),
 ]
+
+TERMINAL_DELIVERY_STATUSES = {"completed", "failed", "blocked"}
 
 
 def utc_now() -> str:
@@ -222,9 +230,36 @@ def finish_progress(workspace_root: Path, delivery_status: str, detail: str = ""
     save_progress(workspace_root, payload)
 
 
+def report_payload(workspace_root: Path, progress: dict[str, Any]) -> dict[str, Any]:
+    """Prefer the final delivery artifact when showing a completed run.
+
+    Progress is updated continuously by the runner and can contain intermediate
+    verification attempts. The final result is written by the delivery agent and
+    finalizer, so it is the authoritative terminal status for the CLI report.
+    """
+    result = read_json(delivery_result_path(workspace_root), {})
+    status = str(result.get("delivery_status", "")).strip()
+    if status not in TERMINAL_DELIVERY_STATUSES:
+        return progress
+
+    payload = dict(progress)
+    payload["delivery_status"] = status
+    payload["finished_at"] = result.get("finished_at") or payload.get("finished_at", "")
+    payload["current_phase"] = ""
+    payload["current_step"] = ""
+
+    for key in ("story_id", "jira_key", "branch", "started_at"):
+        if result.get(key):
+            payload[key] = result[key]
+    if isinstance(result.get("verification_results"), list):
+        payload["verification"] = result["verification_results"]
+    return payload
+
+
 def status_icon(status: str) -> str:
     mapping = {
         "completed": "✓",
+        "passed": "✓",
         "in_progress": "…",
         "failed": "✗",
         "skipped": "-",
@@ -234,7 +269,7 @@ def status_icon(status: str) -> str:
 
 
 def print_progress_report(workspace_root: Path) -> None:
-    payload = load_progress(workspace_root)
+    payload = report_payload(workspace_root, load_progress(workspace_root))
     if not payload.get("run_id"):
         print("No delivery progress found.")
         return

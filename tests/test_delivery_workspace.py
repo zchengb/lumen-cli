@@ -34,6 +34,7 @@ from delivery_launchd import interval_minutes_from_cron  # noqa: E402
 from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
 from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  # noqa: E402
+from delivery_progress import print_progress_report  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
 
 
@@ -54,6 +55,44 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_delivery_report_prefers_terminal_result_over_stale_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            results = workspace / "lumen" / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(
+                json.dumps(
+                    {
+                        "run_id": "20260714-040321",
+                        "delivery_status": "in_progress",
+                        "current_phase": "verification",
+                        "current_step": "old failed test",
+                        "verification": [{"label": "Old Test", "status": "failed"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (results / "delivery-result.json").write_text(
+                json.dumps(
+                    {
+                        "delivery_status": "completed",
+                        "finished_at": "2026-07-14T05:42:59Z",
+                        "verification_results": [{"label": "Full Test Suite", "status": "passed"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            output = StringIO()
+            with redirect_stdout(output):
+                print_progress_report(workspace)
+
+            report = output.getvalue()
+            self.assertIn("Status:      completed", report)
+            self.assertIn("✓ [] Full Test Suite", report)
+            self.assertNotIn("Current:", report)
+            self.assertNotIn("Old Test", report)
+
     def test_delivery_prompt_is_separate_from_scan_prompt_assets(self) -> None:
         delivery_prompt = compose_snippets()
         scan_manifest = json.loads(
