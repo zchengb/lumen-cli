@@ -65,7 +65,7 @@ Then:
   1. lumen doctor   — verify prerequisites
   2. lumen list     — see your project slug
   3. lumen scan --project <slug>   — run your first scan
-  4. lumen dashboard --project <slug>   — opens results in your browser
+  4. lumen dashboard --project <slug>   — opens the local quality and delivery control plane
 ```
 
 ## Commands
@@ -83,7 +83,7 @@ Then:
 | `lumen schedule scan add [--project <slug>] [--cron "<expr>"] [--dry-run]` | Schedule recurring scans via cron. |
 | `lumen schedule delivery add --project <slug> --every 5m` | On macOS, poll approved Stories using launchd and start one matching JIRA Ready for Dev delivery. |
 | `lumen watch --project <slug>` | Tail the latest scan log with readable formatting |
-| `lumen dashboard --project <slug> [--no-open]` | Refresh `dashboard-data.js` and open `dashboard.html`; pass `--no-open` to skip opening a browser |
+| `lumen dashboard --project <slug> [--no-open] [--static]` | Open the local interactive dashboard. It manages issue ignores, launchd schedules, editable scan/delivery prompt fragments, and scan-window configuration. `--static` renders the read-only HTML fallback. |
 | `lumen doctor` | Check installed prerequisites (agent, git, python3, gh, webhook) |
 | `lumen config set-webhook <url> [--project <slug>]` | Save the Feishu webhook in a workspace `.env.local` |
 | `lumen config set-cursor-api-key <key> [--project <slug>]` | Save `CURSOR_API_KEY` in a workspace `.env.local` (for scheduled scans) |

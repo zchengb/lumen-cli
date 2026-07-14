@@ -351,9 +351,7 @@ def trend_points(runs: list, limit: int = 10) -> list:
     return list(reversed(points))
 
 
-def main() -> int:
-    workspace_arg = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("LUMEN_WORKSPACE", ".")
-    root = Path(workspace_arg).resolve()
+def build_payload(root: Path) -> dict:
     common = load_json(root / "config" / "common.json", {})
     repos = load_json(root / "config" / "repos.json", {"repositories": []})
     registry = load_json(root / "state" / "issue-registry.json", {"issues": []})
@@ -450,6 +448,14 @@ def main() -> int:
         "logs": logs,
     }
 
+    return payload
+
+
+def main() -> int:
+    workspace_arg = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("LUMEN_WORKSPACE", ".")
+    root = Path(workspace_arg).resolve()
+    payload = build_payload(root)
+    data_path = root / "dashboard-data.js"
     js_text = "window.DASHBOARD_DATA = " + json.dumps(payload, ensure_ascii=False, indent=2) + ";\n"
     data_path.write_text(js_text, encoding="utf-8")
     print(data_path)

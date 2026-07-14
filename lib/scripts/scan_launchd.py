@@ -101,16 +101,21 @@ def status(args: argparse.Namespace) -> int:
     try:
         payload = plistlib.loads(path.read_bytes())
         if "StartInterval" in payload:
-            description = f"every {int(payload['StartInterval']) // 60} minutes"
+            minutes = int(payload["StartInterval"]) // 60
+            description = f"every {minutes} minutes"
+            cron = f"*/{minutes} * * * *"
         else:
             calendar = payload.get("StartCalendarInterval", {})
             if isinstance(calendar, list):
                 description = f"weekdays at {calendar[0]['Hour']:02d}:{calendar[0]['Minute']:02d}"
+                cron = f"{calendar[0]['Minute']} {calendar[0]['Hour']} * * 1-5"
             else:
                 description = f"daily at {calendar['Hour']:02d}:{calendar['Minute']:02d}"
+                cron = f"{calendar['Minute']} {calendar['Hour']} * * *"
     except (OSError, ValueError, KeyError, TypeError, plistlib.InvalidFileException):
         description = "launchd schedule"
-    print(json.dumps({"path": str(path), "description": description}))
+        cron = ""
+    print(json.dumps({"path": str(path), "description": description, "cron": cron}))
     return 0
 
 

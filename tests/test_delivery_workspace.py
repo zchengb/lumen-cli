@@ -7,6 +7,8 @@ import sys
 import tempfile
 import importlib.util
 import unittest
+import threading
+import urllib.request
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -36,6 +38,7 @@ from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # 
 from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  # noqa: E402
 from delivery_progress import print_progress_report  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
+from dashboard_server import DashboardServer  # noqa: E402
 
 
 def load_delivery_notification_renderer():
@@ -55,6 +58,42 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_dashboard_ignore_api_updates_only_local_issue_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            (workspace / "config").mkdir()
+            (workspace / "state").mkdir()
+            (workspace / "config" / "common.json").write_text(
+                json.dumps({"paths": {"issue_registry": "state/issue-registry.json"}}),
+                encoding="utf-8",
+            )
+            (workspace / "config" / "repos.json").write_text('{"repositories": []}\n', encoding="utf-8")
+            (workspace / "state" / "issue-registry.json").write_text(
+                json.dumps({"issues": [{"id": "ISSUE-1", "status": "open", "title": "Demo"}]}),
+                encoding="utf-8",
+            )
+            server = DashboardServer(("127.0.0.1", 0), workspace, "demo", "lumen", str(REPO_ROOT))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{server.server_port}/api/issue/ignore",
+                    data=json.dumps({"issue_id": "ISSUE-1", "reason": "Not applicable"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+            self.assertEqual("ignored", payload["issue"]["status"])
+            registry = json.loads((workspace / "state" / "issue-registry.json").read_text(encoding="utf-8"))
+            self.assertEqual("ignored", registry["issues"][0]["status"])
+            self.assertEqual("Not applicable", registry["issues"][0]["ignore_reason"])
+
     def test_delivery_report_prefers_terminal_result_over_stale_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)

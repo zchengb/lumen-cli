@@ -351,9 +351,10 @@ Usage:
                                  List tracked findings from the issue registry
   lumen issue ignore <issue-id> [--project <slug>]
                                  Mark a tracked finding as ignored in the issue registry
-  lumen dashboard --project <slug> [--no-open]
-                                 Refresh dashboard-data.js and open dashboard.html in your browser
-                                 Pass --no-open to only refresh the data without opening a browser
+  lumen dashboard --project <slug> [--no-open] [--static]
+                                 Open the local interactive dashboard for issues, schedules,
+                                 prompts, and workspace configuration. Pass --static for the
+                                 read-only generated HTML file.
   lumen delivery run [--story <slug>] [--dry-run] [workspace-dir]
                                  Implement an approved technical plan with the Lumen delivery agent
   lumen delivery status [workspace-dir|--workspace <root>]
@@ -1736,7 +1737,7 @@ Next steps:
   5. Run: lumen doctor
   6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
   7. Run: lumen delivery run --story <story-key> when a technical plan is approved.
-  8. Run: lumen dashboard --project <slug>   (opens ${LUMEN_DIR_NAME}/dashboard.html in your browser)
+  8. Run: lumen dashboard --project <slug>   (opens the local interactive dashboard)
 EOF
 }
 
@@ -1966,7 +1967,15 @@ cmd_scan() {
 }
 
 cmd_dashboard() {
-  resolve_command_workspace "$@"
+  local static_mode="0" filtered_args=() arg
+  for arg in "$@"; do
+    if [[ "${arg}" == "--static" ]]; then
+      static_mode="1"
+    else
+      filtered_args+=("${arg}")
+    fi
+  done
+  resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
   local workspace="${RESOLVED_WORKSPACE}"
   bash "${LUMEN_LIB_DIR}/render-dashboard.sh" "${workspace}"
 
@@ -1978,16 +1987,50 @@ cmd_dashboard() {
     fi
   done
 
+  if [[ "${static_mode}" == "1" ]]; then
+    printf 'Dashboard (static): %s/dashboard.html\n' "${workspace}"
+    return 0
+  fi
+
+  local dashboard_server="${LUMEN_LIB_DIR}/dashboard_server.py"
+  [[ -f "${dashboard_server}" ]] || { err "Interactive dashboard server not found: ${dashboard_server}"; exit 1; }
+  local project_json project_slug server_state server_url server_pid
+  project_json="$(registry_cmd resolve-workspace "${workspace}")" || { err "Workspace is not registered. Run: lumen register ${workspace}"; exit 1; }
+  project_slug="$(json_get "${project_json}" slug)"
+  server_state="${workspace}/state/dashboard-server.json"
+  server_url=""
+  if [[ -f "${server_state}" ]]; then
+    server_pid="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('pid',''), end='')" "${server_state}" 2>/dev/null || true)"
+    if [[ "${server_pid}" =~ ^[0-9]+$ ]] && kill -0 "${server_pid}" 2>/dev/null; then
+      server_url="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('url',''), end='')" "${server_state}" 2>/dev/null || true)"
+    fi
+  fi
+  if [[ -z "${server_url}" ]]; then
+    mkdir -p "${workspace}/logs"
+    nohup python3 "${dashboard_server}" --workspace "${workspace}" --project "${project_slug}" \
+      --lumen-bin "${LUMEN_CLI_BIN}" --lumen-home "${LUMEN_HOME}" \
+      > "${workspace}/logs/dashboard-server.log" 2>&1 < /dev/null &
+    local attempt
+    for attempt in {1..30}; do
+      if [[ -f "${server_state}" ]]; then
+        server_url="$(python3 -c "import json; print(json.load(open('${server_state}')).get('url',''), end='')" 2>/dev/null || true)"
+        [[ -n "${server_url}" ]] && break
+      fi
+      sleep 0.1
+    done
+  fi
+  [[ -n "${server_url}" ]] || { err "Interactive dashboard did not start. See ${workspace}/logs/dashboard-server.log"; exit 1; }
+
   if [[ "${open_flag}" == "1" ]]; then
     if command -v open >/dev/null 2>&1; then
-      open "${workspace}/dashboard.html"
+      open "${server_url}"
     elif command -v xdg-open >/dev/null 2>&1; then
-      xdg-open "${workspace}/dashboard.html" >/dev/null 2>&1
+      xdg-open "${server_url}" >/dev/null 2>&1
     else
-      printf 'Dashboard: %s/dashboard.html\n' "${workspace}"
+      printf 'Dashboard: %s\n' "${server_url}"
     fi
   else
-    printf 'Dashboard: %s/dashboard.html\n' "${workspace}"
+    printf 'Dashboard: %s\n' "${server_url}"
   fi
 }
 

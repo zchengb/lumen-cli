@@ -422,6 +422,14 @@ def main() -> int:
             if not slug:
                 usage()
             output_project(resolve_slug(slug), bool(flags.get("workspace_only")))
+        elif command == "resolve-workspace":
+            workspace = positional[0] if positional else None
+            if not workspace:
+                usage()
+            project = find_by_workspace(load_registry(), workspace)
+            if not project:
+                raise RuntimeError(f"Project workspace not found: {workspace}")
+            output_project(project, bool(flags.get("workspace_only")))
         elif command == "set-default":
             slug = positional[0] if positional else None
             if not slug:
