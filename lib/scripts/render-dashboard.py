@@ -351,11 +351,56 @@ def external_url(value) -> str:
     return candidate if candidate.startswith(("https://", "http://")) else ""
 
 
+def jira_site_host(common: dict, docs_root: Optional[Path] = None) -> str:
+    jira = (common.get("notifications") or {}).get("jira") or {}
+    site = str(jira.get("site", "")).strip()
+    if site:
+        if site.startswith(("https://", "http://")):
+            return site.rstrip("/")
+        if "." in site:
+            return f"https://{site}".rstrip("/")
+        return f"https://{site}.atlassian.net"
+
+    auth_conf = Path.home() / ".config" / "twg" / "auth.conf"
+    try:
+        for line in auth_conf.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("domain="):
+                domain = line.split("=", 1)[1].strip().strip('"')
+                if domain:
+                    return domain.rstrip("/") if domain.startswith(("https://", "http://")) else f"https://{domain}".rstrip("/")
+    except OSError:
+        pass
+
+    # A docs repo is the shared delivery source of truth. When an older scan
+    # finding only retained a Jira key, recover the site from any story that
+    # already has a published Jira URL instead of hard-coding a company host.
+    if docs_root:
+        stories = docs_root / "stories"
+        for metadata_path in stories.glob("**/metadata.json"):
+            metadata = load_json(metadata_path, {})
+            url = external_url(metadata.get("jiraUrl") or metadata.get("jira_url"))
+            match = re.match(r"(https?://[^/]+)", url)
+            if match:
+                return match.group(1)
+    return ""
+
+
+def jira_browse_url(issue: dict, common: dict, docs_root: Optional[Path] = None) -> str:
+    url = external_url(issue.get("jira_url"))
+    if url:
+        return url
+    key = str(issue.get("jira_key", "")).strip()
+    host = jira_site_host(common, docs_root)
+    return f"{host}/browse/{key}" if host and key else ""
+
+
 def issue_for_dashboard(
     issue: dict,
     repository_paths: dict[str, Path],
     scan_snippets_by_id: dict[str, str],
     scan_snippets_by_match: dict[str, str],
+    common: dict,
+    docs_root: Optional[Path] = None,
 ) -> dict:
     return {
         "id": issue.get("id", ""),
@@ -379,7 +424,7 @@ def issue_for_dashboard(
         "ignored_at": issue.get("ignored_at", ""),
         "pr_url": external_url(issue.get("pr_url")),
         "jira_key": issue.get("jira_key"),
-        "jira_url": external_url(issue.get("jira_url")),
+        "jira_url": jira_browse_url(issue, common, docs_root),
     }
 
 
@@ -482,7 +527,7 @@ def build_payload(root: Path) -> dict:
     }
     snippets_by_id, snippets_by_match = scan_code_snippets(scan_results)
     issues = [
-        issue_for_dashboard(item, repository_paths, snippets_by_id, snippets_by_match)
+        issue_for_dashboard(item, repository_paths, snippets_by_id, snippets_by_match, common, root.parent)
         for item in deduplicate_issues(registry.get("issues", []))
     ]
     issue_counts = {}

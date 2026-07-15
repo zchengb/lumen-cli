@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,7 +7,7 @@ import {
   Activity, ChevronDown, CircleAlert, CircleCheck, CircleDot, Code2, Copy,
   Eye, EyeOff, ExternalLink, FileCode2, GitBranch, KeyRound, LoaderCircle, Menu,
   Pencil, RotateCcw, Save, ScanSearch, Settings2, Terminal,
-  ShieldCheck, Sparkles, Truck, Workflow, XCircle, ZoomIn, ZoomOut
+  Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow, XCircle
 } from "lucide-react";
 import "./styles.css";
 
@@ -36,6 +36,13 @@ const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
   { id: "prompts", label: "WORKFLOW", icon: Workflow },
   { id: "settings", label: "SETTINGS", icon: Settings2 }
 ];
+
+const tabContext: Record<Tab, { title: string; description: string }> = {
+  scan: { title: "AUTO SCAN", description: "Review history and manage tracked findings." },
+  delivery: { title: "AUTO DELIVERY", description: "Story execution, verification, and pull request delivery." },
+  prompts: { title: "WORKFLOW", description: "The prompts, scripts, control points, and recovery paths behind each local automation." },
+  settings: { title: "SETTINGS", description: "Workspace configuration, scheduling, and local integrations." }
+};
 
 function text(value: unknown, fallback = "—") { return value === undefined || value === null || value === "" ? fallback : String(value); }
 function when(value: unknown) {
@@ -137,6 +144,7 @@ function App() {
   };
   const projects = data?.interactive?.projects || [];
   const tagline = data?.product?.tagline || "Engineering, made legible.";
+  const context = tabContext[activeTab];
 
   return <main className={`dashboard-layout ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
     <aside className="sidebar" aria-label="Lumen navigation">
@@ -145,12 +153,15 @@ function App() {
         <div className="sidebar-brand-copy"><strong>Lumen</strong><span>{tagline}</span></div>
       </div>
       <nav className="side-nav" aria-label="Dashboard sections">{tabItems.map((item) => { const Icon = item.icon; return <button title={item.label} className={activeTab === item.id ? "active" : ""} onClick={() => setActiveTab(item.id)} key={item.id}><Icon size={17} /><span>{item.label}</span></button>; })}</nav>
-      <div className="sidebar-foot"><small>{sidebarCollapsed ? "" : `Version ${lumenVersion}`}</small></div>
+      <div className="sidebar-foot">
+        {!sidebarCollapsed && <img src="assets/inspire-group-logo.png" className="company-mark" alt="INSPIRE GROUP" />}
+        <small>{sidebarCollapsed ? "" : `Version ${lumenVersion}`}</small>
+      </div>
     </aside>
     <IconButton className="sidebar-toggle" label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}><Menu size={14} /></IconButton>
     <section className="content-area">
       <header className="masthead">
-        <div className="masthead-spacer" />
+        <div className="masthead-context"><strong>{context.title}</strong><span>{context.description}</span></div>
         <div className="masthead-actions"><span className="last-updated">{lastUpdated ? `Updated ${when(lastUpdated.toISOString())}` : "Syncing…"}</span><label className="project-picker"><span>Project</span><select value={project} onChange={(event) => changeProject(event.target.value)}>{projects.map((item) => <option value={item.slug} key={item.slug}>{item.name}</option>)}</select><ChevronDown size={15} /></label></div>
       </header>
       <div className="page-content">
@@ -184,7 +195,6 @@ function ScanView({ data, project, interact }: { data: DashboardData; project: s
   const pageRuns = runs.slice(runPage * runPageSize, (runPage + 1) * runPageSize);
   const jumpToFindings = () => document.getElementById("tracked-findings")?.scrollIntoView({ behavior: "smooth", block: "start" });
   return <>
-    <PageIntro title="AUTO SCAN" description="Review history and manage tracked findings." />
     <section className="metrics"><Metric label="Open findings" value={openIssues.length} onClick={jumpToFindings} /><Metric label="Successful · 7d" value={stats.success_7d || 0} /><Metric label="Failed · 7d" value={stats.failed_7d || 0} /><Metric label="Lookback window" value={`${data.scan_window_days || 7}d`} /></section>
     <SectionHeading title="Scan History" meta={`${runs.length} runs`} /><Panel title=""><div className="table-scroll"><table><thead><tr><th>Finished</th><th>Status</th><th>Issues</th><th>Duration</th><th>Artifacts</th></tr></thead><tbody>{pageRuns.map((run: RecordValue) => <tr key={run.id}><td>{when(run.finished_at || run.started_at)}</td><td><Badge value={run.status} /></td><td><SeverityBreakdown run={run} /></td><td>{text(run.duration)}</td><td className="artifact-links">{run.html && <a href={`${run.html}?project=${encodeURIComponent(project)}`} target="_blank">HTML</a>}{run.pdf && <a href={`${run.pdf}?project=${encodeURIComponent(project)}`} target="_blank">PDF</a>}{!run.html && !run.pdf && "—"}</td></tr>)}</tbody></table></div>{runs.length > runPageSize && <Pagination page={runPage} pageCount={Math.ceil(runs.length / runPageSize)} onChange={setRunPage} />}</Panel>
     <SectionHeading title="Tracked Findings" meta={`${filteredIssues.length} of ${issues.length} records`} /><Panel title=""><div className="finding-filters" role="tablist">{(["all", "open", "resolved", "ignored"] as const).map((value) => <button className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}>{value === "all" ? "All" : titleStatus(value)} <span>{counts[value]}</span></button>)}</div><div id="tracked-findings" className="findings">{filteredIssues.length ? filteredIssues.map((issue: RecordValue) => <Finding issue={issue} onIgnore={() => setIgnoreCandidate(issue)} key={issue.id} />) : <Empty label="No findings match this status." />}</div></Panel>
@@ -195,13 +205,17 @@ function ScanView({ data, project, interact }: { data: DashboardData; project: s
 function Metric({ label, value, onClick }: { label: string; value: string | number; onClick?: () => void }) { return <div className={`metric ${onClick ? "metric-action" : ""}`} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={(event) => { if (onClick && (event.key === "Enter" || event.key === " ")) onClick(); }}><span>{label}</span><strong>{value}</strong></div>; }
 function Empty({ label }: { label: string }) { return <div className="empty"><ShieldCheck size={20} />{label}</div>; }
 function SectionHeading({ title, meta }: { title: string; meta: string }) { return <div className="section-heading"><h2>{title}</h2><span>{meta}</span></div>; }
-function SeverityBreakdown({ run }: { run: RecordValue }) { return <span className="severity-breakdown"><b className="high">High: {Number(run.high || 0)}</b><b className="medium">Medium: {Number(run.medium || 0)}</b><b className="low">Low: {Number(run.low || 0)}</b></span>; }
+function SeverityBreakdown({ run }: { run: RecordValue }) {
+  const levels = [["High", Number(run.high || 0), "high"], ["Medium", Number(run.medium || 0), "medium"], ["Low", Number(run.low || 0), "low"]] as const;
+  const present = levels.filter(([, count]) => count > 0);
+  return present.length ? <span className="severity-breakdown">{present.map(([label, count, tone]) => <b className={tone} key={label}>{label}: {count}</b>)}</span> : <>—</>;
+}
 function Pagination({ page, pageCount, onChange }: { page: number; pageCount: number; onChange: (page: number) => void }) { return <footer className="pagination"><span>Page {page + 1} of {pageCount}</span><div><button className="button secondary" disabled={page === 0} onClick={() => onChange(page - 1)}>Previous</button><button className="button secondary" disabled={page === pageCount - 1} onClick={() => onChange(page + 1)}>Next</button></div></footer>; }
 function Finding({ issue, onIgnore }: { issue: RecordValue; onIgnore: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const status = issue.status || issue.issue_status || "open";
   const isIgnorable = !["ignored", "resolved", "accepted_risk", "false_positive"].includes(String(status).toLowerCase());
-  return <article className="finding"><div className="finding-main"><div className="finding-copy"><div className="finding-heading"><h4>{text(issue.title, "Untitled finding")}</h4><Badge value={status} /></div><p>{text(issue.repository, "Unknown repository")} <i>|</i> {when(issue.last_seen_at)}</p><div className="finding-links finding-row-links"><button className="finding-link" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide detail" : "View detail"}</button>{issue.jira_key && (issue.jira_url ? <a className="finding-link" href={issue.jira_url} target="_blank" rel="noreferrer">{issue.jira_key}<ExternalLink size={12} /></a> : <span className="finding-link muted-link">{issue.jira_key}</span>)}{issue.pr_url && <a className="finding-link" href={issue.pr_url} target="_blank" rel="noreferrer">Pull request<ExternalLink size={12} /></a>}</div></div><div className="finding-actions">{isIgnorable && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Code" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /></div>}</article>;
+  return <article className="finding"><div className="finding-main"><div className="finding-copy"><div className="finding-heading"><code className="finding-id">{text(issue.id)}</code><h4>{text(issue.title, "Untitled finding")}</h4><Badge value={status} /></div><p>{text(issue.repository, "Unknown repository")} <i>|</i> {when(issue.last_seen_at)}</p><div className="finding-links finding-row-links"><button className="finding-link" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide detail" : "View detail"}</button>{issue.jira_key && issue.jira_url && <a className="finding-link" href={issue.jira_url} target="_blank" rel="noreferrer">{issue.jira_key}<ExternalLink size={12} /></a>}{issue.pr_url && <a className="finding-link" href={issue.pr_url} target="_blank" rel="noreferrer">Pull request<ExternalLink size={12} /></a>}</div></div><div className="finding-actions">{isIgnorable && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Code" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /></div>}</article>;
 }
 
 function FindingDetail({ label, value, code = false }: { label: string; value: unknown; code?: boolean }) { return <section className="finding-detail-row"><h5>{label}</h5>{code ? <pre><code>{text(value, "No code snippet was captured for this historical finding.")}</code></pre> : <p>{text(value, "Not recorded.")}</p>}</section>; }
@@ -227,7 +241,6 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
     finally { setLoadingLog(false); }
   };
   return <>
-    <PageIntro title="AUTO DELIVERY" description="Story execution, verification, and pull request delivery." />
     <Panel title="Current Progress" className="delivery-summary"><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at)} /><Fact label="Finished" value={when(current.finished_at)} /></div><DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} startedAt={current.started_at} finishedAt={current.finished_at} onStageClick={openStage} /></Panel>
     <SectionHeading title="Delivery History" meta={`${runs.length} runs`} /><Panel title="" className="history-panel"><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Checks</th><th>Duration</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; const failed = runChecks.filter((item: RecordValue) => item.status === "failed"); const canInspectStatus = failed.length || /failed|blocked/i.test(String(run.status)); return <tr key={run.run_id}><td><div className="history-story"><span className="history-story-line"><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</span><small>{text(run.branch, "")}</small></div></td><td>{when(run.finished_at || run.started_at)}</td><td>{canInspectStatus ? <button className="status-badge-button" title="Open failure log" onClick={() => void openStage({ label: "Delivery failure", duration: elapsed(run.started_at, run.finished_at), detail: failed.map((item: RecordValue) => item.summary || item.label).filter(Boolean).join(" · ") || "Open the delivery log for details." }, run.run_id)}><Badge value={run.status} /></button> : <Badge value={run.status} />}</td><td><PrLinks items={run.pull_requests || []} /></td><td><VerificationSummary checks={runChecks} onClick={() => setSelectedChecks(runChecks)} /></td><td>{elapsed(run.started_at, run.finished_at)}</td></tr>; }) : <tr><td colSpan={6}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
     {selectedStage && <DeliveryLogDialog stage={selectedStage} content={logContent} error={logError} loading={loadingLog} onClose={() => setSelectedStage(null)} />}
@@ -320,21 +333,49 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
   const [mode, setMode] = useState<"scan" | "delivery">("scan");
   const [selected, setSelected] = useState<{ mode: "scan" | "delivery"; path: string } | null>(null);
   const [content, setContent] = useState("");
-  const [zoom, setZoom] = useState(1);
+  const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
+  const [fullscreen, setFullscreen] = useState(false);
+  const pointer = useRef<{ id: number; x: number; y: number } | null>(null);
   const modePrompts = prompts.filter((item) => item.mode === mode);
   const choose = async (item: { mode: "scan" | "delivery"; path: string }) => {
     setSelected(item);
     try { const response = await request(`/api/prompt?mode=${encodeURIComponent(item.mode)}&path=${encodeURIComponent(item.path)}`, project); setContent(response.content); }
     catch (err) { notify(err instanceof Error ? err.message : "Unable to load prompt"); }
   };
-  const switchMode = (next: "scan" | "delivery") => { setMode(next); setSelected(null); setContent(""); setZoom(1); };
-  const changeZoom = (delta: number) => setZoom((current) => Math.max(.7, Math.min(1.3, Math.round((current + delta) * 10) / 10)));
+  const switchMode = (next: "scan" | "delivery") => { setMode(next); setSelected(null); setContent(""); setView({ x: 0, y: 0, scale: 1 }); };
+  useEffect(() => {
+    if (!fullscreen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setFullscreen(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [fullscreen]);
+  const panOrZoom = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (event.ctrlKey || event.metaKey) {
+      const scale = Math.max(.65, Math.min(1.55, view.scale * (event.deltaY > 0 ? .92 : 1.08)));
+      setView((current) => ({ ...current, scale }));
+    } else setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }));
+  };
+  const startPan = (event: React.PointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("button,a,textarea,input")) return;
+    pointer.current = { id: event.pointerId, x: event.clientX, y: event.clientY };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const movePan = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointer.current || pointer.current.id !== event.pointerId) return;
+    const dx = event.clientX - pointer.current.x;
+    const dy = event.clientY - pointer.current.y;
+    pointer.current = { ...pointer.current, x: event.clientX, y: event.clientY };
+    setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
+  };
+  const stopPan = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (pointer.current?.id === event.pointerId) pointer.current = null;
+  };
   const columns = workflowColumns(mode);
   return <>
-    <PageIntro title="WORKFLOW" description="The prompts, scripts, control points, and recovery paths behind each local automation." />
     <div className="workflow-mode-switch" role="tablist"><button className={mode === "scan" ? "active" : ""} onClick={() => switchMode("scan")}>Auto Scan</button><button className={mode === "delivery" ? "active" : ""} onClick={() => switchMode("delivery")}>Auto Delivery</button></div>
-    <Panel title={mode === "scan" ? "Auto Scan Workflow" : "Auto Delivery Workflow"} action={<div className="workflow-toolbar"><span>{Math.round(zoom * 100)}%</span><IconButton label="Zoom out" onClick={() => changeZoom(-.1)}><ZoomOut size={14} /></IconButton><IconButton label="Reset zoom" onClick={() => setZoom(1)}><RotateCcw size={13} /></IconButton><IconButton label="Zoom in" onClick={() => changeZoom(.1)}><ZoomIn size={14} /></IconButton></div>} className="workflow-panel">
-      <div className="workflow-canvas"><div className="workflow-scale" style={{ zoom } as React.CSSProperties}><div className="workflow-columns">{columns.map((column, columnIndex) => {
+    <Panel title={mode === "scan" ? "Auto Scan Workflow" : "Auto Delivery Workflow"} action={<IconButton label={fullscreen ? "Exit full screen" : "View full screen"} onClick={() => setFullscreen((value) => !value)}>{fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</IconButton>} className={`workflow-panel ${fullscreen ? "workflow-panel-fullscreen" : ""}`}>
+      <div className="workflow-canvas workflow-viewport" onWheel={panOrZoom} onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan}><div className="workflow-scale" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}><div className="workflow-columns">{columns.map((column, columnIndex) => {
         const columnPrompts = modePrompts.filter((item) => column.layers.includes(promptLayer(item, mode)));
         const nodes = [...column.scripts.map((script) => ({ kind: "script" as const, script })), ...columnPrompts.map((prompt) => ({ kind: "prompt" as const, prompt }))];
         return <section className="workflow-column" key={column.title}><header><span>{column.eyebrow}</span><strong>{column.title}</strong></header><div className="workflow-node-stack">{nodes.map((node, nodeIndex) => {
@@ -372,7 +413,7 @@ function SettingsView({ data, project, interact, notify }: { data: DashboardData
   const copy = async (name: string) => { try { const result = await getSecret(name); await navigator.clipboard.writeText(result); notify("Integration value copied"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to copy value"); } };
   const edit = async (name: string) => { try { const result = await getSecret(name); setKey(name); setValue(result); notify("Integration value ready to edit"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to load value"); } };
   const configured = workspace.configured_integrations || [];
-  return <><PageIntro title="SETTINGS" description="Workspace configuration, scheduling, and local integrations." /><div className="settings-stack"><Panel title="Workspace"><div className="settings-section"><div className="settings-copy"><h4>Review window</h4><p>Controls how much repository history Auto Scan considers on each run.</p></div><div className="settings-control"><Field label="Lookback, days"><input type="number" min="1" max="365" value={scanWindow} onChange={(event) => setScanWindow(event.target.value)} /></Field><button className="button primary" onClick={() => void interact("/api/workspace", { scan_window_days: Number(scanWindow) }, "Workspace configuration saved")}><Save size={15} />Save</button></div></div><div className="settings-meta"><InfoRow label="Workspace" value={<code>{text(workspace.path)}</code>} /><InfoRow label="Configured integration keys" value={configured.length} /></div></Panel><Panel title="Automation schedules"><div className="settings-section"><div className="settings-copy"><h4>Auto Scan</h4><p>{text(schedules.scan?.description, "No recurring scan is configured.")}</p></div><div className="settings-control wide"><Field label="Five-field cron"><input value={scanCron} onChange={(event) => setScanCron(event.target.value)} /></Field><div className="button-row"><button className="button primary" onClick={() => void interact("/api/schedule", { kind: "scan", action: "save", cron: scanCron }, "Auto Scan schedule saved")}><Save size={15} />Save schedule</button>{schedules.scan && <button className="button danger" onClick={() => { if (window.confirm("Remove this local Auto Scan schedule?")) void interact("/api/schedule", { kind: "scan", action: "remove" }, "Auto Scan schedule removed"); }}><XCircle size={15} />Remove</button>}</div></div></div><div className="settings-section divider"><div className="settings-copy"><h4>Auto Delivery</h4><p>{text(schedules.delivery?.description, "No delivery polling is configured.")}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => setDeliveryInterval(event.target.value)} /></Field><Field label="Eligible JIRA status"><input value={deliveryStatus} onChange={(event) => setDeliveryStatus(event.target.value)} /></Field></div><div className="button-row"><button className="button primary" onClick={() => void interact("/api/schedule", { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_status: deliveryStatus }, "Auto Delivery schedule saved")}><Save size={15} />Save schedule</button>{schedules.delivery && <button className="button danger" onClick={() => { if (window.confirm("Remove this local Auto Delivery schedule?")) void interact("/api/schedule", { kind: "delivery", action: "remove" }, "Auto Delivery schedule removed"); }}><XCircle size={15} />Remove</button>}</div></div></div></Panel><Panel title="Local integration keys" action={<span className="muted">Stored only in this workspace</span>}><div className="settings-section"><div className="settings-copy"><h4>Available keys</h4><p>Only values that are actually configured are shown. GitHub pull requests use the authenticated <code>gh</code> session unless a scheduled job needs an explicit token.</p></div><div className="settings-control wide"><div className="secret-list">{configured.length ? configured.map((name: string) => <div className="secret-row" key={name}><code>{name}</code><input readOnly type={secrets[name] ? "text" : "password"} value={secrets[name] || "••••••••••••"} aria-label={`Value for ${name}`} /><div><IconButton label="Reveal value" onClick={() => void reveal(name)}>{secrets[name] ? <EyeOff size={15} /> : <Eye size={15} />}</IconButton><IconButton label="Copy value" onClick={() => void copy(name)}><Copy size={15} /></IconButton><IconButton label="Edit value" onClick={() => void edit(name)}><Pencil size={15} /></IconButton></div></div>) : <Empty label="No local integration keys configured." />}</div></div></div><div className="settings-section divider"><div className="settings-copy"><h4>Add or replace key</h4><p>Use this for a webhook, agent credential, or a scheduler-only GitHub token.</p></div><div className="settings-control wide"><Field label="Variable name"><input placeholder="FEISHU_WEBHOOK_URL" value={key} onChange={(event) => setKey(event.target.value)} /></Field><Field label="Value"><input type="password" placeholder="Paste a new value" value={value} onChange={(event) => setValue(event.target.value)} /></Field><button className="button primary" onClick={() => { void interact("/api/integration", { key, value }, "Integration key saved"); setValue(""); }}><Save size={15} />Save key</button></div></div></Panel></div></>;
+  return <><div className="settings-stack"><Panel title="Workspace"><div className="settings-section"><div className="settings-copy"><h4>Review window</h4><p>Controls how much repository history Auto Scan considers on each run.</p></div><div className="settings-control"><Field label="Lookback, days"><input type="number" min="1" max="365" value={scanWindow} onChange={(event) => setScanWindow(event.target.value)} /></Field><button className="button primary" onClick={() => void interact("/api/workspace", { scan_window_days: Number(scanWindow) }, "Workspace configuration saved")}><Save size={15} />Save</button></div></div><div className="settings-meta"><InfoRow label="Workspace" value={<code>{text(workspace.path)}</code>} /><InfoRow label="Configured integration keys" value={configured.length} /></div></Panel><Panel title="Automation schedules"><div className="settings-section"><div className="settings-copy"><h4>Auto Scan</h4><p>{text(schedules.scan?.description, "No recurring scan is configured.")}</p></div><div className="settings-control wide"><Field label="Five-field cron"><input value={scanCron} onChange={(event) => setScanCron(event.target.value)} /></Field><div className="button-row"><button className="button primary" onClick={() => void interact("/api/schedule", { kind: "scan", action: "save", cron: scanCron }, "Auto Scan schedule saved")}><Save size={15} />Save schedule</button>{schedules.scan && <button className="button danger" onClick={() => { if (window.confirm("Remove this local Auto Scan schedule?")) void interact("/api/schedule", { kind: "scan", action: "remove" }, "Auto Scan schedule removed"); }}><XCircle size={15} />Remove</button>}</div></div></div><div className="settings-section divider"><div className="settings-copy"><h4>Auto Delivery</h4><p>{text(schedules.delivery?.description, "No delivery polling is configured.")}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => setDeliveryInterval(event.target.value)} /></Field><Field label="Eligible JIRA status"><input value={deliveryStatus} onChange={(event) => setDeliveryStatus(event.target.value)} /></Field></div><div className="button-row"><button className="button primary" onClick={() => void interact("/api/schedule", { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_status: deliveryStatus }, "Auto Delivery schedule saved")}><Save size={15} />Save schedule</button>{schedules.delivery && <button className="button danger" onClick={() => { if (window.confirm("Remove this local Auto Delivery schedule?")) void interact("/api/schedule", { kind: "delivery", action: "remove" }, "Auto Delivery schedule removed"); }}><XCircle size={15} />Remove</button>}</div></div></div></Panel><Panel title="Local integration keys" action={<span className="muted">Stored only in this workspace</span>}><div className="settings-section"><div className="settings-copy"><h4>Available keys</h4><p>Only values that are actually configured are shown. GitHub pull requests use the authenticated <code>gh</code> session unless a scheduled job needs an explicit token.</p></div><div className="settings-control wide"><div className="secret-list">{configured.length ? configured.map((name: string) => <div className="secret-row" key={name}><code>{name}</code><input readOnly type={secrets[name] ? "text" : "password"} value={secrets[name] || "••••••••••••"} aria-label={`Value for ${name}`} /><div><IconButton label="Reveal value" onClick={() => void reveal(name)}>{secrets[name] ? <EyeOff size={15} /> : <Eye size={15} />}</IconButton><IconButton label="Copy value" onClick={() => void copy(name)}><Copy size={15} /></IconButton><IconButton label="Edit value" onClick={() => void edit(name)}><Pencil size={15} /></IconButton></div></div>) : <Empty label="No local integration keys configured." />}</div></div></div><div className="settings-section divider"><div className="settings-copy"><h4>Add or replace key</h4><p>Use this for a webhook, agent credential, or a scheduler-only GitHub token.</p></div><div className="settings-control wide"><Field label="Variable name"><input placeholder="FEISHU_WEBHOOK_URL" value={key} onChange={(event) => setKey(event.target.value)} /></Field><Field label="Value"><input type="password" placeholder="Paste a new value" value={value} onChange={(event) => setValue(event.target.value)} /></Field><button className="button primary" onClick={() => { void interact("/api/integration", { key, value }, "Integration key saved"); setValue(""); }}><Save size={15} />Save key</button></div></div></Panel></div></>;
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="field"><span>{label}</span>{children}</label>; }
