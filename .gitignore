@@ -3,6 +3,7 @@ build/
 *.tmp
 .test-lumen-bin/
 .test-lumen-home/
+dashboard-ui/node_modules/
 
 .idea/
 __pycache__/

@@ -97,7 +97,7 @@ lumen schedule scan remove --project <project-slug>
 lumen schedule list
 ```
 
-Supported macOS scan forms are every-N-minutes, daily, and weekday schedules. The Dashboard offers the same configuration through the `SCAN` view.
+Supported macOS scan forms are every-N-minutes, daily, and weekday schedules. The Dashboard offers the same configuration through the `AUTO SCAN` view.
 
 ## Delivery Workflow
 
@@ -154,14 +154,14 @@ lumen upgrade --project <project-slug>
 lumen dashboard --project <project-slug>
 ```
 
-The command starts a local service bound only to `127.0.0.1` and opens the full URL with its dynamically allocated port. The Dashboard has four views:
+The command starts a local service bound only to `127.0.0.1` and opens the full URL with its dynamically allocated port. Its React interface is prebuilt and packaged with Lumen, so operators do not need Node.js, npm, or frontend dependencies. The Dashboard has four views:
 
 | View | Scope |
 |---|---|
-| `SCAN` | scan history, tracked findings, ignore decisions, scan schedule |
-| `DELIVERY` | current run, verification evidence, PR history, delivery polling |
+| `AUTO SCAN` | scan history, tracked findings, ignore decisions, scan schedule |
+| `AUTO DELIVERY` | current run, verification evidence, PR history, delivery polling |
 | `PROMPTS` | scan prompts, delivery prompts, workspace coding guideline |
-| `WORKSPACE` | repository inventory, integration-key presence, scan window |
+| `SETTINGS` | workspace controls, locally managed integration keys, scan window, and schedules |
 
 Use the exact URL printed by Lumen. `http://127.0.0.1` without a port is not the Dashboard address.
 

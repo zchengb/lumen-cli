@@ -28,7 +28,7 @@ from scan_launchd import status as scan_schedule_status
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-WORKSPACE_STATIC_DIRECTORIES = {"reports", "logs", "results"}
+WORKSPACE_STATIC_DIRECTORIES = {"assets", "dashboard-app", "reports", "logs", "results"}
 
 
 def load_dashboard_renderer() -> Any:
@@ -137,6 +137,21 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         "configured_integrations": sorted(key for key in configured_keys if key),
         "repositories": load_json(workspace / "config" / "repos.json", {"repositories": []}).get("repositories", []),
     }
+
+
+def integration_value(workspace: Path, key: str) -> str:
+    if not key or not key.replace("_", "").isalnum() or key.upper() != key:
+        raise ValueError("Integration key must use uppercase letters, numbers, and underscores")
+    path = workspace / ".env.local"
+    if not path.is_file():
+        raise ValueError("No local integration values are configured")
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if line.lstrip().startswith("#") or "=" not in line:
+            continue
+        candidate, value = line.split("=", 1)
+        if candidate.strip() == key:
+            return value
+    raise ValueError(f"Integration key is not configured: {key}")
 
 
 def update_env_value(workspace: Path, key: str, value: str) -> None:
@@ -297,6 +312,12 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 path = safe_prompt_path(workspace, query.get("mode", [""])[0], query.get("path", [""])[0])
                 return self.respond_json(HTTPStatus.OK, {"content": path.read_text(encoding="utf-8")})
+            except (OSError, ValueError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/integration":
+            try:
+                key = query.get("key", [""])[0]
+                return self.respond_json(HTTPStatus.OK, {"key": key, "value": integration_value(workspace, key)})
             except (OSError, ValueError) as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path in {"/", "/dashboard.html"}:

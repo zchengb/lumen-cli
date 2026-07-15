@@ -522,6 +522,11 @@ sync_workspace_templates() {
     mkdir -p "${workspace}/assets"
     cp -R "${LUMEN_TEMPLATES_DIR}/assets/." "${workspace}/assets/"
   fi
+  if [[ -d "${LUMEN_TEMPLATES_DIR}/dashboard-app" ]]; then
+    rm -rf "${workspace}/dashboard-app"
+    mkdir -p "${workspace}/dashboard-app"
+    cp -R "${LUMEN_TEMPLATES_DIR}/dashboard-app/." "${workspace}/dashboard-app/"
+  fi
 
   ok "Refreshed workspace templates. Existing prompt files were preserved; missing defaults were added."
   printf '  Workspace: %s\n' "${workspace}"
