@@ -11,6 +11,7 @@ from delivery_workspace import (
     StoryContext,
     delivery_result_path,
     load_story_context,
+    read_json,
     workspace_lumen_dir,
 )
 
@@ -102,6 +103,40 @@ Delivery result file: {delivery_result_path(context.workspace_root)}
 """
 
 
+def delivery_remediation_path(result_path: Path) -> Path:
+    return result_path.with_name("delivery-remediation.json")
+
+
+def failed_verification_evidence(payload: dict, result_path: Path) -> list[dict]:
+    remediation = payload.get("remediation") if isinstance(payload.get("remediation"), dict) else {}
+    sidecar = read_json(delivery_remediation_path(result_path), {})
+    if isinstance(sidecar, dict) and sidecar:
+        remediation = sidecar
+
+    attempt_no = remediation.get("attempt")
+    attempts = remediation.get("attempts") if isinstance(remediation.get("attempts"), list) else []
+    if attempt_no is not None:
+        for entry in reversed(attempts):
+            if not isinstance(entry, dict) or entry.get("attempt") != attempt_no:
+                continue
+            failed = entry.get("failed_verification")
+            if isinstance(failed, list):
+                return [item for item in failed if isinstance(item, dict)]
+
+    if attempts:
+        last = attempts[-1]
+        if isinstance(last, dict):
+            failed = last.get("failed_verification")
+            if isinstance(failed, list):
+                return [item for item in failed if isinstance(item, dict)]
+
+    return [
+        item
+        for item in payload.get("verification_results", [])
+        if isinstance(item, dict) and item.get("status") == "failed"
+    ]
+
+
 def remediation_context_block(context: StoryContext) -> str:
     result_path = delivery_result_path(context.workspace_root)
     payload: dict = {}
@@ -113,11 +148,10 @@ def remediation_context_block(context: StoryContext) -> str:
         except (OSError, json.JSONDecodeError):
             pass
     remediation = payload.get("remediation") if isinstance(payload.get("remediation"), dict) else {}
-    failed = [
-        item
-        for item in payload.get("verification_results", [])
-        if isinstance(item, dict) and item.get("status") == "failed"
-    ]
+    sidecar = read_json(delivery_remediation_path(result_path), {})
+    if isinstance(sidecar, dict) and sidecar:
+        remediation = sidecar
+    failed = failed_verification_evidence(payload, result_path)
     evidence = json.dumps(failed, indent=2, ensure_ascii=False)
     return f"""# Verification Remediation Context
 

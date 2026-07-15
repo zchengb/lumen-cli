@@ -203,14 +203,15 @@ If the repository uses a different PR template, follow the repository template a
 
 ## Verification Rules
 
-Follow the `Verification` section of `technical-plan.md`. Test depth is discovered per repository; it is not a blanket command list:
+Follow the `Verification` section of `technical-plan.md` when choosing tests to add or update in code. **Do not run the verification profile during implementation.** Lumen CLI runs compile, static analysis, and test commands in a dedicated verification stage after the agent exits.
 
-- Java repositories: run compile/grammar, PMD or equivalent static checks, focused unit tests, and integration/architecture tests when the repository already provides those test patterns or the plan adds them.
-- App, PHP, and frontend repositories: run only the lightweight syntax, type, lint, or existing focused tests explicitly allowed by the plan/runtime profile. Do not infer a full native build or environment-heavy integration suite.
-- If a repository has architecture guard tests, include the affected guard test in verification. A changed layer boundary without its existing guard passing is a failed delivery.
-- If an expected unit or integration test suite does not exist, record the observed capability and the selected verification level; do not claim coverage that the repository cannot provide.
+During implementation:
 
-Lumen's default Java/Gradle profile runs the following checks only when applicable or when no repository-specific verification profile overrides them:
+- Write or update tests that match the plan and repository patterns.
+- Do not run `./gradlew`, `npm run lint`, `php -l`, or similar project-wide checks as a pre-handoff gate.
+- Do not record `verification_results` in `delivery-result.json`. Lumen fills them from real command output.
+
+Lumen's default Java/Gradle profile (for reference only — Lumen runs these, not the agent):
 
 | Check | Typical Java / Gradle command |
 |---|---|
@@ -219,7 +220,7 @@ Lumen's default Java/Gradle profile runs the following checks only when applicab
 | Unit Test | `./gradlew test` with unit-focused test patterns |
 | Integration Test | `./gradlew test` with controller/base/integration patterns |
 
-Lumen CLI reruns the configured verification profile after the agent exits. Do not mark delivery complete if any mandatory check failed.
+If verification fails, Lumen may invoke a bounded remediation pass. Fix the reported failure; Lumen reruns verification.
 
 ## When To Stop And Escalate
 

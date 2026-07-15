@@ -27,7 +27,7 @@ interface DashboardData extends RecordValue {
     schedules?: { scan?: RecordValue | null; delivery?: RecordValue | null };
     workspace?: RecordValue;
   };
-  delivery?: { current?: RecordValue; runs?: RecordValue[] };
+  delivery?: { current?: RecordValue; runs?: RecordValue[]; scheduler_activity?: RecordValue[]; scheduler_log_available?: boolean };
 }
 
 const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
@@ -229,21 +229,31 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
   const current = delivery.current || {};
   const runs = delivery.runs || [];
   const stages = current.stages || [];
+  const schedulerActivity = delivery.scheduler_activity || [];
   const [selectedStage, setSelectedStage] = useState<RecordValue | null>(null);
   const [selectedChecks, setSelectedChecks] = useState<RecordValue[] | null>(null);
   const [logContent, setLogContent] = useState("");
   const [logError, setLogError] = useState("");
   const [loadingLog, setLoadingLog] = useState(false);
+  const [schedulerLogOpen, setSchedulerLogOpen] = useState(false);
   const openStage = async (stage: RecordValue, runId = current.run_id || "") => {
     setSelectedStage(stage); setLogContent(""); setLogError(""); setLoadingLog(true);
     try { const response = await request(`/api/delivery/log?run_id=${encodeURIComponent(runId)}`, project); setLogContent(response.content || "No log content recorded."); }
     catch (err) { setLogError(err instanceof Error ? err.message : "Unable to load delivery log"); }
     finally { setLoadingLog(false); }
   };
+  const openSchedulerLog = async () => {
+    setSchedulerLogOpen(true); setLogContent(""); setLogError(""); setLoadingLog(true);
+    try { const response = await request("/api/delivery/scheduler-log", project); setLogContent(response.content || "No scheduler output recorded."); }
+    catch (err) { setLogError(err instanceof Error ? err.message : "Unable to load scheduler log"); }
+    finally { setLoadingLog(false); }
+  };
   return <>
     <Panel title="Current Progress" className="delivery-summary"><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at)} /><Fact label="Finished" value={when(current.finished_at)} /></div><DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} startedAt={current.started_at} finishedAt={current.finished_at} onStageClick={openStage} /></Panel>
     <SectionHeading title="Delivery History" meta={`${runs.length} runs`} /><Panel title="" className="history-panel"><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Checks</th><th>Duration</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; const failed = runChecks.filter((item: RecordValue) => item.status === "failed"); const canInspectStatus = failed.length || /failed|blocked/i.test(String(run.status)); return <tr key={run.run_id}><td><div className="history-story"><span className="history-story-line"><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</span><small>{text(run.branch, "")}</small></div></td><td>{when(run.finished_at || run.started_at)}</td><td>{canInspectStatus ? <button className="status-badge-button" title="Open failure log" onClick={() => void openStage({ label: "Delivery failure", duration: elapsed(run.started_at, run.finished_at), detail: failed.map((item: RecordValue) => item.summary || item.label).filter(Boolean).join(" · ") || "Open the delivery log for details." }, run.run_id)}><Badge value={run.status} /></button> : <Badge value={run.status} />}</td><td><PrLinks items={run.pull_requests || []} /></td><td><VerificationSummary checks={runChecks} onClick={() => setSelectedChecks(runChecks)} /></td><td>{elapsed(run.started_at, run.finished_at)}</td></tr>; }) : <tr><td colSpan={6}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
+    <SectionHeading title="Scheduler Activity" meta={`${schedulerActivity.length} recent events`} /><Panel title="" action={delivery.scheduler_log_available ? <button className="button secondary" onClick={() => void openSchedulerLog()}><Terminal size={14} />View raw log</button> : undefined}><div className="scheduler-activity">{schedulerActivity.length ? schedulerActivity.map((event: RecordValue, index: number) => <article className="scheduler-event" key={`${event.at}-${index}`}><Badge value={event.outcome} /><div><strong>{text(event.story_id || event.jira_key, "Workspace")}</strong><p>{text(event.message)}</p></div><time>{when(event.at)}</time></article>) : <Empty label="No scheduled delivery activity recorded yet." />}</div></Panel>
     {selectedStage && <DeliveryLogDialog stage={selectedStage} content={logContent} error={logError} loading={loadingLog} onClose={() => setSelectedStage(null)} />}
+    {schedulerLogOpen && <DeliveryLogDialog stage={{ label: "Scheduler log", duration: "Recent raw output", detail: "Launchd output is capped at 256 KiB; structured activity retains the latest 200 events." }} content={logContent} error={logError} loading={loadingLog} onClose={() => setSchedulerLogOpen(false)} />}
     {selectedChecks && <VerificationDialog checks={selectedChecks} onClose={() => setSelectedChecks(null)} />}
   </>;
 }

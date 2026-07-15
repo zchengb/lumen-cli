@@ -289,9 +289,21 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
         current = progress
     current["story_title"] = story_title(workspace, result, progress)
     current["stages"] = delivery_stages(current.get("phases"))
+    activity_path = workspace / "state" / "delivery-scheduler-activity.jsonl"
+    activity: list[dict[str, Any]] = []
+    if activity_path.is_file():
+        for line in activity_path.read_text(encoding="utf-8", errors="replace").splitlines()[-24:]:
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                activity.append(event)
     return {
         "current": current,
         "runs": runs,
+        "scheduler_activity": list(reversed(activity)),
+        "scheduler_log_available": (workspace / "logs" / "delivery-schedule.log").is_file(),
         "config": read_delivery_json(workspace / "config" / "delivery.json", {}),
     }
 
@@ -349,6 +361,13 @@ class DashboardServer(ThreadingHTTPServer):
             raise ValueError("Delivery log is no longer available")
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
         return {"run_id": selected.get("run_id", ""), "path": str(log_file.relative_to(workspace)), "content": "\n".join(lines[-220:])}
+
+    def delivery_scheduler_log(self, workspace: Path) -> dict[str, Any]:
+        log_file = workspace / "logs" / "delivery-schedule.log"
+        if not log_file.is_file():
+            raise ValueError("No scheduler log is available yet")
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        return {"path": str(log_file.relative_to(workspace)), "content": "\n".join(lines[-220:])}
 
     def update_schedule(self, body: dict[str, Any], workspace: Path, project: str) -> dict[str, Any]:
         kind = str(body.get("kind", ""))
@@ -422,6 +441,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 return self.respond_json(HTTPStatus.OK, self.server.delivery_log(workspace, query.get("run_id", [""])[0]))
             except (OSError, ValueError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/delivery/scheduler-log":
+            try:
+                return self.respond_json(HTTPStatus.OK, self.server.delivery_scheduler_log(workspace))
+            except ValueError as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path in {"/", "/dashboard.html"}:
             return self.serve_file(self.server.workspace / "dashboard.html", "text/html; charset=utf-8")

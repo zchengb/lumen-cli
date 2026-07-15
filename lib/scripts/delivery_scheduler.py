@@ -8,11 +8,35 @@ import json
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from delivery_workspace import workspace_lumen_dir
 from jira_sync import parse_twg_json, run_twg, twg_ready
+
+
+MAX_ACTIVITY_EVENTS = 200
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def record_activity(path: Path, outcome: str, message: str, **fields: Any) -> None:
+    """Persist a bounded, dashboard-friendly record independently of raw launchd output."""
+    event = {"at": utc_now(), "outcome": outcome, "message": message, **{key: value for key, value in fields.items() if value not in (None, "")}}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []
+        lines = [line for line in existing if line.strip()][-(MAX_ACTIVITY_EVENTS - 1):]
+        lines.append(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        temporary.replace(path)
+    except OSError:
+        # Scheduling must remain useful even when the optional activity record cannot be written.
+        return
 
 
 def normalized(value: Any) -> str:
@@ -84,20 +108,26 @@ def main() -> int:
     parser.add_argument("--docs-dir", required=True)
     parser.add_argument("--jira-status", default="Ready for Dev")
     parser.add_argument("--lumen-bin", default="lumen")
+    parser.add_argument("--activity-file")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
     docs_dir = Path(args.docs_dir).expanduser().resolve()
+    activity_file = Path(args.activity_file).expanduser() if args.activity_file else workspace_lumen_dir(docs_dir) / "state" / "delivery-scheduler-activity.jsonl"
     if not docs_dir.is_dir():
         print(f"Error: docs directory not found: {docs_dir}", file=sys.stderr)
         return 1
     if delivery_lock_exists(docs_dir):
-        print("Delivery already running; scheduler skipped this poll.")
+        message = "Delivery already running; scheduler skipped this poll."
+        print(message)
+        record_activity(activity_file, "skipped", message, reason="delivery_running")
         return 0
     try:
         sync_docs_checkout(docs_dir)
     except RuntimeError as exc:
-        print(f"Scheduler skipped: {exc}")
+        message = f"Scheduler skipped: {exc}"
+        print(message)
+        record_activity(activity_file, "skipped", message, reason="workspace_unavailable")
         return 0
 
     expected_status = normalized(args.jira_status)
@@ -106,23 +136,34 @@ def main() -> int:
         try:
             status = current_jira_status(jira_key)
         except RuntimeError as exc:
-            print(f"Scheduler skipped {jira_key}: {exc}")
+            message = f"Scheduler skipped {jira_key}: {exc}"
+            print(message)
+            record_activity(activity_file, "skipped", message, story_id=story_dir.name, jira_key=jira_key, reason="jira_unavailable")
             return 0
         if normalized(status) != expected_status:
-            print(f"Skipped {jira_key}: JIRA status is '{status}', expected '{args.jira_status}'.")
+            message = f"JIRA status is '{status}', expected '{args.jira_status}'."
+            print(f"Skipped {jira_key}: {message}")
+            record_activity(activity_file, "skipped", message, story_id=story_dir.name, jira_key=jira_key, jira_status=status, expected_jira_status=args.jira_status, reason="jira_status_mismatch")
             continue
 
         lumen_bin = shutil.which(args.lumen_bin) if "/" not in args.lumen_bin else args.lumen_bin
         if not lumen_bin:
-            print(f"Error: lumen executable not found: {args.lumen_bin}", file=sys.stderr)
+            message = f"lumen executable not found: {args.lumen_bin}"
+            print(f"Error: {message}", file=sys.stderr)
+            record_activity(activity_file, "failed", message, story_id=story_dir.name, jira_key=jira_key, reason="lumen_missing")
             return 1
         command = [str(lumen_bin), "delivery", "run", str(docs_dir), "--story", story_dir.name]
         if args.dry_run:
             command.append("--dry-run")
         print(f"Starting scheduled delivery for {jira_key}: {story_dir.name}")
-        return subprocess.run(command, check=False).returncode
+        record_activity(activity_file, "started", "Scheduled delivery started.", story_id=story_dir.name, jira_key=jira_key)
+        code = subprocess.run(command, check=False).returncode
+        record_activity(activity_file, "completed" if code == 0 else "failed", "Scheduled delivery finished." if code == 0 else f"Scheduled delivery exited with code {code}.", story_id=story_dir.name, jira_key=jira_key, exit_code=code)
+        return code
 
-    print("No eligible delivery Story found.")
+    message = "No eligible delivery Story found."
+    print(message)
+    record_activity(activity_file, "idle", message, reason="no_eligible_story")
     return 0
 
 

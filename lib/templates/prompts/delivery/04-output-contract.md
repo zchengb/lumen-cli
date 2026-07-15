@@ -28,17 +28,7 @@ Schema:
   ],
   "commits": [],
   "pr_urls": [],
-  "verification_results": [
-    {
-      "repository": "mbpass-business",
-      "id": "pmd",
-      "label": "PMD Check",
-      "command": "./gradlew pmdMain pmdTest",
-      "exit_code": 0,
-      "status": "passed",
-      "summary": "Passed"
-    }
-  ],
+  "verification_results": [],
   "failures": [],
   "started_at": "2026-07-08T12:00:00Z",
   "finished_at": "2026-07-08T12:30:00Z"
@@ -51,6 +41,6 @@ Allowed `delivery_status` values:
 - `blocked` — cannot proceed safely
 - `failed` — implementation attempted but failed
 
-Do not create commits, push branches, or create PRs. Do not hallucinate PR URLs, test results, or commit SHAs. Lumen fills commit and PR fields after verification succeeds.
+Do not create commits, push branches, or create PRs. Do not hallucinate PR URLs, test results, or commit SHAs. Leave `verification_results` as `[]`; Lumen fills verification, commit, and PR fields after its verification stage succeeds.
 
 Leave `feishu` and `jira` out of the file. The Lumen wrapper fills those after your run.

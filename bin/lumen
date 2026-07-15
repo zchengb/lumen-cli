@@ -2420,12 +2420,22 @@ cmd_delivery_schedule_run() {
     esac
   done
   [[ -n "${slug}" ]] || { err "Usage: lumen delivery schedule run --project <slug> [--jira-status <status>]"; exit 1; }
-  local docs_dir scheduler_py dry_flag=""
+  local docs_dir workspace scheduler_py activity_file scheduler_log dry_flag=""
   docs_dir="$(delivery_docs_dir_for_project "${slug}")" || { err "Project not found: ${slug}"; exit 1; }
+  workspace="${docs_dir}/${LUMEN_DIR_NAME}"
+  [[ -d "${workspace}" ]] || workspace="${docs_dir}/${LEGACY_LUMEN_DIR_NAME}"
+  scheduler_log="${workspace}/logs/delivery-schedule.log"
+  activity_file="${workspace}/state/delivery-scheduler-activity.jsonl"
+  mkdir -p "$(dirname "${scheduler_log}")" "$(dirname "${activity_file}")"
+  # launchd keeps stdout open for this process, so truncate in place to retain its file handle.
+  if [[ -f "${scheduler_log}" ]] && [[ $(wc -c < "${scheduler_log}") -ge 262144 ]]; then
+    : > "${scheduler_log}"
+    printf '[Lumen] Scheduler log truncated at 256 KiB; recent activity remains in Dashboard.\n'
+  fi
   scheduler_py="${LUMEN_HOME}/lib/scripts/delivery_scheduler.py"
   [[ -f "${scheduler_py}" ]] || { err "Delivery scheduler not found: ${scheduler_py}"; exit 1; }
   [[ "${dry_run}" == "1" ]] && dry_flag="--dry-run"
-  python3 "${scheduler_py}" --docs-dir "${docs_dir}" --jira-status "${jira_status}" --lumen-bin "${LUMEN_CLI_BIN}" ${dry_flag}
+  python3 "${scheduler_py}" --docs-dir "${docs_dir}" --jira-status "${jira_status}" --lumen-bin "${LUMEN_CLI_BIN}" --activity-file "${activity_file}" ${dry_flag}
 }
 
 cmd_delivery_schedule_add() {
@@ -2457,7 +2467,7 @@ cmd_delivery_schedule_add() {
   lumen_bin="$(command -v lumen || true)"
   lumen_bin="${lumen_bin:-${LUMEN_CLI_BIN}}"
   lumen_bin="$(cd "$(dirname "${lumen_bin}")" && pwd)/$(basename "${lumen_bin}")"
-  log_file="${workspace}/logs/delivery/schedule.log"
+  log_file="${workspace}/logs/delivery-schedule.log"
   mkdir -p "$(dirname "${log_file}")"
   source "${LUMEN_HOME}/lib/scripts/ensure-path.sh"
   cron_path="$(schedule_path_export "${lumen_bin}")"

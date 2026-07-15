@@ -117,3 +117,6 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .workflow-viewport{height:620px}.sidebar-toggle{z-index:40}.sidebar-is-collapsed .sidebar-foot small{display:block;width:auto;color:#8b8b92;font-size:9px;white-space:nowrap}
 
 @media(max-width:900px){.workflow-viewport{height:500px}}
+
+/* Scheduler events are compact structured history; raw launchd output remains optional. */
+.scheduler-activity{display:grid}.scheduler-event{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:12px;padding:14px 18px;border-bottom:1px solid #ececea}.scheduler-event:last-child{border-bottom:0}.scheduler-event>div{display:grid;gap:3px;min-width:0}.scheduler-event strong{color:#39393e;font-size:11px;font-weight:550}.scheduler-event p{overflow:hidden;margin:0;color:#77777f;font-size:11px;line-height:1.45;text-overflow:ellipsis;white-space:nowrap}.scheduler-event time{padding-top:3px;color:#8a8a91;font-size:10px;font-variant-numeric:tabular-nums;white-space:nowrap}.scheduler-event .badge{margin-top:1px}@media(max-width:700px){.scheduler-event{grid-template-columns:auto minmax(0,1fr)}.scheduler-event time{grid-column:2;padding-top:0}.scheduler-event p{white-space:normal}}

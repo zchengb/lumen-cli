@@ -390,6 +390,72 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             restored = json.loads(result.read_text(encoding="utf-8"))
             self.assertEqual(1, restored["remediation"]["attempt"])
 
+    def test_remediation_prompt_reads_archived_failures_after_prepare(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            story_dir = workspace / "stories" / "MBPAS-100-demo"
+            story_dir.mkdir(parents=True)
+            story_md = story_dir / "story.md"
+            plan = story_dir / "technical-plan.md"
+            metadata = story_dir / "metadata.json"
+            story_md.write_text("# Story\n\nContext\n", encoding="utf-8")
+            plan.write_text("# Plan\n\nApproved work\n", encoding="utf-8")
+            metadata.write_text("{}\n", encoding="utf-8")
+            result = workspace / "lumen" / "results" / "delivery-result.json"
+            result.parent.mkdir(parents=True)
+            result.write_text(
+                json.dumps(
+                    {
+                        "delivery_status": "ready_for_finalize",
+                        "verification_results": [
+                            {
+                                "repository": "mbpass-data-proxy",
+                                "label": "Language Grammar Check",
+                                "status": "failed",
+                                "summary": "compileJava FAILED",
+                            },
+                            {"repository": "mbpass-admin", "label": "PMD", "status": "passed"},
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPTS / "prepare_delivery_remediation.py"),
+                    "--result",
+                    str(result),
+                    "--attempt",
+                    "1",
+                    "--max-attempts",
+                    "2",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            payload = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual([], payload["verification_results"])
+
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=story_dir,
+                story_md=story_md,
+                technical_plan=plan,
+                metadata_path=metadata,
+                metadata={},
+                repos=[],
+                branch_name="feature/MBPAS-100-demo",
+                delivery_config={},
+                workspace_config={},
+            )
+            prompt = compose_delivery_prompt(context, remediation=True)
+            self.assertIn("Language Grammar Check", prompt)
+            self.assertIn("mbpass-data-proxy", prompt)
+            self.assertNotIn('"label": "PMD"', prompt)
+
     def test_delivery_docs_sync_commits_only_story_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
