@@ -30,3 +30,4 @@
 
 /* Keep all user-facing dashboard headings at natural system spacing. */
 .page-intro h1,.panel-header h3,.section-heading h2,.finding h4,.editor-header h3,.settings-copy h4,.flow-heading strong,.markdown-content h1,.markdown-content h2,.markdown-content h3,.modal h3,.delivery-log-header strong{letter-spacing:0}
+.ignore-reason{width:100%;min-height:52px;padding:8px 9px;border:1px solid #d8d8dd;border-radius:5px;background:#fff;color:#28282e;resize:vertical;font-size:13px;line-height:1.4}.ignore-reason:focus{outline:2px solid #cce5ff;border-color:#0071e3}
