@@ -129,8 +129,11 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
     configured_keys: list[str] = []
     if env_local.is_file():
         for line in env_local.read_text(encoding="utf-8", errors="replace").splitlines():
-            if "=" in line and not line.lstrip().startswith("#"):
-                configured_keys.append(line.split("=", 1)[0].strip())
+            if "=" not in line or line.lstrip().startswith("#"):
+                continue
+            key, value = line.split("=", 1)
+            if value.strip().strip('"').strip("'"):
+                configured_keys.append(key.strip())
     return {
         "path": str(workspace),
         "scan_window_days": (common.get("execution") or {}).get("scan_window_days", 7),

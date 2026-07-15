@@ -2,13 +2,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LUMEN_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 WORKSPACE_ROOT="${1:-${LUMEN_WORKSPACE:-$(pwd)}}"
-LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
-DASHBOARD_TEMPLATE="${LUMEN_HOME}/lib/templates/dashboard.html"
+# Resolve templates relative to this script.  A source checkout must render its
+# freshly built UI, even when an older Lumen installation is also present.
+DASHBOARD_TEMPLATE="${LUMEN_ROOT}/lib/templates/dashboard.html"
 WORKSPACE_DASHBOARD="${WORKSPACE_ROOT}/dashboard.html"
-DASHBOARD_ASSET_DIR="${LUMEN_HOME}/lib/templates/assets"
+DASHBOARD_ASSET_DIR="${LUMEN_ROOT}/lib/templates/assets"
 WORKSPACE_ASSET_DIR="${WORKSPACE_ROOT}/assets"
-DASHBOARD_APP_DIR="${LUMEN_HOME}/lib/templates/dashboard-app"
+DASHBOARD_APP_DIR="${LUMEN_ROOT}/lib/templates/dashboard-app"
 WORKSPACE_APP_DIR="${WORKSPACE_ROOT}/dashboard-app"
 
 if ! command -v python3 >/dev/null 2>&1; then
