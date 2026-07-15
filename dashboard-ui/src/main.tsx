@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Activity, Check, ChevronDown, Clipboard, Clock3, Copy, Eye, EyeOff,
-  FileCode2, KeyRound, LoaderCircle, Pencil, Play, RefreshCw, Save,
-  ScanSearch, Settings2, ShieldCheck, SlidersHorizontal, Truck, XCircle
+  Activity, ChevronDown, Copy, Eye, EyeOff, FileCode2, KeyRound,
+  LoaderCircle, PanelLeftClose, PanelLeftOpen, Pencil, RefreshCw, Save,
+  ScanSearch, Settings2, ShieldCheck, Truck, XCircle
 } from "lucide-react";
 import "./styles.css";
 
@@ -92,6 +92,7 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("lumen-sidebar-collapsed") === "true");
 
   const load = async () => {
     setLoading(true);
@@ -109,6 +110,7 @@ function App() {
 
   useEffect(() => { void load(); const id = window.setInterval(load, 30_000); return () => window.clearInterval(id); }, [project]);
   useEffect(() => { if (!notice) return; const id = window.setTimeout(() => setNotice(""), 3000); return () => window.clearTimeout(id); }, [notice]);
+  useEffect(() => { window.localStorage.setItem("lumen-sidebar-collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
 
   const changeProject = (slug: string) => {
     const url = new URL(window.location.href);
@@ -123,23 +125,29 @@ function App() {
   const projects = data?.interactive?.projects || [];
   const tagline = data?.product?.tagline || "Local engineering control plane";
 
-  return <main className="app-shell">
-    <header className="masthead">
-      <div className="brand-cluster">
+  return <main className={`dashboard-layout ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
+    <aside className="sidebar" aria-label="Lumen navigation">
+      <div className="sidebar-brand">
         <img src="assets/lumen-mark.png" className="brand-mark" alt="Lumen" />
-        <div className="brand-copy"><strong>Lumen</strong><span>{tagline}</span></div>
-        <label className="project-picker"><span>Project</span><select value={project} onChange={(event) => changeProject(event.target.value)}>{projects.map((item) => <option value={item.slug} key={item.slug}>{item.name}</option>)}</select><ChevronDown size={15} /></label>
+        <div className="sidebar-brand-copy"><strong>Lumen</strong><span>Engineering control plane</span></div>
       </div>
-      <div className="masthead-actions"><span className="local-state"><i />Local · Healthy</span><IconButton label="Refresh Dashboard" onClick={() => void load()}><RefreshCw size={16} className={loading ? "spin" : ""} /></IconButton></div>
-    </header>
-
-    <nav className="tabs" aria-label="Dashboard sections">{tabItems.map((item) => { const Icon = item.icon; return <button className={activeTab === item.id ? "active" : ""} onClick={() => setActiveTab(item.id)} key={item.id}><Icon size={15} />{item.label}</button>; })}</nav>
-    {error && <div className="status-note"><Activity size={15} />{error}</div>}
-    {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
-    {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
-    {data && activeTab === "delivery" && <DeliveryView data={data} />}
-    {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={setNotice} />}
-    {data && activeTab === "settings" && <SettingsView data={data} project={project} interact={interact} notify={setNotice} />}
+      <nav className="side-nav" aria-label="Dashboard sections">{tabItems.map((item) => { const Icon = item.icon; return <button title={item.label} className={activeTab === item.id ? "active" : ""} onClick={() => setActiveTab(item.id)} key={item.id}><Icon size={17} /><span>{item.label}</span></button>; })}</nav>
+      <div className="sidebar-foot"><span className="local-state"><i />Local workspace</span><small>{sidebarCollapsed ? "v" : "Lumen local control"}</small></div>
+    </aside>
+    <section className="content-area">
+      <header className="masthead">
+        <div className="masthead-left"><IconButton label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</IconButton><div className="context-copy"><span>Workspace</span><strong>{data?.interactive?.workspace?.path ? "Local control" : tagline}</strong></div></div>
+        <div className="masthead-actions"><label className="project-picker"><span>Project</span><select value={project} onChange={(event) => changeProject(event.target.value)}>{projects.map((item) => <option value={item.slug} key={item.slug}>{item.name}</option>)}</select><ChevronDown size={15} /></label><span className="local-state health"><i />Healthy</span><IconButton label="Refresh Dashboard" onClick={() => void load()}><RefreshCw size={16} className={loading ? "spin" : ""} /></IconButton></div>
+      </header>
+      <div className="page-content">
+        {error && <div className="status-note"><Activity size={15} />{error}</div>}
+        {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
+        {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
+        {data && activeTab === "delivery" && <DeliveryView data={data} />}
+        {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={setNotice} />}
+        {data && activeTab === "settings" && <SettingsView data={data} project={project} interact={interact} notify={setNotice} />}
+      </div>
+    </section>
     {notice && <div className="toast" role="status">{notice}</div>}
   </main>;
 }
