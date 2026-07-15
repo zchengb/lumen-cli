@@ -315,6 +315,7 @@ def reconcile_issue_registry(
                     "suggestion": redact(finding.get("suggestion", "")),
                     "root_cause": redact(finding.get("root_cause", "")),
                     "validation": redact(finding.get("validation", "")),
+                    "code_snippet": redact(finding.get("code_snippet", "")),
                     "pr_url": finding.get("pr_url"),
                     "jira_key": existing.get("jira_key"),
                     "jira_url": existing.get("jira_url"),
@@ -357,6 +358,7 @@ def reconcile_issue_registry(
                 "suggestion": redact(finding.get("suggestion", "")),
                 "root_cause": redact(finding.get("root_cause", "")),
                 "validation": redact(finding.get("validation", "")),
+                "code_snippet": redact(finding.get("code_snippet", "")),
                 "pr_url": finding.get("pr_url"),
             }
             issues.append(entry)

@@ -294,11 +294,39 @@ def compute_run_stats(runs: list) -> dict:
     return stats
 
 
-def code_excerpt(issue: dict, repository_paths: dict[str, Path]) -> str:
+def scan_code_snippets(scan_results: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
+    """Index stored scan snippets so older registry records remain readable."""
+    by_issue_id: dict[str, str] = {}
+    by_match_key: dict[str, str] = {}
+    for scan in scan_results:
+        for finding in scan.get("findings", []) or []:
+            if not isinstance(finding, dict):
+                continue
+            snippet = str(finding.get("code_snippet") or "").strip()
+            if not snippet:
+                continue
+            issue_id = str(finding.get("issue_id") or "").strip()
+            if issue_id:
+                by_issue_id.setdefault(issue_id, snippet)
+            match_key = issue_match_key(finding)
+            if match_key:
+                by_match_key.setdefault(match_key, snippet)
+    return by_issue_id, by_match_key
+
+
+def code_excerpt(
+    issue: dict,
+    repository_paths: dict[str, Path],
+    scan_snippets_by_id: dict[str, str],
+    scan_snippets_by_match: dict[str, str],
+) -> str:
     """Return a small local source excerpt for legacy registry entries without code evidence."""
     existing = str(issue.get("code_snippet") or "").strip()
     if existing:
         return existing
+    stored = scan_snippets_by_id.get(str(issue.get("id") or "")) or scan_snippets_by_match.get(issue_match_key(issue))
+    if stored:
+        return stored
     repository = str(issue.get("repository") or "")
     relative_file = issue_file_path(issue)
     repository_root = repository_paths.get(repository)
@@ -323,7 +351,12 @@ def external_url(value) -> str:
     return candidate if candidate.startswith(("https://", "http://")) else ""
 
 
-def issue_for_dashboard(issue: dict, repository_paths: dict[str, Path]) -> dict:
+def issue_for_dashboard(
+    issue: dict,
+    repository_paths: dict[str, Path],
+    scan_snippets_by_id: dict[str, str],
+    scan_snippets_by_match: dict[str, str],
+) -> dict:
     return {
         "id": issue.get("id", ""),
         "status": issue.get("status", ""),
@@ -337,7 +370,7 @@ def issue_for_dashboard(issue: dict, repository_paths: dict[str, Path]) -> dict:
         "suggestion": issue.get("suggestion", ""),
         "root_cause": issue.get("root_cause", ""),
         "validation": issue.get("validation", ""),
-        "code_snippet": code_excerpt(issue, repository_paths),
+        "code_snippet": code_excerpt(issue, repository_paths, scan_snippets_by_id, scan_snippets_by_match),
         "first_seen_at": issue.get("first_seen_at", ""),
         "last_seen_at": issue.get("last_seen_at", ""),
         "resolved_at": issue.get("resolved_at", ""),
@@ -393,10 +426,12 @@ def build_payload(root: Path) -> dict:
     data_path = root / "dashboard-data.js"
 
     runs = []
+    scan_results: list[dict] = []
     latest_run = None
     latest_path = results_dir / "scan-result.json"
     latest_data = load_json(latest_path, {})
     if latest_data and not is_dry_run(latest_data):
+        scan_results.append(latest_data)
         latest_run = {
             "id": latest_path.stem,
             "finished_at": latest_data.get("finished_at", ""),
@@ -408,6 +443,7 @@ def build_payload(root: Path) -> dict:
         data = load_json(path, {})
         if not data or is_dry_run(data):
             continue
+        scan_results.append(data)
         counts = severity_counts(data.get("findings", []))
         html_path, pdf_path, report_status = resolve_report_artifacts(root, reports_dir, path, data)
         run = {
@@ -444,7 +480,11 @@ def build_payload(root: Path) -> dict:
         for repository in repos.get("repositories", [])
         if isinstance(repository, dict) and str(repository.get("name") or "") and str(repository.get("path") or "")
     }
-    issues = [issue_for_dashboard(item, repository_paths) for item in deduplicate_issues(registry.get("issues", []))]
+    snippets_by_id, snippets_by_match = scan_code_snippets(scan_results)
+    issues = [
+        issue_for_dashboard(item, repository_paths, snippets_by_id, snippets_by_match)
+        for item in deduplicate_issues(registry.get("issues", []))
+    ]
     issue_counts = {}
     for issue in issues:
         status = issue.get("status", "unknown")
