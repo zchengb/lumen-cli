@@ -219,14 +219,12 @@ def remote_origin_slug(worktree: Path) -> str:
 
 def existing_pr_url(worktree: Path, branch: str, gh_host: str, repo_slug: str) -> str:
     args = ["pr", "view", branch, "--json", "url", "-q", ".url"]
-    if gh_host:
-        args.extend(["-h", gh_host])
     if repo_slug:
         args.extend(["--repo", repo_slug])
     completed = run_gh(args, cwd=worktree)
     if completed.returncode != 0:
         return ""
-    return completed.stdout.strip()
+    return extract_pr_url(completed.stdout)
 
 
 def push_branch(worktree: Path, branch: str) -> None:
@@ -252,8 +250,6 @@ def create_pr(
         return existing
 
     args = ["pr", "create", "--title", title, "--body", body, "--head", branch]
-    if gh_host:
-        args.extend(["-h", gh_host])
     if repo_slug:
         args.extend(["--repo", repo_slug])
     completed = run_gh(args, cwd=worktree)
