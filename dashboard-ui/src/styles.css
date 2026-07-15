@@ -106,3 +106,14 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .workflow-panel{position:relative}.workflow-panel .panel-header{min-height:48px}.workflow-viewport{position:relative;height:470px;padding:0;overflow:hidden;cursor:grab;touch-action:none;user-select:none}.workflow-viewport:active{cursor:grabbing}.workflow-scale{width:max-content;min-width:1090px;padding:22px;transform-origin:top left;will-change:transform}.workflow-node,.workflow-retry{user-select:text}.workflow-panel-fullscreen{position:fixed!important;inset:0;z-index:100;margin:0;border:0;border-radius:0;box-shadow:none}.workflow-panel-fullscreen .panel-header{padding:0 28px;background:rgba(255,255,255,.82);backdrop-filter:blur(16px)}.workflow-panel-fullscreen .workflow-viewport{height:calc(100vh - 48px)}.workflow-panel-fullscreen .workflow-scale{padding:42px}.workflow-panel-fullscreen .workflow-columns{gap:38px}.workflow-toolbar{display:none}
 
 @media(max-width:900px){.masthead-context span{max-width:48vw}.workflow-viewport{height:430px}.company-mark{max-width:110px}.finding-id{max-width:95px}}
+
+/* Keep long source and preview documents independently scrollable. */
+.prompt-inspector-body{min-height:0;overflow:hidden}.prompt-inspector-body .markdown-workbench{min-height:0;overflow:hidden}.prompt-inspector-body .markdown-pane,.prompt-inspector-body .markdown-preview{min-height:0;overflow:hidden}.prompt-inspector-body .markdown-pane textarea{height:100%;overflow:auto}.prompt-inspector-body .markdown-preview .markdown-content{min-height:0;overflow:auto}
+
+/* Findings retain quiet blue links and carry their stable ID in the metadata row. */
+.finding-meta{display:flex;align-items:center;flex-wrap:wrap;gap:0}.finding-meta .finding-id{display:inline;padding:0;background:transparent;color:#7a7a82;font-size:11px;line-height:inherit}.finding-meta i{margin:0 6px}.finding-links a,.finding-links .finding-link{font-weight:400!important;color:#0071e3}.finding-links a:hover,.finding-links .finding-link:hover{color:#0071e3;text-decoration:none}
+
+/* Make the primary canvas generous while leaving full-screen as a focused mode. */
+.workflow-viewport{height:620px}.sidebar-toggle{z-index:40}.sidebar-is-collapsed .sidebar-foot small{display:block;width:auto;color:#8b8b92;font-size:9px;white-space:nowrap}
+
+@media(max-width:900px){.workflow-viewport{height:500px}}

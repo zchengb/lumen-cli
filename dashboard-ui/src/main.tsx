@@ -155,7 +155,7 @@ function App() {
       <nav className="side-nav" aria-label="Dashboard sections">{tabItems.map((item) => { const Icon = item.icon; return <button title={item.label} className={activeTab === item.id ? "active" : ""} onClick={() => setActiveTab(item.id)} key={item.id}><Icon size={17} /><span>{item.label}</span></button>; })}</nav>
       <div className="sidebar-foot">
         {!sidebarCollapsed && <img src="assets/inspire-group-logo.png" className="company-mark" alt="INSPIRE GROUP" />}
-        <small>{sidebarCollapsed ? "" : `Version ${lumenVersion}`}</small>
+        <small>{sidebarCollapsed ? `V${lumenVersion}` : `Version ${lumenVersion}`}</small>
       </div>
     </aside>
     <IconButton className="sidebar-toggle" label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}><Menu size={14} /></IconButton>
@@ -215,7 +215,7 @@ function Finding({ issue, onIgnore }: { issue: RecordValue; onIgnore: () => void
   const [expanded, setExpanded] = useState(false);
   const status = issue.status || issue.issue_status || "open";
   const isIgnorable = !["ignored", "resolved", "accepted_risk", "false_positive"].includes(String(status).toLowerCase());
-  return <article className="finding"><div className="finding-main"><div className="finding-copy"><div className="finding-heading"><code className="finding-id">{text(issue.id)}</code><h4>{text(issue.title, "Untitled finding")}</h4><Badge value={status} /></div><p>{text(issue.repository, "Unknown repository")} <i>|</i> {when(issue.last_seen_at)}</p><div className="finding-links finding-row-links"><button className="finding-link" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide detail" : "View detail"}</button>{issue.jira_key && issue.jira_url && <a className="finding-link" href={issue.jira_url} target="_blank" rel="noreferrer">{issue.jira_key}<ExternalLink size={12} /></a>}{issue.pr_url && <a className="finding-link" href={issue.pr_url} target="_blank" rel="noreferrer">Pull request<ExternalLink size={12} /></a>}</div></div><div className="finding-actions">{isIgnorable && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Code" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /></div>}</article>;
+  return <article className="finding"><div className="finding-main"><div className="finding-copy"><div className="finding-heading"><h4>{text(issue.title, "Untitled finding")}</h4><Badge value={status} /></div><p className="finding-meta"><code className="finding-id">{text(issue.id)}</code><i>|</i>{text(issue.repository, "Unknown repository")} <i>|</i> {when(issue.last_seen_at)}</p><div className="finding-links finding-row-links"><button className="finding-link" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide detail" : "View detail"}</button>{issue.jira_key && issue.jira_url && <a className="finding-link" href={issue.jira_url} target="_blank" rel="noreferrer">{issue.jira_key}<ExternalLink size={12} /></a>}{issue.pr_url && <a className="finding-link" href={issue.pr_url} target="_blank" rel="noreferrer">Pull request<ExternalLink size={12} /></a>}</div></div><div className="finding-actions">{isIgnorable && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Code" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /></div>}</article>;
 }
 
 function FindingDetail({ label, value, code = false }: { label: string; value: unknown; code?: boolean }) { return <section className="finding-detail-row"><h5>{label}</h5>{code ? <pre><code>{text(value, "No code snippet was captured for this historical finding.")}</code></pre> : <p>{text(value, "Not recorded.")}</p>}</section>; }
@@ -352,7 +352,7 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
   const panOrZoom = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
     if (event.ctrlKey || event.metaKey) {
-      const scale = Math.max(.65, Math.min(1.55, view.scale * (event.deltaY > 0 ? .92 : 1.08)));
+      const scale = Math.max(.65, Math.min(1.55, view.scale * (event.deltaY > 0 ? .975 : 1.025)));
       setView((current) => ({ ...current, scale }));
     } else setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }));
   };
