@@ -54,7 +54,7 @@ Do not start the Development Loop until:
 5. Build a domain-concept map before choosing a class, table, API, method, or variable name. Compare every Story term with existing domain objects, APIs, database fields, and recent refactors. Explicitly distinguish the same concept with a new label, a specialization, and a genuinely new concept.
 6. Ask derived technical questions progressively when an answer affects concept mapping, design, delivery boundary, verification, or rollout. When an ambiguous business term may map to an existing model, ask and confirm this before drafting class-level changes.
 7. Record every confirmed answer in `technical-plan.md`; do not leave decisions only in chat.
-8. Derive a concise business Delivery Checklist from confirmed Acceptance Criteria and Business Rules. Each item must describe an observable business result, not a technical task.
+8. Derive a concise DC Checklist from the confirmed Acceptance Criteria, Business Rules, JIRA context, and repository behavior. It is the BA/QA/Developer walkthrough for confirming that the delivered Story works end to end.
 9. For a non-trivial behavior, data, or multi-class change, add both a business flow diagram and an implementation interaction/class diagram. Name the existing and proposed classes, entry methods, and hand-off points that the Delivery Agent must use.
 10. Publish a naming contract for changed/new public methods, persisted fields, API fields, DTO properties, and key local variables whose semantics can be confused with an existing concept.
 11. Produce a file-level implementation plan detailed enough for another engineer or Agent to implement without guessing.
@@ -113,7 +113,7 @@ The Agent should actively check these areas and ask only when the answer is not 
 `technical-plan.md` must be implementation-ready. At minimum include:
 
 - Goal and delivery scope tied to Acceptance Criteria
-- Business Delivery Checklist derived from Acceptance Criteria and Business Rules
+- DC Checklist derived from Acceptance Criteria, Business Rules, JIRA context, and repository behavior
 - Domain Concept And Naming Contract: business term -> existing model or new model -> canonical API/table/class/property/method names -> explicitly forbidden duplicate concepts or names
 - Business flow diagram and implementation interaction/class diagram for every non-trivial behavior, data-model, or multi-class change
 - Technical clarifications with confirmed answers
@@ -132,28 +132,30 @@ The Agent should actively check these areas and ask only when the answer is not 
 
 A valid technical plan should let the Development Loop implement without inventing new architecture.
 
-## Business Delivery Checklist
+## DC Checklist
 
-The `Delivery Checklist` is a compact, business-facing handoff for the Developer. It is not a test-command list or a second status register.
+The `DC Checklist` is a compact BA/QA/Developer walkthrough used after implementation to confirm the Story end to end. It is not a test-command list or a second status register.
 
 Rules:
 
-- Derive each item from one or more confirmed Acceptance Criteria or Business Rules in `story.md`.
-- Write each item as one observable business outcome in the story's primary language.
-- Use domain language such as user, administrator, message, order, vehicle, or report; do not use implementation language such as controller, repository, table, API, or test.
-- Cover the happy path, material business boundaries, and confirmed no-change behavior.
-- Do not invent new scope. Every item must be traceable to `story.md`.
-- Keep it concise: normally 3-8 items. Merge duplicates rather than restating every AC verbatim.
+- Derive each item from confirmed Acceptance Criteria, Business Rules, relevant JIRA comments/images, and the actual repository behavior inspected during planning.
+- Write each item as one short, observable, verifiable statement in the Story's primary language. It should say what is ready, what the user does, or what result is expected.
+- Include only implementation-relevant preconditions such as source data readiness, scheduled synchronization, configuration, or permissions when BA/QA must confirm them before the primary flow can work.
+- Cover the happy path, material combinations, persistence/read-back behavior, boundary/no-change behavior, integration freshness or failure behavior when relevant, and authorization/data-scope behavior when relevant.
+- A checklist item may name a table, scheduled job, field, or API when it is a prerequisite BA/QA can verify. Do not list internal code edits, shell commands, or generic test tasks.
+- Do not invent new scope. Every item must be traceable to the Story, confirmed clarification, JIRA context, or existing behavior that the change intentionally preserves.
+- Keep it concise: normally 5-12 items. Merge duplicates rather than restating every AC verbatim.
 
 Example:
 
 ```markdown
-## Delivery Checklist
+## DC Checklist
 
-- [ ] 管理員可以按 Brand、Class、Model 組合篩選消息受眾。
-- [ ] 下拉選項會依既定規則更新並連動。
-- [ ] 未選擇車型條件時，消息發送行為維持既有邏輯。
-- [ ] 發送消息時，只觸達符合所有已選條件的用戶。
+- [ ] 車型快照資料已更新，篩選下拉會顯示最新可用選項。
+- [ ] 管理員可按 Brand、Class、Model 組合篩選消息受眾，三級選項會依規則連動。
+- [ ] 未啟用車型受眾時，既有群組與手動名單的發送行為維持不變。
+- [ ] 儲存後重新開啟消息，已選車型條件會正確回顯。
+- [ ] 發送消息時，只觸達符合所有已選車型條件的用戶，且同一用戶不重複接收。
 ```
 
 ## Business Flow Diagram (Optional)

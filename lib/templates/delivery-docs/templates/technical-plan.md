@@ -8,9 +8,9 @@ Describe the technical outcome and map it to Acceptance Criteria from `story.md`
 |---|---|
 | AC1 | TBD |
 
-## Delivery Checklist
+## DC Checklist
 
-Summarize the business outcomes the delivery must achieve. Derive every item from confirmed Acceptance Criteria or Business Rules in `story.md`. Use concise, business-facing language; do not list implementation tasks, commands, or tests.
+Prepare a concise BA/QA/Developer walkthrough for confirming the delivered Story end to end. Derive each item from confirmed Acceptance Criteria, Business Rules, relevant JIRA context, and inspected repository behavior. Include material data/sync/configuration prerequisites, primary flow, combinations, persistence/read-back, boundary/no-change behavior, and permissions when relevant. Each item must be one short, observable result; do not list code edits, shell commands, or generic test tasks.
 
 - [ ] TBD
 
