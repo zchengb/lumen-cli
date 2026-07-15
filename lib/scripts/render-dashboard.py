@@ -294,7 +294,36 @@ def compute_run_stats(runs: list) -> dict:
     return stats
 
 
-def issue_for_dashboard(issue: dict) -> dict:
+def code_excerpt(issue: dict, repository_paths: dict[str, Path]) -> str:
+    """Return a small local source excerpt for legacy registry entries without code evidence."""
+    existing = str(issue.get("code_snippet") or "").strip()
+    if existing:
+        return existing
+    repository = str(issue.get("repository") or "")
+    relative_file = issue_file_path(issue)
+    repository_root = repository_paths.get(repository)
+    if not repository_root or not relative_file:
+        return ""
+    try:
+        candidate = (repository_root / relative_file).resolve()
+        if not candidate.is_relative_to(repository_root.resolve()) or not candidate.is_file():
+            return ""
+        match = re.match(r"(\d+)", str(issue.get("line_range") or ""))
+        line_number = int(match.group(1)) if match else 1
+        lines = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+    except (OSError, ValueError):
+        return ""
+    start = max(0, line_number - 3)
+    end = min(len(lines), line_number + 5)
+    return "\n".join(f"{index + 1:>4} | {lines[index]}" for index in range(start, end))
+
+
+def external_url(value) -> str:
+    candidate = str(value or "").strip()
+    return candidate if candidate.startswith(("https://", "http://")) else ""
+
+
+def issue_for_dashboard(issue: dict, repository_paths: dict[str, Path]) -> dict:
     return {
         "id": issue.get("id", ""),
         "status": issue.get("status", ""),
@@ -308,15 +337,16 @@ def issue_for_dashboard(issue: dict) -> dict:
         "suggestion": issue.get("suggestion", ""),
         "root_cause": issue.get("root_cause", ""),
         "validation": issue.get("validation", ""),
+        "code_snippet": code_excerpt(issue, repository_paths),
         "first_seen_at": issue.get("first_seen_at", ""),
         "last_seen_at": issue.get("last_seen_at", ""),
         "resolved_at": issue.get("resolved_at", ""),
         "resolution_reason": issue.get("resolution_reason", ""),
         "stale": bool(issue.get("stale")),
         "ignored_at": issue.get("ignored_at", ""),
-        "pr_url": issue.get("pr_url"),
+        "pr_url": external_url(issue.get("pr_url")),
         "jira_key": issue.get("jira_key"),
-        "jira_url": issue.get("jira_url"),
+        "jira_url": external_url(issue.get("jira_url")),
     }
 
 
@@ -409,11 +439,20 @@ def build_payload(root: Path) -> dict:
                 "findings": run["findings"],
             }
 
-    issues = [issue_for_dashboard(item) for item in deduplicate_issues(registry.get("issues", []))]
+    repository_paths = {
+        str(repository.get("name") or ""): Path(str(repository.get("path") or "")).expanduser()
+        for repository in repos.get("repositories", [])
+        if isinstance(repository, dict) and str(repository.get("name") or "") and str(repository.get("path") or "")
+    }
+    issues = [issue_for_dashboard(item, repository_paths) for item in deduplicate_issues(registry.get("issues", []))]
     issue_counts = {}
     for issue in issues:
         status = issue.get("status", "unknown")
         issue_counts[status] = issue_counts.get(status, 0) + 1
+    issue_counts["open_total"] = sum(
+        1 for issue in issues
+        if str(issue.get("status", "")).lower() in {"open", "in_progress", "pr_open"}
+    )
 
     logs = [
         {"name": path.name, "href": rel(root, path)}
@@ -430,7 +469,7 @@ def build_payload(root: Path) -> dict:
         "scan_window_days": get_scan_window_days(common),
         "product": {
             "name": product.get("name", "Lumen"),
-            "tagline": product.get("tagline", "Illuminate code health across your repositories"),
+            "tagline": product.get("tagline", "Engineering, made legible."),
             "codename": product.get("codename", "lumen"),
         },
         "project": {

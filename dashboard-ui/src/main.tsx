@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { version as lumenVersion } from "../package.json";
 import {
   Activity, ChevronDown, CircleAlert, CircleCheck, CircleDot, Code2, Copy,
   Eye, EyeOff, FileCode2, GitBranch, KeyRound, LoaderCircle, PanelLeftClose,
-  PanelLeftOpen, Pencil, RefreshCw, Save, ScanSearch, Settings2,
+  PanelLeftOpen, Pencil, Save, ScanSearch, Settings2,
   ShieldCheck, Sparkles, Truck, Workflow, XCircle
 } from "lucide-react";
 import "./styles.css";
@@ -64,7 +65,8 @@ function titleStatus(value: unknown) {
     passed: "Passed", failed: "Failed", skipped: "Skipped", open: "Open",
     "in progress": "In progress", running: "Running", configured: "Active",
     "not configured": "Not set", resolved: "Resolved", synced: "Synced",
-    ignored: "Ignored", blocked: "Blocked", pending: "Pending", active: "Active"
+    ignored: "Ignored", blocked: "Blocked", pending: "Pending", active: "Active",
+    pr_open: "Open", "pr open": "Open", in_progress: "Open"
   };
   return labels[raw] || raw.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -106,12 +108,14 @@ function App() {
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("lumen-sidebar-collapsed") === "true");
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
       const next = await request("/api/state", project);
       setData(next);
+      setLastUpdated(new Date());
       if (!project && next.interactive?.project) setProject(next.interactive.project);
       setError("");
     } catch (err) {
@@ -121,7 +125,7 @@ function App() {
     } finally { setLoading(false); }
   };
 
-  useEffect(() => { void load(); const id = window.setInterval(load, 30_000); return () => window.clearInterval(id); }, [project]);
+  useEffect(() => { void load(); const id = window.setInterval(load, 5_000); return () => window.clearInterval(id); }, [project]);
   useEffect(() => { if (!notice) return; const id = window.setTimeout(() => setNotice(""), 3000); return () => window.clearTimeout(id); }, [notice]);
   useEffect(() => { window.localStorage.setItem("lumen-sidebar-collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
 
@@ -136,21 +140,21 @@ function App() {
     catch (err) { setNotice(err instanceof Error ? err.message : "Request failed"); }
   };
   const projects = data?.interactive?.projects || [];
-  const tagline = data?.product?.tagline || "Local engineering control plane";
+  const tagline = data?.product?.tagline || "Engineering, made legible.";
 
   return <main className={`dashboard-layout ${sidebarCollapsed ? "sidebar-is-collapsed" : ""}`}>
     <aside className="sidebar" aria-label="Lumen navigation">
       <div className="sidebar-brand">
         <img src="assets/lumen-mark.png" className="brand-mark" alt="Lumen" />
-        <div className="sidebar-brand-copy"><strong>Lumen</strong><span>Engineering control plane</span></div>
+        <div className="sidebar-brand-copy"><strong>Lumen</strong><span>{tagline}</span></div>
       </div>
       <nav className="side-nav" aria-label="Dashboard sections">{tabItems.map((item) => { const Icon = item.icon; return <button title={item.label} className={activeTab === item.id ? "active" : ""} onClick={() => setActiveTab(item.id)} key={item.id}><Icon size={17} /><span>{item.label}</span></button>; })}</nav>
-      <div className="sidebar-foot"><span className="local-state"><i />Local workspace</span><small>{sidebarCollapsed ? "v" : "Lumen local control"}</small></div>
+      <div className="sidebar-foot"><IconButton label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</IconButton><small>{sidebarCollapsed ? "" : `Version ${lumenVersion}`}</small></div>
     </aside>
     <section className="content-area">
       <header className="masthead">
-        <div className="masthead-left"><IconButton label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}>{sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}</IconButton><div className="context-copy"><span>Workspace</span><strong>{data?.interactive?.workspace?.path ? "Local control" : tagline}</strong></div></div>
-        <div className="masthead-actions"><label className="project-picker"><span>Project</span><select value={project} onChange={(event) => changeProject(event.target.value)}>{projects.map((item) => <option value={item.slug} key={item.slug}>{item.name}</option>)}</select><ChevronDown size={15} /></label><span className="local-state health"><i />Healthy</span><IconButton label="Refresh Dashboard" onClick={() => void load()}><RefreshCw size={16} className={loading ? "spin" : ""} /></IconButton></div>
+        <div className="masthead-spacer" />
+        <div className="masthead-actions"><span className="last-updated">{lastUpdated ? `Updated ${when(lastUpdated.toISOString())}` : "Syncing…"}</span><label className="project-picker"><span>Project</span><select value={project} onChange={(event) => changeProject(event.target.value)}>{projects.map((item) => <option value={item.slug} key={item.slug}>{item.name}</option>)}</select><ChevronDown size={15} /></label></div>
       </header>
       <div className="page-content">
         {error && <div className="status-note"><Activity size={15} />{error}</div>}
@@ -173,27 +177,40 @@ function ScanView({ data, project, interact }: { data: DashboardData; project: s
   const stats = data.run_stats || {};
   const issues = data.issues || [];
   const runs = data.runs || [];
-  const ignore = (issue: RecordValue) => {
-    const reason = window.prompt("Optional reason for ignoring this finding:", "");
-    if (reason !== null) void interact("/api/issue/ignore", { issue_id: issue.id, reason }, "Finding ignored");
-  };
+  const [ignoreCandidate, setIgnoreCandidate] = useState<RecordValue | null>(null);
+  const [filter, setFilter] = useState("all");
+  const [runPage, setRunPage] = useState(0);
+  const runPageSize = 10;
+  const openIssues = issues.filter((issue: RecordValue) => ["open", "in_progress", "pr_open"].includes(String(issue.status || "").toLowerCase()));
+  const filteredIssues = issues.filter((issue: RecordValue) => filter === "all" || (filter === "open" ? ["open", "in_progress", "pr_open"].includes(String(issue.status || "").toLowerCase()) : String(issue.status || "").toLowerCase() === filter));
+  const counts = { all: issues.length, open: openIssues.length, ignored: issues.filter((item: RecordValue) => item.status === "ignored").length, resolved: issues.filter((item: RecordValue) => ["resolved", "accepted_risk", "false_positive"].includes(item.status)).length };
+  const pageRuns = runs.slice(runPage * runPageSize, (runPage + 1) * runPageSize);
+  const jumpToFindings = () => document.getElementById("tracked-findings")?.scrollIntoView({ behavior: "smooth", block: "start" });
   return <>
     <PageIntro title="AUTO SCAN" description="Review history and manage tracked findings." action={<Badge value={data.active_run ? "running" : "idle"} />} />
-    <section className="metrics"><Metric label="Open findings" value={data.issue_counts?.open || 0} /><Metric label="Successful · 7d" value={stats.success_7d || 0} /><Metric label="Failed · 7d" value={stats.failed_7d || 0} /><Metric label="Lookback window" value={`${data.scan_window_days || 7}d`} /></section>
-    <Panel title="Scan history" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Finished</th><th>Status</th><th>Issues</th><th>Duration</th><th>Artifacts</th></tr></thead><tbody>{runs.slice(0, 10).map((run: RecordValue) => <tr key={run.id}><td>{when(run.finished_at || run.started_at)}</td><td><Badge value={run.status} /></td><td>{Number(run.high || 0) + Number(run.medium || 0) + Number(run.low || 0)}</td><td>{text(run.duration)}</td><td className="artifact-links">{run.html && <a href={`${run.html}?project=${encodeURIComponent(project)}`} target="_blank">HTML</a>}{run.pdf && <a href={`${run.pdf}?project=${encodeURIComponent(project)}`} target="_blank">PDF</a>}{!run.html && !run.pdf && "—"}</td></tr>)}</tbody></table></div></Panel>
-    <Panel title="Tracked findings" action={<span className="muted">{issues.length} records</span>}><div className="findings">{issues.length ? issues.map((issue: RecordValue) => <Finding issue={issue} onIgnore={() => ignore(issue)} key={issue.id} />) : <Empty label="No tracked findings." />}</div></Panel>
+    <section className="metrics"><Metric label="Open findings" value={openIssues.length} onClick={jumpToFindings} /><Metric label="Successful · 7d" value={stats.success_7d || 0} /><Metric label="Failed · 7d" value={stats.failed_7d || 0} /><Metric label="Lookback window" value={`${data.scan_window_days || 7}d`} /></section>
+    <Panel title="Scan history" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Finished</th><th>Status</th><th>Issues</th><th>Duration</th><th>Artifacts</th></tr></thead><tbody>{pageRuns.map((run: RecordValue) => <tr key={run.id}><td>{when(run.finished_at || run.started_at)}</td><td><Badge value={run.status} /></td><td><SeverityBreakdown run={run} /></td><td>{text(run.duration)}</td><td className="artifact-links">{run.html && <a href={`${run.html}?project=${encodeURIComponent(project)}`} target="_blank">HTML</a>}{run.pdf && <a href={`${run.pdf}?project=${encodeURIComponent(project)}`} target="_blank">PDF</a>}{!run.html && !run.pdf && "—"}</td></tr>)}</tbody></table></div>{runs.length > runPageSize && <Pagination page={runPage} pageCount={Math.ceil(runs.length / runPageSize)} onChange={setRunPage} />}</Panel>
+    <Panel title="Tracked findings" action={<span className="muted">{filteredIssues.length} of {issues.length} records</span>}><div className="finding-filters" role="tablist">{(["all", "open", "ignored", "resolved"] as const).map((value) => <button className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}>{value === "all" ? "All" : titleStatus(value)} <span>{counts[value]}</span></button>)}</div><div id="tracked-findings" className="findings">{filteredIssues.length ? filteredIssues.map((issue: RecordValue) => <Finding issue={issue} onIgnore={() => setIgnoreCandidate(issue)} key={issue.id} />) : <Empty label="No findings match this status." />}</div></Panel>
+    {ignoreCandidate && <IgnoreDialog issue={ignoreCandidate} onClose={() => setIgnoreCandidate(null)} onConfirm={(reason) => { void interact("/api/issue/ignore", { issue_id: ignoreCandidate.id, reason }, "Finding ignored"); setIgnoreCandidate(null); }} />}
   </>;
 }
 
-function Metric({ label, value }: { label: string; value: string | number }) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div>; }
+function Metric({ label, value, onClick }: { label: string; value: string | number; onClick?: () => void }) { return <div className={`metric ${onClick ? "metric-action" : ""}`} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={(event) => { if (onClick && (event.key === "Enter" || event.key === " ")) onClick(); }}><span>{label}</span><strong>{value}</strong></div>; }
 function Empty({ label }: { label: string }) { return <div className="empty"><ShieldCheck size={20} />{label}</div>; }
+function SeverityBreakdown({ run }: { run: RecordValue }) { return <span className="severity-breakdown"><b className="high">H {Number(run.high || 0)}</b><b className="medium">M {Number(run.medium || 0)}</b><b className="low">L {Number(run.low || 0)}</b></span>; }
+function Pagination({ page, pageCount, onChange }: { page: number; pageCount: number; onChange: (page: number) => void }) { return <footer className="pagination"><span>Page {page + 1} of {pageCount}</span><div><button className="button secondary" disabled={page === 0} onClick={() => onChange(page - 1)}>Previous</button><button className="button secondary" disabled={page === pageCount - 1} onClick={() => onChange(page + 1)}>Next</button></div></footer>; }
 function Finding({ issue, onIgnore }: { issue: RecordValue; onIgnore: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const status = issue.status || issue.issue_status || "open";
-  return <article className="finding"><div className="finding-main"><div><div className="finding-heading"><Badge value={status} /><h4>{text(issue.title, "Untitled finding")}</h4></div><p>{text(issue.repository, "Unknown repository")} <i>·</i> <code>{text(issue.file, "No file location")}{issue.line_range ? `:${issue.line_range}` : ""}</code> <i>·</i> {when(issue.last_seen_at)}</p></div><div className="finding-actions"><button className="text-button" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide details" : "View full finding"}</button>{!["ignored", "resolved"].includes(status) && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Evidence" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /><div className="finding-links">{issue.jira_key && <span>JIRA <code>{issue.jira_key}</code></span>}{issue.pr_url && <a href={issue.pr_url} target="_blank">Open pull request</a>}</div></div>}</article>;
+  const isIgnorable = !["ignored", "resolved", "accepted_risk", "false_positive"].includes(String(status).toLowerCase());
+  return <article className="finding"><div className="finding-main"><div className="finding-copy"><div className="finding-heading"><h4>{text(issue.title, "Untitled finding")}</h4><Badge value={status} /></div><p>{text(issue.repository, "Unknown repository")} <i>|</i> {when(issue.last_seen_at)}</p><div className="finding-links finding-row-links"><button className="text-button" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide detail" : "View detail"}</button>{issue.jira_key && <span>JIRA <code>{issue.jira_key}</code></span>}{issue.jira_url && <a href={issue.jira_url} target="_blank" rel="noreferrer">Open JIRA</a>}{issue.pr_url && <a href={issue.pr_url} target="_blank" rel="noreferrer">Pull request</a>}</div></div><div className="finding-actions">{isIgnorable && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Code" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /></div>}</article>;
 }
 
-function FindingDetail({ label, value, code = false }: { label: string; value: unknown; code?: boolean }) { return <section className="finding-detail-row"><h5>{label}</h5>{code ? <pre><code>{text(value, "No code evidence recorded.")}</code></pre> : <p>{text(value, "Not recorded.")}</p>}</section>; }
+function FindingDetail({ label, value, code = false }: { label: string; value: unknown; code?: boolean }) { return <section className="finding-detail-row"><h5>{label}</h5>{code ? <pre><code>{text(value, "No code snippet was captured for this historical finding.")}</code></pre> : <p>{text(value, "Not recorded.")}</p>}</section>; }
+function IgnoreDialog({ issue, onClose, onConfirm }: { issue: RecordValue; onClose: () => void; onConfirm: (reason: string) => void }) {
+  const [reason, setReason] = useState("");
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="ignore-dialog-title" onMouseDown={(event) => event.stopPropagation()}><header><span className="modal-icon"><CircleAlert size={18} /></span><div><h3 id="ignore-dialog-title">Ignore finding?</h3><p>This will preserve the finding in history and exclude it from the open queue.</p></div></header><div className="modal-body"><strong>{text(issue.title)}</strong><Field label="Reason (optional)"><input autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this safe to ignore?" /></Field></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onConfirm(reason)}>Mark ignored</button></footer></section></div>;
+}
 
 function DeliveryView({ data }: { data: DashboardData }) {
   const delivery = data.delivery || {};
