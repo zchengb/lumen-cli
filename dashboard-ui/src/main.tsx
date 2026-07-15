@@ -7,7 +7,7 @@ import {
   Activity, ChevronDown, CircleAlert, CircleCheck, CircleDot, Code2, Copy,
   Eye, EyeOff, ExternalLink, FileCode2, GitBranch, KeyRound, LoaderCircle, Menu,
   Pencil, RotateCcw, Save, ScanSearch, Settings2, Terminal,
-  ShieldCheck, Sparkles, Truck, Workflow, XCircle
+  ShieldCheck, Sparkles, Truck, Workflow, XCircle, ZoomIn, ZoomOut
 } from "lucide-react";
 import "./styles.css";
 
@@ -320,15 +320,41 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
   const [mode, setMode] = useState<"scan" | "delivery">("scan");
   const [selected, setSelected] = useState<{ mode: "scan" | "delivery"; path: string } | null>(null);
   const [content, setContent] = useState("");
+  const [zoom, setZoom] = useState(1);
   const modePrompts = prompts.filter((item) => item.mode === mode);
   const choose = async (item: { mode: "scan" | "delivery"; path: string }) => {
     setSelected(item);
     try { const response = await request(`/api/prompt?mode=${encodeURIComponent(item.mode)}&path=${encodeURIComponent(item.path)}`, project); setContent(response.content); }
     catch (err) { notify(err instanceof Error ? err.message : "Unable to load prompt"); }
   };
-  const switchMode = (next: "scan" | "delivery") => { setMode(next); setSelected(null); setContent(""); };
+  const switchMode = (next: "scan" | "delivery") => { setMode(next); setSelected(null); setContent(""); setZoom(1); };
+  const changeZoom = (delta: number) => setZoom((current) => Math.max(.7, Math.min(1.3, Math.round((current + delta) * 10) / 10)));
   const columns = workflowColumns(mode);
-  return <><PageIntro title="WORKFLOW" description="The prompts, scripts, control points, and recovery paths behind each local automation." /><div className="workflow-mode-switch" role="tablist"><button className={mode === "scan" ? "active" : ""} onClick={() => switchMode("scan")}>Auto Scan</button><button className={mode === "delivery" ? "active" : ""} onClick={() => switchMode("delivery")}>Auto Delivery</button></div><Panel title={mode === "scan" ? "Auto Scan Workflow" : "Auto Delivery Workflow"} action={<span className="muted">Prompt nodes are editable</span>} className="workflow-panel"><div className="workflow-canvas"><div className="workflow-columns">{columns.map((column, columnIndex) => <section className="workflow-column" key={column.title}><header><span>{column.eyebrow}</span><strong>{column.title}</strong></header><div className="workflow-node-stack">{column.scripts.map((script) => <article className="workflow-node script-node" key={script.name}><Terminal size={14} /><span><strong>{script.name}</strong><small>{script.description}</small></span><em>SCRIPT</em></article>)}{modePrompts.filter((item) => column.layers.includes(promptLayer(item, mode))).map((item) => { const meta = promptMeta(item); const Icon = meta.icon; const isSelected = selected?.mode === item.mode && selected.path === item.path; return <button className={`workflow-node prompt-node ${isSelected ? "selected" : ""}`} onClick={() => void choose(item)} key={`${item.mode}/${item.path}`}><Icon size={14} /><span><strong>{meta.title}</strong><small>{meta.description}</small></span><em>PROMPT</em></button>; })}</div>{columnIndex < columns.length - 1 && <span className="workflow-connector" aria-hidden="true" />}</section>)}</div><div className="workflow-retry"><RotateCcw size={14} /><span><strong>{mode === "delivery" ? "Remediation retry" : "Safe-fix re-review"}</strong><small>{mode === "delivery" ? "Verification failure → prepare_delivery_remediation.py → implementation agent → verification" : "High-confidence finding → auto_fix_sync.py → focused validation → pull request"}</small></span></div></div></Panel><Panel title="Markdown Editor" action={selected ? <button className="button primary" onClick={() => void interact("/api/prompt", { mode: selected.mode, path: selected.path, content }, "Prompt saved")}><Save size={15} />Save prompt</button> : undefined} className="prompt-panel"><div className="prompt-editor">{selected ? <><div className="editor-header"><div><h3>{promptMeta(selected).title}</h3><p><code>{selected.path}</code> · injected during the selected workflow stage</p></div></div><div className="markdown-workbench"><label className="markdown-pane"><span>Markdown</span><textarea value={content} onChange={(event) => setContent(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article></div></> : <Empty label="Select a prompt node in the workflow to inspect and edit it." />}</div></Panel></>;
+  return <>
+    <PageIntro title="WORKFLOW" description="The prompts, scripts, control points, and recovery paths behind each local automation." />
+    <div className="workflow-mode-switch" role="tablist"><button className={mode === "scan" ? "active" : ""} onClick={() => switchMode("scan")}>Auto Scan</button><button className={mode === "delivery" ? "active" : ""} onClick={() => switchMode("delivery")}>Auto Delivery</button></div>
+    <Panel title={mode === "scan" ? "Auto Scan Workflow" : "Auto Delivery Workflow"} action={<div className="workflow-toolbar"><span>{Math.round(zoom * 100)}%</span><IconButton label="Zoom out" onClick={() => changeZoom(-.1)}><ZoomOut size={14} /></IconButton><IconButton label="Reset zoom" onClick={() => setZoom(1)}><RotateCcw size={13} /></IconButton><IconButton label="Zoom in" onClick={() => changeZoom(.1)}><ZoomIn size={14} /></IconButton></div>} className="workflow-panel">
+      <div className="workflow-canvas"><div className="workflow-scale" style={{ zoom } as React.CSSProperties}><div className="workflow-columns">{columns.map((column, columnIndex) => {
+        const columnPrompts = modePrompts.filter((item) => column.layers.includes(promptLayer(item, mode)));
+        const nodes = [...column.scripts.map((script) => ({ kind: "script" as const, script })), ...columnPrompts.map((prompt) => ({ kind: "prompt" as const, prompt }))];
+        return <section className="workflow-column" key={column.title}><header><span>{column.eyebrow}</span><strong>{column.title}</strong></header><div className="workflow-node-stack">{nodes.map((node, nodeIndex) => {
+          const sequence = `${columnIndex + 1}.${nodeIndex + 1}`;
+          if (node.kind === "script") return <article className="workflow-node script-node" key={node.script.name}><Terminal size={14} /><span><strong>{node.script.name}</strong><small>{node.script.description}</small></span><em><b>{sequence}</b> SCRIPT</em></article>;
+          const item = node.prompt;
+          const meta = promptMeta(item);
+          const Icon = meta.icon;
+          const isSelected = selected?.mode === item.mode && selected.path === item.path;
+          return <button className={`workflow-node prompt-node ${isSelected ? "selected" : ""}`} onClick={() => void choose(item)} key={`${item.mode}/${item.path}`}><Icon size={14} /><span><strong>{meta.title}</strong><small>{meta.description}</small></span><em><b>{sequence}</b> PROMPT</em></button>;
+        })}</div>{columnIndex < columns.length - 1 && <span className="workflow-connector" aria-hidden="true" />}</section>;
+      })}</div><div className="workflow-retry"><RotateCcw size={14} /><span><strong>{mode === "delivery" ? "Remediation retry" : "Safe-fix re-review"}</strong><small>{mode === "delivery" ? "Verification failure → prepare_delivery_remediation.py → implementation agent → verification" : "High-confidence finding → auto_fix_sync.py → focused validation → pull request"}</small></span></div></div></div>
+    </Panel>
+    {selected && <PromptInspectorDialog item={selected} content={content} onChange={setContent} onClose={() => { setSelected(null); setContent(""); }} onSave={() => void interact("/api/prompt", { mode: selected.mode, path: selected.path, content }, "Prompt saved")} />}
+  </>;
+}
+
+function PromptInspectorDialog({ item, content, onChange, onClose, onSave }: { item: { mode: "scan" | "delivery"; path: string }; content: string; onChange: (value: string) => void; onClose: () => void; onSave: () => void }) {
+  const meta = promptMeta(item);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : "Auto Delivery"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article></div></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={onSave}><Save size={14} />Save prompt</button></footer></section></div>;
 }
 
 function SettingsView({ data, project, interact, notify }: { data: DashboardData; project: string; interact: (path: string, json: RecordValue, message: string) => Promise<void>; notify: (message: string) => void }) {
