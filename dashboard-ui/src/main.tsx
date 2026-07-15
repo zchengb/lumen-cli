@@ -37,8 +37,6 @@ const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
   { id: "settings", label: "SETTINGS", icon: Settings2 }
 ];
 
-const fallbackPhases = ["Preflight", "Feature worktrees", "Implementation", "Verification", "Pull requests", "JIRA DEV DONE"];
-
 function text(value: unknown, fallback = "—") { return value === undefined || value === null || value === "" ? fallback : String(value); }
 function when(value: unknown) {
   if (!value) return "—";
@@ -70,8 +68,6 @@ function titleStatus(value: unknown) {
   };
   return labels[raw] || raw.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
-function countPassed(checks: RecordValue[]) { return checks.filter((item) => item.status === "passed").length; }
-
 async function request(path: string, project: string, init: RequestInit & { json?: RecordValue } = {}) {
   const url = new URL(path, window.location.origin);
   if (!init.method || init.method === "GET") url.searchParams.set("project", project);
@@ -161,7 +157,7 @@ function App() {
         {error && <div className="status-note"><Activity size={15} />{error}</div>}
         {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
         {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
-        {data && activeTab === "delivery" && <DeliveryView data={data} />}
+        {data && activeTab === "delivery" && <DeliveryView data={data} project={project} />}
         {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={setNotice} />}
         {data && activeTab === "settings" && <SettingsView data={data} project={project} interact={interact} notify={setNotice} />}
       </div>
@@ -214,31 +210,41 @@ function IgnoreDialog({ issue, onClose, onConfirm }: { issue: RecordValue; onClo
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Ignore finding" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>{text(issue.title)}</strong><Field label="Reason (optional)"><input autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this safe to ignore?" /></Field></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onConfirm(reason)}>Mark ignored</button></footer></section></div>;
 }
 
-function DeliveryView({ data }: { data: DashboardData }) {
+function DeliveryView({ data, project }: { data: DashboardData; project: string }) {
   const delivery = data.delivery || {};
   const current = delivery.current || {};
   const runs = delivery.runs || [];
-  const checks = current.verification || [];
   const schedule = data.interactive?.schedules?.delivery;
-  const phases = current.phases?.length ? current.phases : fallbackPhases.map((label) => ({ label, status: "pending" }));
-  const latest = runs[0] || {};
-  const prs = latest.pull_requests || [];
+  const stages = current.stages || [];
+  const [selectedStage, setSelectedStage] = useState<RecordValue | null>(null);
+  const [logContent, setLogContent] = useState("");
+  const [logError, setLogError] = useState("");
+  const [loadingLog, setLoadingLog] = useState(false);
+  const openStage = async (stage: RecordValue) => {
+    setSelectedStage(stage); setLogContent(""); setLogError(""); setLoadingLog(true);
+    try { const response = await request(`/api/delivery/log?run_id=${encodeURIComponent(current.run_id || "")}`, project); setLogContent(response.content || "No log content recorded."); }
+    catch (err) { setLogError(err instanceof Error ? err.message : "Unable to load delivery log"); }
+    finally { setLoadingLog(false); }
+  };
   return <>
-    <PageIntro title="AUTO DELIVERY" description="Story execution, verification evidence, and pull requests." action={<div className="intro-action"><span className="automation"><i />{schedule?.description || "Automation not configured"}</span><Badge value={current.delivery_status || "idle"} /></div>} />
-    <section className="delivery-summary"><div className="delivery-facts"><Fact label="Current story" value={current.jira_key || current.story_id || "No active delivery"} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at)} /><Fact label="Finished" value={when(current.finished_at)} /></div><DeliveryFlow phases={phases} deliveryStatus={String(current.delivery_status || "")} startedAt={current.started_at} finishedAt={current.finished_at} /></section>
-    <div className="two-column"><Panel title="Repository verification" action={<span className="muted">{checks.length} checks</span>} className="flush-table"><div className="table-scroll"><table><thead><tr><th>Repository</th><th>Status</th><th>Verification</th></tr></thead><tbody>{checks.length ? checks.map((check: RecordValue, index: number) => <tr key={`${check.repository}-${index}`}><td>{text(check.repository || check.repo, "Repository")}</td><td><Badge value={check.status} /></td><td>{text(check.label || check.command || check.summary)}</td></tr>) : <tr><td colSpan={3}><Empty label="No verification recorded." /></td></tr>}</tbody></table></div></Panel><Panel title="Delivery outcome"><div className="rows"><InfoRow label="Branch" value={<code>{text(current.branch || latest.branch)}</code>} /><InfoRow label="JIRA" value={<code>{text(current.jira?.status)}</code>} /><InfoRow label="Pull requests" value={<PrLinks items={prs} />} /><InfoRow label="Remediation" value={<code>{text(current.remediation?.status)}</code>} /></div></Panel></div>
-    <div className="section-heading"><h2>Delivery history</h2><span>{runs.length} runs</span></div><Panel title="" className="history-panel"><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Verification</th><th>Duration</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; return <tr key={run.run_id}><td><b>{text(run.jira_key || run.story || run.run_id)}</b><small>{text(run.branch, "")}</small></td><td>{when(run.finished_at || run.started_at)}</td><td><Badge value={run.status} /></td><td><PrLinks items={run.pull_requests || []} /></td><td>{countPassed(runChecks)}/{runChecks.length} passed</td><td>{elapsed(run.started_at, run.finished_at)}</td></tr>; }) : <tr><td colSpan={6}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
+    <PageIntro title="AUTO DELIVERY" description="Story execution and pull request delivery." action={<div className="intro-action"><span className="automation"><i />{schedule?.description || "Automation not configured"}</span><Badge value={current.delivery_status || "idle"} /></div>} />
+    <section className="delivery-summary"><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at)} /><Fact label="Finished" value={when(current.finished_at)} /></div><DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} startedAt={current.started_at} finishedAt={current.finished_at} onStageClick={openStage} /></section>
+    <SectionHeading title="Delivery history" meta={`${runs.length} runs`} /><Panel title="" className="history-panel"><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Verification</th><th>Duration</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; return <tr key={run.run_id}><td><b><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</b><small>{text(run.branch, "")}</small></td><td>{when(run.finished_at || run.started_at)}</td><td><Badge value={run.status} /></td><td><PrLinks items={run.pull_requests || []} /></td><td>{runChecks.filter((item: RecordValue) => item.status === "passed").length}/{runChecks.length} passed</td><td>{elapsed(run.started_at, run.finished_at)}</td></tr>; }) : <tr><td colSpan={6}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
+    {selectedStage && <DeliveryLogDialog stage={selectedStage} content={logContent} error={logError} loading={loadingLog} onClose={() => setSelectedStage(null)} />}
   </>;
 }
 
-function DeliveryFlow({ phases, deliveryStatus, startedAt, finishedAt }: { phases: RecordValue[]; deliveryStatus: string; startedAt?: string; finishedAt?: string }) {
+function StoryReference({ jiraKey, title }: { jiraKey: string; title?: string }) { return <span className="story-reference"><code>{text(jiraKey, "No active delivery")}</code>{title && <span>{title}</span>}</span>; }
+function DeliveryFlow({ stages, deliveryStatus, startedAt, finishedAt, onStageClick }: { stages: RecordValue[]; deliveryStatus: string; startedAt?: string; finishedAt?: string; onStageClick: (stage: RecordValue) => void }) {
   const terminalSuccess = /completed|dev_done|pr_open/i.test(deliveryStatus);
-  return <div className="delivery-flow"><div className="flow-heading"><div><span>Delivery flow</span><strong>Execution path</strong></div><p>{startedAt ? `Started ${when(startedAt)}` : "Awaiting delivery trigger"}{finishedAt ? ` · Finished ${when(finishedAt)}` : ""}</p></div><ol className="flow-steps" style={{ "--flow-count": phases.length } as React.CSSProperties}>{phases.map((phase, index) => {
-    const rawStatus = String(phase.status || "pending").toLowerCase();
+  return <div className="delivery-flow"><div className="flow-heading"><div><span>Delivery flow</span><strong>Execution path</strong></div><p>{startedAt ? `Started ${when(startedAt)}` : "Awaiting delivery trigger"}{finishedAt ? ` · Finished ${when(finishedAt)}` : ""}</p></div><ol className="flow-steps" style={{ "--flow-count": stages.length } as React.CSSProperties}>{stages.map((stage, index) => {
+    const rawStatus = String(stage.status || "pending").toLowerCase();
     const state = terminalSuccess || rawStatus === "completed" ? "completed" : /running|progress/.test(rawStatus) ? "running" : /fail|block/.test(rawStatus) ? "failed" : "pending";
-    return <li className={`flow-step ${state}`} key={`${phase.label}-${index}`}><div className="flow-node">{state === "completed" ? "✓" : index + 1}</div><div className="flow-copy"><strong>{text(phase.label)}</strong><span>{state === "completed" ? "Completed" : state === "running" ? "In progress" : state === "failed" ? "Needs attention" : "Pending"}</span></div></li>;
+    return <li className={`flow-step ${state}`} key={`${stage.label}-${index}`}><button className="flow-stage-button" onClick={() => onStageClick(stage)}><div className="flow-node">{state === "completed" ? "✓" : index + 1}</div><div className="flow-copy"><strong>{text(stage.label)}</strong><span>{stage.duration || "—"}</span></div></button></li>;
   })}</ol></div>;
 }
+
+function DeliveryLogDialog({ stage, content, error, loading, onClose }: { stage: RecordValue; content: string; error: string; loading: boolean; onClose: () => void }) { return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal delivery-log-modal" role="dialog" aria-modal="true" aria-label={`${stage.label} log`} onMouseDown={(event) => event.stopPropagation()}><div className="delivery-log-header"><div><span>{stage.label}</span><strong>{stage.duration || "—"}</strong><p>{stage.detail || "Delivery log excerpt"}</p></div><button className="button secondary" onClick={onClose}>Close</button></div><pre className="delivery-log-content"><code>{loading ? "Loading log…" : error || content}</code></pre></section></div>; }
 
 function Fact({ label, value }: { label: string; value: React.ReactNode }) { return <div className="fact"><span>{label}</span><strong>{value}</strong></div>; }
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) { return <div className="info-row"><span>{label}</span><div>{value}</div></div>; }

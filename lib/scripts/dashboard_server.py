@@ -172,6 +172,75 @@ def update_env_value(workspace: Path, key: str, value: str) -> None:
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
+def parse_delivery_timestamp(value: object) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def delivery_duration(started_at: object, finished_at: object) -> str:
+    started = parse_delivery_timestamp(started_at)
+    finished = parse_delivery_timestamp(finished_at)
+    if not started or not finished or finished < started:
+        return "—"
+    seconds = int((finished - started).total_seconds())
+    if seconds < 60:
+        return f"{seconds}s"
+    return f"{seconds // 60}m {seconds % 60:02d}s"
+
+
+def story_title(workspace: Path, delivery: dict[str, Any], progress: dict[str, Any]) -> str:
+    story_path = str(delivery.get("story_path") or progress.get("story_path") or "").strip()
+    docs_dir = Path(str(delivery.get("docs_dir") or progress.get("docs_dir") or workspace.parent)).expanduser()
+    if not story_path:
+        return ""
+    metadata = read_delivery_json(docs_dir / story_path / "metadata.json", {})
+    return str(metadata.get("title") or "").strip()
+
+
+def delivery_stages(phases: object) -> list[dict[str, Any]]:
+    source = [phase for phase in phases or [] if isinstance(phase, dict)]
+    definitions = [
+        ("preflight", "Preflight", {"preflight", "worktrees", "jira_start"}),
+        ("implement", "Implement", {"agent"}),
+        ("verification", "Verification", {"verification"}),
+        ("pr", "PR", {"finalize", "jira_done"}),
+        ("notification", "Notification", {"notify"}),
+    ]
+    stages: list[dict[str, Any]] = []
+    for stage_id, label, phase_ids in definitions:
+        matched = [phase for phase in source if str(phase.get("id") or "") in phase_ids]
+        statuses = [str(phase.get("status") or "pending").lower() for phase in matched]
+        if any(status in {"failed", "blocked"} for status in statuses):
+            status = "failed"
+        elif any(status in {"in_progress", "running"} for status in statuses):
+            status = "in_progress"
+        elif matched and all(status in {"completed", "skipped"} for status in statuses):
+            status = "completed"
+        else:
+            status = "pending"
+        starts = [parse_delivery_timestamp(phase.get("started_at")) for phase in matched]
+        finishes = [parse_delivery_timestamp(phase.get("finished_at")) for phase in matched]
+        starts = [value for value in starts if value]
+        finishes = [value for value in finishes if value]
+        started_at = min(starts).isoformat().replace("+00:00", "Z") if starts else ""
+        finished_at = max(finishes).isoformat().replace("+00:00", "Z") if finishes else ""
+        detail = " · ".join(dict.fromkeys(str(phase.get("detail") or "").strip() for phase in matched if phase.get("detail")))
+        stages.append({
+            "id": stage_id,
+            "label": label,
+            "status": status,
+            "started_at": started_at,
+            "finished_at": finished_at,
+            "duration": delivery_duration(started_at, finished_at),
+            "detail": detail,
+        })
+    return stages
+
+
 def delivery_payload(workspace: Path) -> dict[str, Any]:
     history_dir = workspace / "history" / "delivery"
     runs: list[dict[str, Any]] = []
@@ -197,12 +266,14 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
                     "run_id": item.get("run_id") or source.stem,
                     "status": delivery.get("delivery_status") or progress.get("delivery_status") or "unknown",
                     "story": delivery.get("story_id") or progress.get("story_id") or "",
+                    "story_title": story_title(workspace, delivery, progress),
                     "jira_key": delivery.get("jira_key") or progress.get("jira_key") or "",
                     "branch": delivery.get("branch") or progress.get("branch") or "",
                     "pull_requests": pull_requests,
                     "verification": delivery.get("verification_results") or progress.get("verification") or [],
-                    "started_at": delivery.get("started_at") or progress.get("started_at") or "",
+                    "started_at": progress.get("started_at") or delivery.get("started_at") or "",
                     "finished_at": delivery.get("finished_at") or progress.get("finished_at") or "",
+                    "log_file": item.get("log_file") or progress.get("log_file") or "",
                 }
             )
     progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
@@ -210,10 +281,14 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     terminal_states = {"completed", "failed", "blocked", "dev_done", "pr_open"}
     if str(result.get("delivery_status") or "") in terminal_states:
         current = {**progress, **result}
+        current["started_at"] = progress.get("started_at") or result.get("started_at") or ""
+        current["finished_at"] = result.get("finished_at") or progress.get("finished_at") or ""
         current["current_phase"] = "completed" if result.get("delivery_status") == "completed" else result.get("delivery_status")
         current["verification"] = result.get("verification_results") or progress.get("verification") or []
     else:
         current = progress
+    current["story_title"] = story_title(workspace, result, progress)
+    current["stages"] = delivery_stages(current.get("phases"))
     return {
         "current": current,
         "runs": runs,
@@ -254,6 +329,26 @@ class DashboardServer(ThreadingHTTPServer):
         }
         data["delivery"] = delivery_payload(workspace)
         return data
+
+    def delivery_log(self, workspace: Path, run_id: str) -> dict[str, Any]:
+        payload = delivery_payload(workspace)
+        current = payload.get("current") if isinstance(payload.get("current"), dict) else {}
+        selected = current if not run_id or run_id == current.get("run_id") else next(
+            (item for item in payload.get("runs", []) if isinstance(item, dict) and item.get("run_id") == run_id),
+            {},
+        )
+        log_value = str(selected.get("log_file") or "").strip()
+        if not log_value:
+            raise ValueError("No delivery log is available")
+        log_file = Path(log_value).expanduser()
+        try:
+            log_file.resolve().relative_to(workspace.resolve())
+        except ValueError as exc:
+            raise ValueError("Invalid delivery log path") from exc
+        if not log_file.is_file():
+            raise ValueError("Delivery log is no longer available")
+        lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
+        return {"run_id": selected.get("run_id", ""), "path": str(log_file.relative_to(workspace)), "content": "\n".join(lines[-220:])}
 
     def update_schedule(self, body: dict[str, Any], workspace: Path, project: str) -> dict[str, Any]:
         kind = str(body.get("kind", ""))
@@ -321,6 +416,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 key = query.get("key", [""])[0]
                 return self.respond_json(HTTPStatus.OK, {"key": key, "value": integration_value(workspace, key)})
+            except (OSError, ValueError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/delivery/log":
+            try:
+                return self.respond_json(HTTPStatus.OK, self.server.delivery_log(workspace, query.get("run_id", [""])[0]))
             except (OSError, ValueError) as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path in {"/", "/dashboard.html"}:
