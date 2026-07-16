@@ -260,7 +260,7 @@ def read_active_run(root: Path, state_dir: Path, logs_dir: Path) -> Optional[dic
 def run_outcome(status: str) -> str:
     if status == "failed":
         return "failed"
-    if status in {"completed_clean", "completed_with_findings"}:
+    if status in {"completed", "completed_clean", "completed_with_findings"}:
         return "success"
     return "other"
 
