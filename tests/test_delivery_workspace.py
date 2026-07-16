@@ -42,6 +42,7 @@ from compose_scan_prompt import compose_prompt  # noqa: E402
 from dashboard_server import DashboardServer, delivery_payload  # noqa: E402
 from capture_jira_context import image_urls, values_for_keys  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
+from auto_fix_sync import extract_pr_url  # noqa: E402
 
 
 def load_delivery_notification_renderer():
@@ -54,6 +55,16 @@ def load_delivery_notification_renderer():
     return module
 
 
+def load_scan_notification_renderer():
+    path = SCRIPTS / "render-report-and-notify.py"
+    spec = importlib.util.spec_from_file_location("scan_notification_renderer_test", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load scan notification renderer")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def git(path: Path, *args: str) -> None:
     completed = subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True)
     if completed.returncode != 0:
@@ -61,6 +72,46 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_pr_url_extraction_rejects_gh_help_and_accepts_pull_request_urls(self) -> None:
+        help_output = "Read the manual at https://cli.github.com/manual\n"
+        self.assertEqual("", extract_pr_url(help_output))
+        self.assertEqual(
+            "https://git.example.test/team/service/pull/42",
+            extract_pr_url("https://git.example.test/team/service/pull/42\n"),
+        )
+
+    def test_scan_notification_recovers_jira_link_from_published_story(self) -> None:
+        renderer = load_scan_notification_renderer()
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            story = docs / "stories" / "demo"
+            story.mkdir(parents=True)
+            (story / "metadata.json").write_text(
+                json.dumps({"jiraUrl": "https://example.atlassian.net/browse/DEMO-1"}),
+                encoding="utf-8",
+            )
+            card = renderer.build_feishu_card(
+                {"findings": [{"title": "Demo", "severity": "High", "jira_key": "DEMO-42"}]},
+                common={},
+                docs_root=docs,
+            )
+        rendered = json.dumps(card)
+        self.assertIn("[DEMO-42](https://example.atlassian.net/browse/DEMO-42)", rendered)
+
+    def test_delivery_notification_uses_run_started_at_for_duration(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            results = workspace / "lumen" / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(
+                json.dumps({"story_id": "DEMO-42", "started_at": "2026-07-15T16:55:46Z"}),
+                encoding="utf-8",
+            )
+            delivery = {"story_id": "DEMO-42", "started_at": "2026-07-15T16:56:14Z", "finished_at": "2026-07-15T17:06:53Z"}
+            renderer.align_delivery_timing(delivery, workspace)
+        self.assertEqual("11m 07s", renderer.format_duration(delivery["started_at"], delivery["finished_at"]))
+
     def test_jira_completion_comment_includes_repo_named_prs_and_verification(self) -> None:
         comment = completion_comment(
             {

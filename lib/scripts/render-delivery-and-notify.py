@@ -85,6 +85,18 @@ def jira_assignee(workspace_root: Path, story_path: object) -> str:
     return ""
 
 
+def align_delivery_timing(delivery: dict[str, Any], workspace_root: Path) -> None:
+    """Use the run-level start time for the notification and dashboard history."""
+    progress = read_json(workspace_lumen_dir(workspace_root) / "results" / "delivery-progress.json")
+    if not isinstance(progress, dict):
+        return
+    if progress.get("story_id") != delivery.get("story_id"):
+        return
+    started_at = str(progress.get("started_at") or "").strip()
+    if started_at:
+        delivery["started_at"] = started_at
+
+
 def build_delivery_feishu_card(
     event: str,
     delivery: dict[str, Any],
@@ -250,6 +262,7 @@ def main() -> int:
     docs_dir = resolve_docs_dir(delivery, result_path)
     workspace_root = Path(str(delivery.get("workspace_root", "")).strip() or docs_dir).expanduser().resolve()
     delivery_config = read_json(delivery_config_path(workspace_root))
+    align_delivery_timing(delivery, workspace_root)
     story_path = delivery.get("story_path")
     if story_path:
         metadata_path = (docs_dir / str(story_path) / "metadata.json").resolve()

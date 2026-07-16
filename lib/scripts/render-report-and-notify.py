@@ -452,7 +452,7 @@ def escape_markdown(text: str) -> str:
     )
 
 
-def jira_site_host(common: dict) -> str:
+def jira_site_host(common: dict, docs_root: Optional[Path] = None) -> str:
     jira = (common.get("notifications") or {}).get("jira") or {}
     site = str(jira.get("site", "")).strip()
     if site:
@@ -462,19 +462,19 @@ def jira_site_host(common: dict) -> str:
             return f"https://{site}".rstrip("/")
         return f"https://{site}.atlassian.net"
 
-    auth_conf = Path.home() / ".config" / "twg" / "auth.conf"
-    if auth_conf.is_file():
-        for line in auth_conf.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith("domain="):
-                domain = line.split("=", 1)[1].strip().strip('"')
-                if domain:
-                    if domain.startswith("http://") or domain.startswith("https://"):
-                        return domain.rstrip("/")
-                    return f"https://{domain}".rstrip("/")
+    # The docs repository is the delivery source of truth.  Older findings may
+    # retain only a Jira key, so recover the browse host from published stories.
+    if docs_root:
+        for metadata_path in (docs_root / "stories").glob("**/metadata.json"):
+            metadata = load_json(metadata_path, {})
+            url = str(metadata.get("jiraUrl") or metadata.get("jira_url") or "").strip()
+            match = re.match(r"(https?://[^/]+)", url)
+            if match:
+                return match.group(1)
     return ""
 
 
-def jira_browse_url_for_finding(finding: dict, common: dict) -> str:
+def jira_browse_url_for_finding(finding: dict, common: dict, docs_root: Optional[Path] = None) -> str:
     url = str(finding.get("jira_url", "")).strip()
     if url:
         return url
@@ -483,24 +483,29 @@ def jira_browse_url_for_finding(finding: dict, common: dict) -> str:
     if not key:
         return ""
 
-    host = jira_site_host(common)
+    host = jira_site_host(common, docs_root)
     if not host:
         return ""
     return f"{host}/browse/{key}"
 
 
-def feishu_jira_line(finding: dict, common: dict) -> str:
+def feishu_jira_line(finding: dict, common: dict, docs_root: Optional[Path] = None) -> str:
     key = str(finding.get("jira_key", "")).strip()
-    url = jira_browse_url_for_finding(finding, common)
+    url = jira_browse_url_for_finding(finding, common, docs_root)
     if not key and not url:
         return ""
 
     if url:
-        return f"**Jira:** {url}"
+        return f"**Jira:** [{escape_markdown(key or url)}]({url})"
     return f"**Jira:** `{escape_markdown(key)}`"
 
 
-def build_feishu_card(scan: dict, product_name: str = "Lumen", common: Optional[dict] = None) -> dict:
+def build_feishu_card(
+    scan: dict,
+    product_name: str = "Lumen",
+    common: Optional[dict] = None,
+    docs_root: Optional[Path] = None,
+) -> dict:
     counts = severity_counts(scan.get("findings", []))
     elements = [
         {
@@ -538,7 +543,7 @@ def build_feishu_card(scan: dict, product_name: str = "Lumen", common: Optional[
             ]
             if finding.get("severity") == "High" and finding.get("pr_url"):
                 lines.append(f"**PR:** {finding['pr_url']}")
-            jira_line = feishu_jira_line(finding, common or {})
+            jira_line = feishu_jira_line(finding, common or {}, docs_root)
             if jira_line:
                 lines.append(jira_line)
             elements.append({"tag": "markdown", "content": "\n".join(lines)})
@@ -889,7 +894,7 @@ def main() -> int:
         scan["feishu"] = {"status": "not_sent", "error": "FEISHU_WEBHOOK_URL is not set"}
     else:
         try:
-            card = build_feishu_card(scan, product_name, common)
+            card = build_feishu_card(scan, product_name, common, workspace_root.parent)
             send_feishu(card, webhook_url)
             scan["feishu"] = {"status": "sent", "error": None}
         except Exception as exc:

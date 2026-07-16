@@ -176,13 +176,18 @@ def build_pr_body(finding: dict) -> str:
     return "\n".join(sections).strip()
 
 
+def is_pull_request_url(value: object) -> bool:
+    parsed = urlparse(str(value or "").strip())
+    return parsed.scheme in {"http", "https"} and bool(re.fullmatch(r".*/pulls?/\d+/?", parsed.path))
+
+
 def extract_pr_url(output: str) -> str:
-    for line in reversed(output.splitlines()):
-        value = line.strip()
-        if value.startswith("http://") or value.startswith("https://"):
+    # `gh` may print command help on an incompatible invocation.  Its manual
+    # URL is not a pull request and must never be persisted as one.
+    for value in reversed([line.strip() for line in output.splitlines()]):
+        if is_pull_request_url(value):
             return value
-    match = re.search(r"https?://\S+", output)
-    return match.group(0).rstrip(").,") if match else ""
+    return ""
 
 
 def branch_exists(worktree: Path, branch: str) -> bool:
@@ -366,6 +371,13 @@ def sync_auto_fix_prs(
         "errors": [],
     }
 
+    # Repair values persisted by older releases that accepted `gh` help text.
+    for item in [*scan.get("findings", []), *registry.get("issues", [])]:
+        if not isinstance(item, dict):
+            continue
+        for field in ("pr_url", "jira_pr_url"):
+            if item.get(field) and not is_pull_request_url(item.get(field)):
+                item.pop(field, None)
     strip_pr_creation_failures(scan)
     repos_config = load_json(workspace / "config" / "repos.json", {"repositories": []})
     candidates = []
