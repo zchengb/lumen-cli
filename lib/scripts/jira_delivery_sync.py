@@ -114,8 +114,10 @@ def completion_comment(delivery: dict) -> str:
         if isinstance(item, dict) and item.get("name")
     ) or "n/a"
     lines = [
-        "Lumen Delivery Completed",
+        "Lumen Delivery · Completed",
         "",
+        f"- Status: Completed",
+        f"- Assignee: {str(delivery.get('jira_assignee') or 'Unassigned')}",
         f"- Branch: `{str(delivery.get('branch') or 'n/a')}`",
         f"- Repositories: {repositories}",
         f"- Duration: {delivery_duration(delivery)}",
@@ -135,13 +137,40 @@ def attention_comment(delivery: dict) -> str:
         if isinstance(item, dict) and item.get("status") == "failed"
     ]
     detail = ", ".join(failures) if failures else "See Lumen delivery logs for the blocking detail."
+    repositories = ", ".join(
+        str(item.get("name", "")).strip()
+        for item in delivery.get("repos_touched", [])
+        if isinstance(item, dict) and item.get("name")
+    ) or "n/a"
     return "\n".join(
         [
-            f"Lumen Delivery {status.title()}",
+            "Lumen Delivery · Needs attention",
             "",
+            f"- Status: {status.title()}",
+            f"- Assignee: {str(delivery.get('jira_assignee') or 'Unassigned')}",
             f"- Branch: `{str(delivery.get('branch') or 'n/a')}`",
+            f"- Scope: {repositories}",
+            f"- Duration: {delivery_duration(delivery)}",
             f"- Reason: {detail}",
-            "- No completion status was applied by Lumen.",
+            "- JIRA status remains unchanged for follow-up.",
+        ]
+    )
+
+
+def started_comment(delivery: dict) -> str:
+    repositories = ", ".join(
+        str(item.get("name", "")).strip()
+        for item in delivery.get("repos_touched", [])
+        if isinstance(item, dict) and item.get("name")
+    ) or "n/a"
+    return "\n".join(
+        [
+            "Lumen Delivery · Started",
+            "",
+            "- Status: In progress",
+            f"- Assignee: {str(delivery.get('jira_assignee') or 'Unassigned')}",
+            f"- Branch: `{str(delivery.get('branch') or 'n/a')}`",
+            f"- Scope: {repositories}",
         ]
     )
 
@@ -181,21 +210,7 @@ def sync_delivery_jira(
             if in_dev_status:
                 transition_issue(jira_key, in_dev_status, config)
                 transitions.append(in_dev_status)
-            branch = str(delivery.get("branch", "")).strip() or "n/a"
-            repos = ", ".join(
-                str(item.get("name", "")).strip()
-                for item in delivery.get("repos_touched", [])
-                if isinstance(item, dict) and item.get("name")
-            ) or "n/a"
-            docs_dir = str(delivery.get("docs_dir", "")).strip() or "n/a"
-            add_delivery_comment(
-                jira_key,
-                "Lumen Delivery Started\n\n"
-                f"- Branch: `{branch}`\n"
-                f"- Repositories: {repos}\n"
-                f"- Docs: `{docs_dir}`",
-                config,
-            )
+            add_delivery_comment(jira_key, started_comment(delivery), config)
 
         pr_urls = delivery.get("pr_urls") or []
         if pr_urls:

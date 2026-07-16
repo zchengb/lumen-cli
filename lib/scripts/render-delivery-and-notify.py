@@ -16,7 +16,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from delivery_workspace import delivery_config_path, read_json, write_json
+from delivery_workspace import delivery_config_path, read_json, workspace_lumen_dir, write_json
 from delivery_progress import set_phase, update_notifications
 from jira_delivery_sync import sync_delivery_jira
 
@@ -72,6 +72,19 @@ def resolve_docs_dir(delivery: dict[str, Any], result_path: Path) -> Path:
     return workspace_root
 
 
+def jira_assignee(workspace_root: Path, story_path: object) -> str:
+    story_name = Path(str(story_path or "")).name
+    if not story_name:
+        return ""
+    snapshot = read_json(workspace_lumen_dir(workspace_root) / "context" / story_name / "jira-context.json")
+    workitem = snapshot.get("workitem") if isinstance(snapshot, dict) else {}
+    item = workitem[0] if isinstance(workitem, list) and workitem else workitem
+    assignee = item.get("assignee") if isinstance(item, dict) else {}
+    if isinstance(assignee, dict):
+        return str(assignee.get("displayName") or assignee.get("display_name") or assignee.get("name") or "").strip()
+    return ""
+
+
 def build_delivery_feishu_card(
     event: str,
     delivery: dict[str, Any],
@@ -117,9 +130,11 @@ def build_delivery_feishu_card(
         "blocked": "Blocked",
     }.get(status, status.replace("_", " ").title())
     duration = format_duration(delivery.get("started_at"), delivery.get("finished_at"))
+    assignee = str(delivery.get("jira_assignee") or "").strip()
 
     overview = [
         f"**Status:**  {status_label}",
+        f"**Assignee:**  {assignee or 'Unassigned'}",
         f"**Scope:**  {repos or 'No repository recorded'}",
     ]
     if branch:
@@ -242,6 +257,7 @@ def main() -> int:
         metadata_path = docs_dir / "stories" / "metadata.json"
 
     story_metadata = read_json(metadata_path) if metadata_path.is_file() else {}
+    delivery["jira_assignee"] = jira_assignee(workspace_root, story_path)
     webhook = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
     pr_urls = [str(url).strip() for url in delivery.get("pr_urls", []) if str(url).strip()]
 

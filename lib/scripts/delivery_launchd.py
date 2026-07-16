@@ -97,12 +97,20 @@ def status(args: argparse.Namespace) -> int:
     if not path.exists():
         print("")
         return 0
+    payload: dict = {}
     try:
         payload = plistlib.loads(path.read_bytes())
         interval = int(payload.get("StartInterval") or 0)
     except (OSError, ValueError, plistlib.InvalidFileException):
         interval = 0
-    print(json.dumps({"path": str(path), "interval_seconds": interval}))
+    arguments = payload.get("ProgramArguments") if isinstance(payload, dict) else []
+    jira_status = ""
+    if isinstance(arguments, list):
+        try:
+            jira_status = str(arguments[arguments.index("--jira-status") + 1])
+        except (ValueError, IndexError):
+            pass
+    print(json.dumps({"path": str(path), "interval_seconds": interval, "jira_status": jira_status}))
     return 0
 
 

@@ -9,7 +9,7 @@ import json
 import mimetypes
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -20,6 +20,7 @@ from delivery_launchd import install as install_delivery_schedule
 from delivery_launchd import remove as remove_delivery_schedule
 from delivery_launchd import status as delivery_schedule_status
 from delivery_workspace import read_json as read_delivery_json
+from jira_sync import parse_twg_json, run_twg, twg_ready
 from issue_registry import set_issue_status
 from projects_registry import find_by_slug, load_registry
 from scan_launchd import install as install_scan_schedule
@@ -98,11 +99,64 @@ def safe_workspace_static_path(workspace: Path, request_path: str) -> Path:
 def schedule_payload(workspace: Path, project: str) -> dict[str, Any]:
     scan_raw = capture_schedule_status(scan_schedule_status, project)
     delivery_raw = capture_schedule_status(delivery_schedule_status, project)
+    delivery_config = load_json(workspace / "config" / "delivery.json", {})
+    automation = delivery_config.get("automation") if isinstance(delivery_config.get("automation"), dict) else {}
+    scheduled = automation.get("scheduled_delivery") if isinstance(automation.get("scheduled_delivery"), dict) else {}
+    jira = delivery_config.get("jira") if isinstance(delivery_config.get("jira"), dict) else {}
+    if delivery_raw is None:
+        delivery_raw = {"enabled": False}
+    delivery_raw.setdefault("enabled", True)
+    delivery_raw["jira_status"] = delivery_raw.get("jira_status") or scheduled.get("required_jira_status", "")
+    delivery_raw["in_dev_status"] = jira.get("in_dev_status", "")
+    delivery_raw["dev_done_status"] = jira.get("dev_done_status", "")
     return {
         "scan": scan_raw,
         "delivery": delivery_raw,
         "platform": "launchd" if sys.platform == "darwin" else "unsupported",
     }
+
+
+def jira_status_options(workspace: Path) -> dict[str, Any]:
+    """Use an existing Story as the workflow probe; cache reads to keep dashboard refreshes cheap."""
+    cache_path = workspace / "state" / "jira-workflow-statuses.json"
+    cached = load_json(cache_path, {})
+    cached_at = cached.get("fetched_at", "")
+    try:
+        fresh = datetime.now(timezone.utc) - datetime.fromisoformat(str(cached_at).replace("Z", "+00:00")) < timedelta(minutes=5)
+    except ValueError:
+        fresh = False
+    if fresh and isinstance(cached.get("options"), list):
+        return cached
+
+    ready, detail = twg_ready()
+    if not ready:
+        return {"options": [], "detail": detail}
+    stories = workspace.parent / "stories"
+    metadata_paths = sorted(stories.glob("*/metadata.json")) if stories.is_dir() else []
+    metadata = next((load_json(path, {}) for path in metadata_paths if str(load_json(path, {}).get("jiraKey", "")).strip()), {})
+    jira_key = str(metadata.get("jiraKey", "")).strip()
+    if not jira_key:
+        return {"options": [], "detail": "No JIRA-backed Story is available to inspect the workflow."}
+    code, output = run_twg(["jira", "workitem", "get", jira_key, "-o", "json"])
+    if code != 0:
+        return {"options": [], "detail": "Unable to read JIRA workflow status."}
+    payload = parse_twg_json(output) or {}
+    data = payload.get("data") if isinstance(payload, dict) else {}
+    item = data[0] if isinstance(data, list) and data else data
+    if not isinstance(item, dict) or not item.get("id"):
+        return {"options": [], "detail": "JIRA workflow probe returned no work item."}
+    current = item.get("status") if isinstance(item.get("status"), dict) else {}
+    current_name = str(current.get("name", "")).strip()
+    code, output = run_twg(["jira", "workitem", "transitions", "query", "--id", str(item["id"]), "-o", "json"])
+    if code != 0:
+        return {"options": [current_name] if current_name else [], "source_jira_key": jira_key, "detail": "Unable to read available Jira transitions."}
+    transitions_payload = parse_twg_json(output) or {}
+    transition_data = transitions_payload.get("data") if isinstance(transitions_payload, dict) else {}
+    transitions = transition_data.get("transitions") if isinstance(transition_data, dict) else []
+    names = [current_name] + [str(item.get("toName") or item.get("name") or "").strip() for item in transitions if isinstance(item, dict)]
+    result = {"options": list(dict.fromkeys(name for name in names if name)), "source_jira_key": jira_key, "fetched_at": utc_now()}
+    write_json(cache_path, result)
+    return result
 
 
 def capture_schedule_status(func: Any, project: str) -> dict[str, Any] | None:
@@ -377,6 +431,13 @@ class DashboardServer(ThreadingHTTPServer):
         if action == "remove":
             func = remove_scan_schedule if kind == "scan" else remove_delivery_schedule
             func(argparse.Namespace(project=project))
+            if kind == "delivery":
+                config_path = workspace / "config" / "delivery.json"
+                config = load_json(config_path, {})
+                automation = config.setdefault("automation", {})
+                scheduled = automation.setdefault("scheduled_delivery", {})
+                scheduled["enabled"] = False
+                write_json(config_path, config)
             return schedule_payload(workspace, project)
 
         if kind == "scan":
@@ -399,6 +460,8 @@ class DashboardServer(ThreadingHTTPServer):
             if interval < 1:
                 raise ValueError("Delivery interval must be at least one minute")
             jira_status = str(body.get("jira_status", "Ready for Dev")).strip() or "Ready for Dev"
+            in_dev_status = str(body.get("in_dev_status", "")).strip()
+            dev_done_status = str(body.get("dev_done_status", "")).strip()
             args = argparse.Namespace(
                 project=project,
                 cron=f"*/{interval} * * * *",
@@ -410,6 +473,17 @@ class DashboardServer(ThreadingHTTPServer):
             )
             if install_delivery_schedule(args) != 0:
                 raise RuntimeError("Unable to install delivery schedule")
+            config_path = workspace / "config" / "delivery.json"
+            config = load_json(config_path, {})
+            automation = config.setdefault("automation", {})
+            scheduled = automation.setdefault("scheduled_delivery", {})
+            scheduled.update({"enabled": True, "required_jira_status": jira_status})
+            jira = config.setdefault("jira", {})
+            if in_dev_status:
+                jira["in_dev_status"] = in_dev_status
+            if dev_done_status:
+                jira["dev_done_status"] = dev_done_status
+            write_json(config_path, config)
         return schedule_payload(workspace, project)
 
 
@@ -447,6 +521,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_json(HTTPStatus.OK, self.server.delivery_scheduler_log(workspace))
             except ValueError as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/delivery/status-options":
+            return self.respond_json(HTTPStatus.OK, jira_status_options(workspace))
         if parsed.path in {"/", "/dashboard.html"}:
             return self.serve_file(self.server.workspace / "dashboard.html", "text/html; charset=utf-8")
         if parsed.path == "/dashboard-data.js":
