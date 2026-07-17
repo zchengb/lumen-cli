@@ -68,16 +68,16 @@ def delivery_lock(lock_dir: Path, *, docs_dir: Path, story: str) -> Iterator[Non
         raise DeliveryLockError(lock_error_message(lock_dir, docs_dir)) from exc
 
     meta_path = lock_dir / "lock.json"
-    meta_path.write_text(
-        json.dumps(
-            {"pid": os.getpid(), "started_at": utc_now(), "story": story},
-            indent=2,
-            ensure_ascii=False,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
     try:
+        meta_path.write_text(
+            json.dumps(
+                {"pid": os.getpid(), "started_at": utc_now(), "story": story},
+                indent=2,
+                ensure_ascii=False,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         yield
     finally:
         meta_path.unlink(missing_ok=True)

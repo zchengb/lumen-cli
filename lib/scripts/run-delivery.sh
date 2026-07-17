@@ -8,7 +8,7 @@ if [[ -f "${LUMEN_LIB_DIR}/ensure-path.sh" ]]; then
   ensure_lumen_path ""
 fi
 
-ORCHESTRATOR_PY="${LUMEN_LIB_DIR}/delivery_orchestrator.py"
+ORCHESTRATOR_PY="${LUMEN_DELIVERY_ORCHESTRATOR_PY:-${LUMEN_LIB_DIR}/delivery_orchestrator.py}"
 [[ -f "${ORCHESTRATOR_PY}" ]] || { printf 'Error: delivery orchestrator not found: %s\n' "${ORCHESTRATOR_PY}" >&2; exit 1; }
 
 exec python3 "${ORCHESTRATOR_PY}" "$@"

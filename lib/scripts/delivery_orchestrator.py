@@ -7,11 +7,12 @@ import json
 import os
 import shutil
 import sys
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from capture_jira_context import capture as capture_jira_snapshot
 from cleanup_delivery_worktrees import cleanup as cleanup_worktrees
@@ -88,6 +89,12 @@ class DeliveryOrchestrator:
                 handle.write(line)
         sys.stdout.write(line)
         sys.stdout.flush()
+
+    def best_effort(self, label: str, action: Callable[[], None]) -> None:
+        try:
+            action()
+        except Exception as exc:
+            sys.stderr.write(f"Warning: {label} failed: {exc}\n")
 
     def run_python(self, script: str, *args: str, check: bool = True) -> CommandResult:
         assert self.context.env is not None
@@ -295,6 +302,11 @@ class DeliveryOrchestrator:
             raise DeliveryFailure(
                 f"{stage_label} exited with status {result.exit_code}. See log: {self.context.log_file}"
             )
+        if result.formatter_warning:
+            self.log(f"Warning: {result.formatter_warning}")
+        if result.thread_errors:
+            for error in result.thread_errors:
+                self.log(f"Warning: {error}")
 
     def ensure_agent_ready(self) -> None:
         assert self.context.env is not None
@@ -447,12 +459,12 @@ class DeliveryOrchestrator:
             raise DeliveryFailure(f"Delivery finalization failed. See log: {self.context.log_file}")
         self.progress_phase(DeliveryPhase.FINALIZE, "completed", "Feature branches pushed and PRs opened")
 
-    def render_notification(self, result_path: Path, event: str, *, dry_run: bool = False) -> None:
+    def render_notification(self, result_path: Path, event: str, *, dry_run: bool = False) -> CommandResult:
         assert self.context.env is not None
         env = dict(self.context.env)
         if dry_run:
             env["LUMEN_DRY_RUN"] = "1"
-        run_command(
+        return run_command(
             [
                 sys.executable,
                 str(self.context.scripts_dir / "render-delivery-and-notify.py"),
@@ -464,6 +476,18 @@ class DeliveryOrchestrator:
             env=env,
             log_file=self.context.log_file,
         )
+
+    def report_notification_result(self, result: CommandResult, *, success_path: bool) -> None:
+        if result.exit_code == 0:
+            if success_path:
+                detail = "Dry-run notification preview sent" if self.context.dry_run else "Notifications sent"
+                self.progress_phase(DeliveryPhase.NOTIFY, "completed", detail)
+            return
+        warning = f"Delivery notification failed with exit code {result.exit_code}"
+        self.progress_message(warning)
+        sys.stderr.write(f"Warning: {warning}\n")
+        if success_path:
+            self.progress_phase(DeliveryPhase.NOTIFY, "completed", "Notification attempted with warnings")
 
     def sync_metadata(self) -> None:
         result = self.run_python(
@@ -529,25 +553,35 @@ class DeliveryOrchestrator:
             check=False,
         )
 
-    def handle_failure(self, message: str) -> None:
+    def handle_failure(self, message: str, cause: BaseException | None = None) -> None:
+        if cause is not None and self.context.log_file is not None:
+            with self.context.log_file.open("a", encoding="utf-8") as handle:
+                handle.write("\n[delivery] Unexpected failure traceback\n")
+                traceback.print_exception(type(cause), cause, cause.__traceback__, file=handle)
+
         phase = self.context.current_phase or DeliveryPhase.NOTIFY.value
-        set_phase(self.context.workspace_root, phase, "failed", detail=message)
-        finish_progress(self.context.workspace_root, "failed", detail=message)
-        print_progress_report(self.context.workspace_root)
-        try:
-            self.write_failure(message)
-            assert self.context.result_file is not None
-            self.render_notification(self.context.result_file, "delivery.failed", dry_run=False)
-        except Exception as secondary:
-            sys.stderr.write(f"Warning: failure notification step failed: {secondary}\n")
-        try:
-            self.sync_metadata()
-        except Exception as secondary:
-            sys.stderr.write(f"Warning: metadata sync during failure failed: {secondary}\n")
-        try:
-            self.archive_result()
-        except Exception as secondary:
-            sys.stderr.write(f"Warning: archive during failure failed: {secondary}\n")
+        self.best_effort(
+            "mark phase failed",
+            lambda: set_phase(self.context.workspace_root, phase, "failed", detail=message),
+        )
+        self.best_effort(
+            "finish progress",
+            lambda: finish_progress(self.context.workspace_root, "failed", detail=message),
+        )
+        self.best_effort("print progress report", lambda: print_progress_report(self.context.workspace_root))
+        self.best_effort("write failure result", lambda: self.write_failure(message))
+
+        def render_failure_notification() -> None:
+            if self.context.result_file is None:
+                return
+            self.report_notification_result(
+                self.render_notification(self.context.result_file, "delivery.failed", dry_run=False),
+                success_path=False,
+            )
+
+        self.best_effort("render failure notification", render_failure_notification)
+        self.best_effort("sync delivery metadata", self.sync_metadata)
+        self.best_effort("archive delivery run", self.archive_result)
 
     def print_runtime_notices(self) -> None:
         assert self.context.env is not None
@@ -596,8 +630,8 @@ class DeliveryOrchestrator:
         if not self.context.result_file.is_file():
             raise DeliveryFailure(f"Dry run did not produce {self.context.result_file}")
         self.progress_phase(DeliveryPhase.NOTIFY, "in_progress", "Dry-run notification preview")
-        self.render_notification(self.context.result_file, "delivery.dev_done", dry_run=True)
-        self.progress_phase(DeliveryPhase.NOTIFY, "completed", "Dry-run notification preview sent")
+        notify_result = self.render_notification(self.context.result_file, "delivery.dev_done", dry_run=True)
+        self.report_notification_result(notify_result, success_path=True)
         finish_progress(self.context.workspace_root, "completed", detail="Dry run finished")
         self.archive_result()
         self.log("\nDry-run delivery finished. No Cursor agent, commits, or PRs were created.")
@@ -647,14 +681,10 @@ class DeliveryOrchestrator:
         self.progress_phase(DeliveryPhase.NOTIFY, "in_progress", "Feishu and metadata updates")
         self.log("[delivery] Phase 7/8 — JIRA DEV DONE")
         self.log("[delivery] Phase 8/8 — Notifications")
-        try:
-            self.render_notification(self.context.result_file, "delivery.dev_done", dry_run=False)
-        except Exception as exc:
-            sys.stderr.write(f"Warning: delivery notification step failed. See log for details.\n")
-            sys.stderr.write(f"Warning: {exc}\n")
+        notify_result = self.render_notification(self.context.result_file, "delivery.dev_done", dry_run=False)
+        self.report_notification_result(notify_result, success_path=True)
         self.sync_metadata()
         self.progress_phase(DeliveryPhase.JIRA_DONE, "completed", "JIRA sync attempted")
-        self.progress_phase(DeliveryPhase.NOTIFY, "completed", "Notifications sent")
         finish_progress(self.context.workspace_root, "completed", detail="Delivery run finished")
         self.archive_result()
         self.cleanup_worktrees()
@@ -671,33 +701,44 @@ class DeliveryOrchestrator:
 def orchestrate(argv: list[str] | None = None, scripts_dir: Path | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
     scripts = scripts_dir or Path(__file__).resolve().parent
-    context = build_run_context(argv, scripts_dir=scripts)
-    context.env = load_delivery_environment(
-        context.docs_dir,
-        context.workspace_dir_name,
-        base_env=os.environ.copy(),
-    )
-    os.environ.update(context.env)
-
-    orchestrator = DeliveryOrchestrator(context)
-    orchestrator.ensure_runtime_dirs()
-
-    assert context.lock_dir is not None
+    original_env = os.environ.copy()
     try:
-        with delivery_lock(context.lock_dir, docs_dir=context.docs_dir, story=context.story_ref):
-            try:
-                return orchestrator.run()
-            except DeliveryFailure as exc:
-                orchestrator.handle_failure(str(exc))
-                sys.stderr.write(f"Error: {exc}\n")
-                return 1
-            except KeyboardInterrupt:
-                orchestrator.handle_failure("Delivery run interrupted")
-                sys.stderr.write("Error: Delivery run interrupted\n")
-                return 130
-    except DeliveryLockError as exc:
-        sys.stderr.write(f"Error: {exc}\n")
-        return 1
+        context = build_run_context(argv, scripts_dir=scripts)
+        context.env = load_delivery_environment(
+            context.docs_dir,
+            context.workspace_dir_name,
+            base_env=original_env,
+        )
+        # ponytail: legacy helpers invoked in-process still read os.environ.
+        os.environ.update(context.env)
+
+        orchestrator = DeliveryOrchestrator(context)
+        orchestrator.ensure_runtime_dirs()
+
+        assert context.lock_dir is not None
+        try:
+            with delivery_lock(context.lock_dir, docs_dir=context.docs_dir, story=context.story_ref):
+                try:
+                    return orchestrator.run()
+                except DeliveryFailure as exc:
+                    orchestrator.handle_failure(str(exc))
+                    sys.stderr.write(f"Error: {exc}\n")
+                    return 1
+                except KeyboardInterrupt:
+                    orchestrator.handle_failure("Delivery run interrupted")
+                    sys.stderr.write("Error: Delivery run interrupted\n")
+                    return 130
+                except Exception as exc:
+                    message = f"Unexpected delivery failure: {exc}"
+                    orchestrator.handle_failure(message, cause=exc)
+                    sys.stderr.write(f"Error: {message}\n")
+                    return 1
+        except DeliveryLockError as exc:
+            sys.stderr.write(f"Error: {exc}\n")
+            return 1
+    finally:
+        os.environ.clear()
+        os.environ.update(original_env)
 
 
 def main() -> int:

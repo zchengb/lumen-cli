@@ -4,28 +4,20 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 
-def parse_env_file(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if not key:
-            continue
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
-            value = value[1:-1]
-        values[key] = value
-    return values
+class DeliveryEnvLoadError(RuntimeError):
+    pass
+
+
+_ENV_LOADER_SCRIPT = """set -a
+for file in "$@"; do
+  source "$file"
+done
+env -0
+"""
 
 
 def delivery_env_paths(docs_dir: Path, workspace_dir_name: str) -> list[Path]:
@@ -37,12 +29,38 @@ def delivery_env_paths(docs_dir: Path, workspace_dir_name: str) -> list[Path]:
     ]
 
 
+def parse_env_null_output(raw: bytes) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for item in raw.split(b"\0"):
+        if not item:
+            continue
+        if b"=" not in item:
+            continue
+        key, _, value = item.partition(b"=")
+        env[key.decode(errors="replace")] = value.decode(errors="replace")
+    return env
+
+
 def load_delivery_environment(
     docs_dir: Path,
     workspace_dir_name: str,
     base_env: dict[str, str] | None = None,
 ) -> dict[str, str]:
     env = dict(base_env if base_env is not None else os.environ)
-    for path in delivery_env_paths(docs_dir, workspace_dir_name):
-        env.update(parse_env_file(path))
+    files = [path for path in delivery_env_paths(docs_dir, workspace_dir_name) if path.is_file()]
+    if not files:
+        return env
+
+    completed = subprocess.run(
+        ["bash", "-c", _ENV_LOADER_SCRIPT, "lumen-env-loader", *[str(path) for path in files]],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.decode(errors="replace").strip() or "unknown environment load error"
+        raise DeliveryEnvLoadError(f"Failed to load delivery environment files: {detail}")
+
+    env.update(parse_env_null_output(completed.stdout))
     return env

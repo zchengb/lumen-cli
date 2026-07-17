@@ -5,7 +5,9 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
@@ -13,10 +15,11 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "lib" / "scripts"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 
-from delivery_command import run_command  # noqa: E402
-from delivery_env import load_delivery_environment, parse_env_file  # noqa: E402
+from delivery_command import CommandResult, run_command, run_command_with_formatter  # noqa: E402
+from delivery_env import DeliveryEnvLoadError, load_delivery_environment  # noqa: E402
 from delivery_lock import DeliveryLockError, delivery_lock  # noqa: E402
 from delivery_orchestrator import DeliveryFailure, DeliveryOrchestrator, orchestrate  # noqa: E402
+from delivery_progress import load_progress  # noqa: E402
 from delivery_runtime import build_run_context, runtime_values  # noqa: E402
 
 
@@ -26,6 +29,28 @@ class DeliveryEnvTests(unittest.TestCase):
             docs = Path(temp)
             env = load_delivery_environment(docs, "lumen", base_env={"PATH": "/bin"})
         self.assertEqual("/bin", env["PATH"])
+
+    def test_shell_compatible_env_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            (docs / "lumen").mkdir()
+            (docs / "lumen" / ".env.common").write_text(
+                textwrap.dedent(
+                    """
+                    export CURSOR_API_KEY="abc"
+                    BASE_URL="https://example.com"
+                    JIRA_URL="${BASE_URL}/jira"
+                    TOKEN='value with spaces'
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            env = load_delivery_environment(docs, "lumen", base_env={})
+        self.assertEqual("abc", env["CURSOR_API_KEY"])
+        self.assertEqual("https://example.com", env["BASE_URL"])
+        self.assertEqual("https://example.com/jira", env["JIRA_URL"])
+        self.assertEqual("value with spaces", env["TOKEN"])
 
     def test_local_overrides_common(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -46,12 +71,35 @@ class DeliveryEnvTests(unittest.TestCase):
             env = load_delivery_environment(docs, "lumen", base_env={})
         self.assertEqual("docs-local", env["TOKEN"])
 
-    def test_parse_env_file_supports_quoted_values(self) -> None:
+    def test_env_path_with_spaces(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            path = Path(temp) / ".env.local"
-            path.write_text('SECRET="quoted-value"\n', encoding="utf-8")
-            values = parse_env_file(path)
-        self.assertEqual("quoted-value", values["SECRET"])
+            docs = Path(temp)
+            spaced = docs / "lumen" / "env files"
+            spaced.mkdir(parents=True)
+            (spaced / ".env.common").write_text('VALUE="spaced path"\n', encoding="utf-8")
+            env = load_delivery_environment(docs, "lumen/env files", base_env={})
+        self.assertEqual("spaced path", env["VALUE"])
+
+    def test_sourcing_failure_raises_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            (docs / "lumen").mkdir()
+            (docs / "lumen" / ".env.common").write_text("exit 1\n", encoding="utf-8")
+            with self.assertRaises(DeliveryEnvLoadError):
+                load_delivery_environment(docs, "lumen", base_env={})
+
+    def test_secrets_are_not_printed_during_env_load(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            (docs / "lumen").mkdir()
+            (docs / "lumen" / ".env.local").write_text('SECRET_TOKEN="super-secret-value"\n', encoding="utf-8")
+            stdout = StringIO()
+            stderr = StringIO()
+            with mock.patch("sys.stdout", stdout), mock.patch("sys.stderr", stderr):
+                env = load_delivery_environment(docs, "lumen", base_env={})
+        self.assertEqual("super-secret-value", env["SECRET_TOKEN"])
+        self.assertNotIn("super-secret-value", stdout.getvalue())
+        self.assertNotIn("super-secret-value", stderr.getvalue())
 
 
 class DeliveryLockTests(unittest.TestCase):
@@ -80,6 +128,23 @@ class DeliveryLockTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 with delivery_lock(lock_dir, docs_dir=docs, story="DEMO-1"):
                     raise RuntimeError("boom")
+            self.assertFalse(lock_dir.exists())
+
+    def test_lock_metadata_write_failure_does_not_leave_lock_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            lock_dir = docs / "lumen" / "locks" / "delivery-run"
+            real_write_text = Path.write_text
+
+            def guarded_write_text(self: Path, *args, **kwargs):  # type: ignore[no-untyped-def]
+                if self.name == "lock.json":
+                    raise OSError("disk full")
+                return real_write_text(self, *args, **kwargs)
+
+            with mock.patch.object(Path, "write_text", guarded_write_text):
+                with self.assertRaises(OSError):
+                    with delivery_lock(lock_dir, docs_dir=docs, story="DEMO-1"):
+                        pass
             self.assertFalse(lock_dir.exists())
 
     def test_stale_lock_metadata_is_reported(self) -> None:
@@ -121,6 +186,50 @@ class DeliveryCommandTests(unittest.TestCase):
         )
         self.assertEqual(0, result.exit_code)
         self.assertIn("captured", result.stdout)
+
+    def test_formatter_exit_codes_follow_agent_exit_code(self) -> None:
+        cases = [
+            (0, 0, 0),
+            (0, 1, 0),
+            (7, 0, 7),
+            (7, 1, 7),
+        ]
+        for agent_exit, formatter_exit, expected in cases:
+            with self.subTest(agent_exit=agent_exit, formatter_exit=formatter_exit):
+                agent = [
+                    sys.executable,
+                    "-c",
+                    f"import sys; print('agent-output'); sys.exit({agent_exit})",
+                ]
+                formatter = [
+                    sys.executable,
+                    "-c",
+                    f"import sys; [sys.stdout.write(line) for line in sys.stdin]; sys.exit({formatter_exit})",
+                ]
+                result = run_command_with_formatter(agent, formatter)
+                self.assertEqual(expected, result.exit_code)
+                self.assertEqual(formatter_exit, result.formatter_exit_code)
+                if formatter_exit != 0 and agent_exit == 0:
+                    self.assertTrue(result.formatter_warning)
+
+    def test_formatter_early_exit_drains_agent_without_deadlock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            log_file = Path(temp) / "run.log"
+            agent = [
+                sys.executable,
+                "-c",
+                "import sys\n"
+                "for i in range(4000):\n"
+                "    print(f'line-{i}')\n"
+                "    sys.stdout.flush()\n",
+            ]
+            formatter = [sys.executable, "-c", "import sys; sys.exit(1)"]
+            result = run_command_with_formatter(agent, formatter, log_file=log_file)
+            self.assertEqual(0, result.exit_code)
+            self.assertEqual(1, result.formatter_exit_code)
+            log_text = log_file.read_text(encoding="utf-8")
+            self.assertIn("line-0", log_text)
+            self.assertIn("line-3999", log_text)
 
 
 class DeliveryRuntimeTests(unittest.TestCase):
@@ -218,7 +327,11 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
                 mock.patch.object(DeliveryOrchestrator, "run_prepare"),
                 mock.patch.object(DeliveryOrchestrator, "archive_result") as archive_mock,
                 mock.patch.object(DeliveryOrchestrator, "run_python", fake_dry_run_python),
-                mock.patch.object(DeliveryOrchestrator, "render_notification"),
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=0),
+                ),
             ):
                 exit_code = orchestrate(argv, scripts_dir=SCRIPTS)
             self.assertEqual(0, exit_code)
@@ -241,12 +354,65 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
                 mock.patch.object(DeliveryOrchestrator, "write_failure") as failure_mock,
                 mock.patch.object(DeliveryOrchestrator, "archive_result") as archive_mock,
                 mock.patch.object(DeliveryOrchestrator, "sync_metadata"),
-                mock.patch.object(DeliveryOrchestrator, "render_notification"),
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=0),
+                ),
             ):
                 exit_code = orchestrate(argv, scripts_dir=SCRIPTS)
             self.assertEqual(1, exit_code)
             failure_mock.assert_called_once()
             archive_mock.assert_called_once()
+
+    def test_unexpected_exception_enters_failure_lifecycle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            argv = [str(docs), "--story", "DEMO-story"]
+            stderr = StringIO()
+            with (
+                mock.patch.object(DeliveryOrchestrator, "ensure_agent_ready"),
+                mock.patch.object(DeliveryOrchestrator, "init_progress"),
+                mock.patch.object(DeliveryOrchestrator, "sync_references"),
+                mock.patch.object(DeliveryOrchestrator, "run_prepare"),
+                mock.patch.object(DeliveryOrchestrator, "load_prompt", side_effect=RuntimeError("unexpected failure")),
+                mock.patch.object(DeliveryOrchestrator, "write_failure") as failure_mock,
+                mock.patch.object(DeliveryOrchestrator, "archive_result") as archive_mock,
+                mock.patch.object(DeliveryOrchestrator, "sync_metadata"),
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=0),
+                ),
+                mock.patch("sys.stderr", stderr),
+            ):
+                exit_code = orchestrate(argv, scripts_dir=SCRIPTS)
+            self.assertEqual(1, exit_code)
+            failure_mock.assert_called_once()
+            archive_mock.assert_called_once()
+            self.assertIn("Unexpected delivery failure", stderr.getvalue())
+            self.assertNotIn("Traceback (most recent call last)", stderr.getvalue())
+
+    def test_failure_cleanup_continues_after_progress_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.finalize_paths()
+            with (
+                mock.patch("delivery_orchestrator.set_phase", side_effect=OSError("progress broken")),
+                mock.patch.object(DeliveryOrchestrator, "write_failure") as failure_mock,
+                mock.patch.object(DeliveryOrchestrator, "archive_result") as archive_mock,
+                mock.patch.object(DeliveryOrchestrator, "sync_metadata") as sync_mock,
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=0),
+                ),
+            ):
+                orchestrator.handle_failure("primary failure")
+            failure_mock.assert_called_once()
+            archive_mock.assert_called_once()
+            sync_mock.assert_called_once()
 
     def test_verification_failure_then_successful_remediation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -284,57 +450,14 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
                 with self.assertRaises(DeliveryFailure):
                     orchestrator.verify_with_bounded_remediation()
 
-    def test_successful_real_orchestration_with_mocks(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            docs = self._docs_workspace(Path(temp))
-            argv = [str(docs), "--story", "DEMO-story"]
-            orchestrator = DeliveryOrchestrator(build_run_context(argv, SCRIPTS))
-            orchestrator.context.env = os.environ.copy()
-            orchestrator.context.finalize_paths()
-            orchestrator.context.result_file.write_text('{"delivery_status":"ready_for_finalize"}\n', encoding="utf-8")
-
-            with (
-                mock.patch.object(DeliveryOrchestrator, "ensure_agent_ready"),
-                mock.patch.object(DeliveryOrchestrator, "init_progress"),
-                mock.patch.object(DeliveryOrchestrator, "sync_references"),
-                mock.patch.object(DeliveryOrchestrator, "run_prepare"),
-                mock.patch.object(DeliveryOrchestrator, "capture_jira_context"),
-                mock.patch.object(DeliveryOrchestrator, "send_started_notification"),
-                mock.patch.object(DeliveryOrchestrator, "load_prompt", return_value="prompt"),
-                mock.patch.object(DeliveryOrchestrator, "print_runtime_notices"),
-                mock.patch.object(DeliveryOrchestrator, "run_agent"),
-                mock.patch.object(DeliveryOrchestrator, "verify_with_bounded_remediation"),
-                mock.patch.object(DeliveryOrchestrator, "finalize_delivery"),
-                mock.patch.object(DeliveryOrchestrator, "render_notification") as notify_mock,
-                mock.patch.object(DeliveryOrchestrator, "sync_metadata"),
-                mock.patch.object(DeliveryOrchestrator, "archive_result"),
-                mock.patch.object(DeliveryOrchestrator, "cleanup_worktrees"),
-            ):
-                exit_code = orchestrator.run_real_delivery()
-            self.assertEqual(0, exit_code)
-            notify_mock.assert_called_once()
-
-    def test_finalize_failure_returns_nonzero(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            docs = self._docs_workspace(Path(temp))
-            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
-            orchestrator.context.env = os.environ.copy()
-            orchestrator.context.finalize_paths()
-            with mock.patch.object(
-                DeliveryOrchestrator,
-                "run_python",
-                return_value=mock.Mock(exit_code=3),
-            ):
-                with self.assertRaises(DeliveryFailure):
-                    orchestrator.finalize_delivery()
-
-    def test_notification_failure_does_not_replace_successful_delivery(self) -> None:
+    def test_notification_nonzero_exit_is_reported_but_delivery_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             docs = self._docs_workspace(Path(temp))
             orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
             orchestrator.context.env = os.environ.copy()
             orchestrator.context.finalize_paths()
             orchestrator.context.result_file.write_text('{"delivery_status":"completed"}\n', encoding="utf-8")
+            stderr = StringIO()
             with (
                 mock.patch.object(DeliveryOrchestrator, "ensure_agent_ready"),
                 mock.patch.object(DeliveryOrchestrator, "init_progress"),
@@ -347,14 +470,24 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
                 mock.patch.object(DeliveryOrchestrator, "run_agent"),
                 mock.patch.object(DeliveryOrchestrator, "verify_with_bounded_remediation"),
                 mock.patch.object(DeliveryOrchestrator, "finalize_delivery"),
-                mock.patch.object(DeliveryOrchestrator, "render_notification", side_effect=RuntimeError("notify down")),
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=5),
+                ),
                 mock.patch.object(DeliveryOrchestrator, "sync_metadata"),
                 mock.patch.object(DeliveryOrchestrator, "archive_result"),
                 mock.patch.object(DeliveryOrchestrator, "cleanup_worktrees"),
+                mock.patch("sys.stderr", stderr),
             ):
                 exit_code = orchestrator.run_real_delivery()
             self.assertEqual(0, exit_code)
+            self.assertIn("exit code 5", stderr.getvalue())
+            progress = load_progress(orchestrator.context.workspace_root)
+            notify_phase = next(phase for phase in progress["phases"] if phase["id"] == "notify")
+            self.assertEqual("Notification attempted with warnings", notify_phase["detail"])
 
+    def test_lock_is_released_after_orchestrate_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             docs = self._docs_workspace(Path(temp))
             lock_dir = docs / "lumen" / "locks" / "delivery-run"
@@ -366,14 +499,36 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
 
 class RunDeliveryShellWrapperTests(unittest.TestCase):
     def test_wrapper_forwards_arguments_and_exit_code(self) -> None:
-        wrapper = SCRIPTS / "run-delivery.sh"
-        completed = subprocess.run(
-            ["bash", str(wrapper), "--help"],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-        )
-        self.assertIn(completed.returncode, {0, 2})
+        with tempfile.TemporaryDirectory() as temp:
+            stub = Path(temp) / "stub_orchestrator.py"
+            stub.write_text(
+                textwrap.dedent(
+                    """
+                    import sys
+                    print("ARGS:" + "|".join(sys.argv[1:]))
+                    sys.exit(7)
+                    """
+                ).strip()
+                + "\n",
+                encoding="utf-8",
+            )
+            wrapper = SCRIPTS / "run-delivery.sh"
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(wrapper),
+                    "/tmp/docs",
+                    "--story",
+                    "DEMO-story",
+                    "--dry-run",
+                ],
+                cwd=REPO_ROOT,
+                env={**os.environ, "LUMEN_DELIVERY_ORCHESTRATOR_PY": str(stub)},
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(7, completed.returncode)
+            self.assertIn("ARGS:/tmp/docs|--story|DEMO-story|--dry-run", completed.stdout)
 
 
 if __name__ == "__main__":
