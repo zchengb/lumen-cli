@@ -24,13 +24,9 @@ def git_snapshot(path: Path) -> dict[str, Any]:
     }
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("docs_dir")
-    parser.add_argument("--story", default="")
-    args = parser.parse_args()
+def sync_workspace(docs_dir: Path, story_ref: str = "") -> int:
     try:
-        context = load_story_context(Path(args.docs_dir), args.story, validate_gates=False)
+        context = load_story_context(docs_dir, story_ref, validate_gates=False)
         targets = [{"name": "docs", **git_snapshot(context.docs_dir)}]
         for repo in context.repos:
             targets.append({"name": repo.name, **git_snapshot(repo.path)})
@@ -39,6 +35,14 @@ def main() -> int:
         return 1
     print(json.dumps(targets, indent=2, ensure_ascii=False))
     return 1 if any(item["fetch"] == "failed" for item in targets) else 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("docs_dir")
+    parser.add_argument("--story", default="")
+    args = parser.parse_args()
+    return sync_workspace(Path(args.docs_dir), args.story)
 
 
 if __name__ == "__main__":
