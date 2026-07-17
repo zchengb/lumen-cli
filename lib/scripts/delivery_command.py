@@ -21,6 +21,19 @@ class CommandResult:
     thread_errors: list[str] = field(default_factory=list)
 
 
+def _append_log_line(log_file: Path | None, line: str, log_state: dict[str, object]) -> None:
+    if log_file is None or not log_state.get("enabled", True):
+        return
+    try:
+        with log_file.open("a", encoding="utf-8") as handle:
+            handle.write(line)
+    except OSError as exc:
+        log_state["enabled"] = False
+        if not log_state.get("warned"):
+            log_state["warned"] = True
+            log_state["warning"] = f"delivery log writing disabled: {exc}"
+
+
 def _stream_reader(
     source: IO[str],
     *,
@@ -29,17 +42,21 @@ def _stream_reader(
     capture: bool,
     on_line: Callable[[str], None] | None,
     sink: list[str],
+    log_state: dict[str, object] | None = None,
+    thread_errors: list[str] | None = None,
 ) -> None:
+    state = log_state if log_state is not None else {"enabled": True, "warned": False}
     for line in source:
         sink.append(line)
-        if log_file is not None:
-            with log_file.open("a", encoding="utf-8") as handle:
-                handle.write(line)
+        _append_log_line(log_file, line, state)
         if on_line is not None:
             on_line(line)
         elif stream:
             sys.stdout.write(line)
             sys.stdout.flush()
+    warning = state.get("warning")
+    if isinstance(warning, str) and warning and thread_errors is not None:
+        thread_errors.append(warning)
 
 
 def run_command(
@@ -64,6 +81,8 @@ def run_command(
         text=True,
     )
     sink: list[str] = []
+    log_state: dict[str, object] = {"enabled": True, "warned": False}
+    thread_errors: list[str] = []
     assert process.stdout is not None
     exit_code = 1
     try:
@@ -74,6 +93,8 @@ def run_command(
             capture=capture,
             on_line=on_line,
             sink=sink,
+            log_state=log_state,
+            thread_errors=thread_errors,
         )
         exit_code = process.wait()
     except KeyboardInterrupt:
@@ -90,6 +111,7 @@ def run_command(
     return CommandResult(
         exit_code=exit_code,
         stdout="".join(sink) if capture else "",
+        thread_errors=thread_errors,
     )
 
 
@@ -122,6 +144,7 @@ def run_command_with_formatter(
     sink: list[str] = []
     formatter_failed = False
     thread_errors: list[str] = []
+    log_state: dict[str, object] = {"enabled": True, "warned": False}
     forward_lock = threading.Lock()
 
     def forward_agent_output() -> None:
@@ -130,9 +153,7 @@ def run_command_with_formatter(
             assert process.stdout is not None
             for line in process.stdout:
                 sink.append(line)
-                if log_file is not None:
-                    with log_file.open("a", encoding="utf-8") as handle:
-                        handle.write(line)
+                _append_log_line(log_file, line, log_state)
                 with forward_lock:
                     failed = formatter_failed
                 if not failed and formatter.stdin is not None:
@@ -146,6 +167,9 @@ def run_command_with_formatter(
                 if failed:
                     sys.stdout.write(line)
                     sys.stdout.flush()
+            warning = log_state.get("warning")
+            if isinstance(warning, str) and warning:
+                thread_errors.append(warning)
         except Exception as exc:
             thread_errors.append(f"agent forward thread failed: {exc}")
 

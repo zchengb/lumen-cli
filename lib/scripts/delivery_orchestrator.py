@@ -20,6 +20,14 @@ from compose_delivery_prompt import compose_delivery_prompt
 from delivery_command import CommandResult, run_command, run_command_with_formatter
 from delivery_env import load_delivery_environment
 from delivery_lock import DeliveryLockError, delivery_lock
+from delivery_notification import (
+    NotificationResult,
+    NotificationStatus,
+    classify_notification_result,
+    final_notification_detail,
+    redact_notification_detail,
+    started_notification_detail,
+)
 from delivery_progress import (
     append_message,
     enrich_progress,
@@ -52,19 +60,6 @@ class DeliveryPhase(str, Enum):
 
 class DeliveryFailure(RuntimeError):
     pass
-
-
-class StartedNotificationStatus(str, Enum):
-    SENT = "sent"
-    WARNING = "warning"
-    SKIPPED = "skipped"
-
-
-@dataclass
-class StartedNotificationResult:
-    status: StartedNotificationStatus
-    detail: str
-    exit_code: int | None = None
 
 
 @dataclass
@@ -254,21 +249,20 @@ class DeliveryOrchestrator:
         }
         write_json(self.context.started_file, payload)
 
-    def started_notification_detail(self, result: StartedNotificationResult) -> str:
-        if result.status == StartedNotificationStatus.SENT:
-            suffix = "started notification sent"
-        elif result.status == StartedNotificationStatus.SKIPPED:
-            suffix = "started notification skipped"
-        else:
-            suffix = "started notification attempted with warnings"
-        return f"JIRA context captured; {suffix}"
+    def record_notification_warning(self, message: str) -> None:
+        safe_message = redact_notification_detail(message)
+        self.progress_message(safe_message)
+        sys.stderr.write(f"Warning: {safe_message}\n")
 
-    def send_started_notification(self) -> StartedNotificationResult:
+    def started_notification_detail(self, result: NotificationResult) -> str:
+        return started_notification_detail(result)
+
+    def send_started_notification(self) -> NotificationResult:
         starter = self.context.scripts_dir / "write_delivery_started.py"
         renderer = self.context.scripts_dir / "render-delivery-and-notify.py"
         if not starter.is_file() or not renderer.is_file() or self.context.started_file is None:
-            return StartedNotificationResult(
-                status=StartedNotificationStatus.SKIPPED,
+            return NotificationResult(
+                status=NotificationStatus.SKIPPED,
                 detail="Started notification skipped",
             )
         try:
@@ -281,24 +275,17 @@ class DeliveryOrchestrator:
                 check=False,
             )
         except Exception as exc:
-            return StartedNotificationResult(
-                status=StartedNotificationStatus.WARNING,
-                detail=f"Started notification attempted with warnings: {exc}",
+            return NotificationResult(
+                status=NotificationStatus.WARNING,
+                detail=f"Started notification attempted with warnings: {redact_notification_detail(str(exc))}",
             )
-        if render_result.exit_code == 0:
-            return StartedNotificationResult(
-                status=StartedNotificationStatus.SENT,
-                detail="Started notification sent",
-                exit_code=0,
-            )
-        warning = f"Started notification failed with exit code {render_result.exit_code}"
-        self.progress_message(warning)
-        sys.stderr.write(f"Warning: {warning}\n")
-        return StartedNotificationResult(
-            status=StartedNotificationStatus.WARNING,
-            detail="Started notification attempted with warnings",
-            exit_code=render_result.exit_code,
-        )
+        notification = classify_notification_result(self.context.started_file, render_result.exit_code)
+        if notification.status == NotificationStatus.WARNING:
+            warning = notification.detail
+            if render_result.exit_code != 0:
+                warning = f"Started notification failed with exit code {render_result.exit_code}"
+            self.record_notification_warning(warning)
+        return notification
 
     def load_prompt(self, remediation: bool = False) -> str:
         context = load_story_context(self.context.docs_dir, self.context.story_ref)
@@ -525,17 +512,21 @@ class DeliveryOrchestrator:
             log_file=self.context.log_file,
         )
 
-    def report_notification_result(self, result: CommandResult, *, success_path: bool) -> None:
-        if result.exit_code == 0:
-            if success_path:
-                detail = "Dry-run notification preview sent" if self.context.dry_run else "Notifications sent"
-                self.progress_phase(DeliveryPhase.NOTIFY, "completed", detail)
-            return
-        warning = f"Delivery notification failed with exit code {result.exit_code}"
-        self.progress_message(warning)
-        sys.stderr.write(f"Warning: {warning}\n")
+    def report_notification_result(
+        self,
+        result_path: Path,
+        command_result: CommandResult,
+        *,
+        success_path: bool,
+    ) -> NotificationResult:
+        notification = classify_notification_result(result_path, command_result.exit_code)
+        if notification.status == NotificationStatus.WARNING:
+            self.record_notification_warning(notification.detail)
+        elif not success_path and notification.status == NotificationStatus.SKIPPED:
+            self.record_notification_warning(notification.detail)
         if success_path:
-            self.progress_phase(DeliveryPhase.NOTIFY, "completed", "Notification attempted with warnings")
+            self.progress_phase(DeliveryPhase.NOTIFY, "completed", final_notification_detail(notification))
+        return notification
 
     def sync_metadata(self) -> None:
         result = self.run_python(
@@ -638,8 +629,10 @@ class DeliveryOrchestrator:
         def render_failure_notification() -> None:
             if self.context.result_file is None:
                 return
+            command_result = self.render_notification(self.context.result_file, "delivery.failed", dry_run=False)
             self.report_notification_result(
-                self.render_notification(self.context.result_file, "delivery.failed", dry_run=False),
+                self.context.result_file,
+                command_result,
                 success_path=False,
             )
 
@@ -695,7 +688,7 @@ class DeliveryOrchestrator:
             raise DeliveryFailure(f"Dry run did not produce {self.context.result_file}")
         self.progress_phase(DeliveryPhase.NOTIFY, "in_progress", "Dry-run notification preview")
         notify_result = self.render_notification(self.context.result_file, "delivery.dev_done", dry_run=True)
-        self.report_notification_result(notify_result, success_path=True)
+        self.report_notification_result(self.context.result_file, notify_result, success_path=True)
         finish_progress(self.context.workspace_root, "completed", detail="Dry run finished")
         self.best_effort("archive delivery run", self.archive_result)
         self.log("\nDry-run delivery finished. No Cursor agent, commits, or PRs were created.")
@@ -750,7 +743,7 @@ class DeliveryOrchestrator:
         self.log("[delivery] Phase 7/8 — JIRA DEV DONE")
         self.log("[delivery] Phase 8/8 — Notifications")
         notify_result = self.render_notification(self.context.result_file, "delivery.dev_done", dry_run=False)
-        self.report_notification_result(notify_result, success_path=True)
+        self.report_notification_result(self.context.result_file, notify_result, success_path=True)
         self.sync_metadata()
         self.progress_phase(DeliveryPhase.JIRA_DONE, "completed", "JIRA sync attempted")
         finish_progress(self.context.workspace_root, "completed", detail="Delivery run finished")
@@ -811,6 +804,9 @@ def orchestrate(argv: list[str] | None = None, scripts_dir: Path | None = None) 
                     return 1
         except DeliveryLockError as exc:
             sys.stderr.write(f"Error: {exc}\n")
+            return 1
+        except OSError as exc:
+            sys.stderr.write(f"Error: Failed to initialize delivery lock: {exc}\n")
             return 1
     finally:
         os.environ.clear()

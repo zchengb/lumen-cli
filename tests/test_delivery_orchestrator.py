@@ -18,13 +18,8 @@ sys.path.insert(0, str(SCRIPTS))
 from delivery_command import CommandResult, run_command, run_command_with_formatter  # noqa: E402
 from delivery_env import DeliveryEnvLoadError, load_delivery_environment  # noqa: E402
 from delivery_lock import DeliveryLockError, delivery_lock  # noqa: E402
-from delivery_orchestrator import (  # noqa: E402
-    DeliveryFailure,
-    DeliveryOrchestrator,
-    StartedNotificationResult,
-    StartedNotificationStatus,
-    orchestrate,
-)
+from delivery_notification import NotificationResult, NotificationStatus, redact_notification_detail  # noqa: E402
+from delivery_orchestrator import DeliveryFailure, DeliveryOrchestrator, orchestrate  # noqa: E402
 from delivery_progress import load_progress  # noqa: E402
 from delivery_runtime import build_run_context, runtime_values  # noqa: E402
 
@@ -263,6 +258,39 @@ class DeliveryCommandTests(unittest.TestCase):
             self.assertIn("line-3999", log_text)
 
 
+    def test_formatter_log_write_failure_drains_agent_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            log_file = Path(temp) / "run.log"
+            log_file.write_text("", encoding="utf-8")
+            line_count = {"n": 0}
+            real_open = Path.open
+
+            def guarded_open(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                if self == log_file and args and args[0] == "a":
+                    line_count["n"] += 1
+                    if line_count["n"] > 2:
+                        raise OSError("disk full")
+                return real_open(self, *args, **kwargs)
+
+            agent = [
+                sys.executable,
+                "-c",
+                "for i in range(120):\n"
+                "    print(f'line-{i}')\n",
+            ]
+            formatter = [
+                sys.executable,
+                "-c",
+                "import sys\n"
+                "[sys.stdout.write(line) for line in sys.stdin]\n",
+            ]
+            with mock.patch.object(Path, "open", guarded_open):
+                result = run_command_with_formatter(agent, formatter, log_file=log_file)
+            self.assertEqual(0, result.exit_code)
+            self.assertIn("line-119", result.stdout)
+            self.assertTrue(any("delivery log writing disabled" in error for error in result.thread_errors))
+
+
 class DeliveryRuntimeTests(unittest.TestCase):
     def _workspace(self, root: Path, dirname: str = "lumen") -> None:
         (root / "stories").mkdir()
@@ -341,6 +369,33 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
             encoding="utf-8",
         )
         return root
+
+    def _write_feishu_result(self, path: Path, status: str, detail: str = "") -> None:
+        payload: dict[str, object] = {}
+        if path.is_file():
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        feishu: dict[str, str] = {"status": status}
+        if detail:
+            feishu["detail"] = detail
+        payload["feishu"] = feishu
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+    def _started_render_side_effect(self, feishu_status: str, *, exit_code: int = 0, detail: str = ""):
+        def fake_run_python(orchestrator: DeliveryOrchestrator, script: str, *args: str, check: bool = True) -> CommandResult:
+            if script == "render-delivery-and-notify.py":
+                assert orchestrator.context.started_file is not None
+                payload: dict[str, object] = {}
+                if orchestrator.context.started_file.is_file():
+                    payload = json.loads(orchestrator.context.started_file.read_text(encoding="utf-8"))
+                feishu: dict[str, str] = {"status": feishu_status}
+                if detail:
+                    feishu["detail"] = detail
+                payload["feishu"] = feishu
+                orchestrator.context.started_file.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+                return CommandResult(exit_code=exit_code)
+            return CommandResult(exit_code=0)
+
+        return fake_run_python
 
     def test_successful_dry_run_with_mocks(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -640,11 +695,79 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
             orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
             orchestrator.context.env = os.environ.copy()
             orchestrator.context.finalize_paths()
-            with mock.patch.object(DeliveryOrchestrator, "run_python", return_value=CommandResult(exit_code=0)):
+            with mock.patch.object(
+                DeliveryOrchestrator,
+                "run_python",
+                self._started_render_side_effect("sent"),
+            ):
                 result = orchestrator.send_started_notification()
-            self.assertEqual(StartedNotificationStatus.SENT, result.status)
+            self.assertEqual(NotificationStatus.SENT, result.status)
             detail = orchestrator.started_notification_detail(result)
             self.assertIn("started notification sent", detail)
+
+    def test_started_notification_skipped_on_provider_skip(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            with mock.patch.object(
+                DeliveryOrchestrator,
+                "run_python",
+                self._started_render_side_effect("skipped", detail="FEISHU_WEBHOOK_URL not set"),
+            ):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(NotificationStatus.SKIPPED, result.status)
+            self.assertIn("started notification skipped", orchestrator.started_notification_detail(result))
+
+    def test_started_notification_warning_on_provider_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            stderr = StringIO()
+            with (
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "run_python",
+                    self._started_render_side_effect("failed", detail="Feishu notification failed"),
+                ),
+                mock.patch("sys.stderr", stderr),
+            ):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(NotificationStatus.WARNING, result.status)
+            self.assertIn("started notification attempted with warnings", orchestrator.started_notification_detail(result))
+            self.assertIn("Feishu notification failed", stderr.getvalue())
+
+    def test_started_notification_dry_run_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            with mock.patch.object(
+                DeliveryOrchestrator,
+                "run_python",
+                self._started_render_side_effect("dry_run"),
+            ):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(NotificationStatus.DRY_RUN, result.status)
+            self.assertIn("started notification preview generated", orchestrator.started_notification_detail(result))
+
+    def test_started_notification_warning_on_missing_provider_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            with mock.patch.object(
+                DeliveryOrchestrator,
+                "run_python",
+                self._started_render_side_effect(""),
+            ):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(NotificationStatus.WARNING, result.status)
 
     def test_started_notification_warning_on_renderer_nonzero(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -654,12 +777,15 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
             orchestrator.context.finalize_paths()
             stderr = StringIO()
             with (
-                mock.patch.object(DeliveryOrchestrator, "run_python", return_value=CommandResult(exit_code=5)),
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "run_python",
+                    self._started_render_side_effect("sent", exit_code=5),
+                ),
                 mock.patch("sys.stderr", stderr),
             ):
                 result = orchestrator.send_started_notification()
-            self.assertEqual(StartedNotificationStatus.WARNING, result.status)
-            self.assertEqual(5, result.exit_code)
+            self.assertEqual(NotificationStatus.WARNING, result.status)
             detail = orchestrator.started_notification_detail(result)
             self.assertIn("started notification attempted with warnings", detail)
             self.assertIn("exit code 5", stderr.getvalue())
@@ -680,7 +806,7 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
 
             with mock.patch.object(Path, "is_file", selective_is_file):
                 result = orchestrator.send_started_notification()
-            self.assertEqual(StartedNotificationStatus.SKIPPED, result.status)
+            self.assertEqual(NotificationStatus.SKIPPED, result.status)
             detail = orchestrator.started_notification_detail(result)
             self.assertIn("started notification skipped", detail)
 
@@ -696,7 +822,7 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
                 side_effect=RuntimeError("renderer broke"),
             ):
                 result = orchestrator.send_started_notification()
-            self.assertEqual(StartedNotificationStatus.WARNING, result.status)
+            self.assertEqual(NotificationStatus.WARNING, result.status)
             detail = orchestrator.started_notification_detail(result)
             self.assertIn("started notification attempted with warnings", detail)
 
@@ -717,10 +843,10 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
                 mock.patch.object(
                     DeliveryOrchestrator,
                     "send_started_notification",
-                    return_value=StartedNotificationResult(
-                        status=StartedNotificationStatus.WARNING,
+                    return_value=NotificationResult(
+                        status=NotificationStatus.WARNING,
                         detail="Started notification attempted with warnings",
-                        exit_code=5,
+                        process_exit_code=5,
                     ),
                 ),
                 mock.patch.object(DeliveryOrchestrator, "load_prompt", return_value="prompt"),
@@ -743,6 +869,170 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
             progress = load_progress(orchestrator.context.workspace_root)
             jira_start = next(phase for phase in progress["phases"] if phase["id"] == "jira_start")
             self.assertIn("started notification attempted with warnings", jira_start["detail"])
+
+    def test_final_notification_structured_sent(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            self._write_feishu_result(orchestrator.context.result_file, "sent")
+            orchestrator.report_notification_result(
+                orchestrator.context.result_file,
+                CommandResult(exit_code=0),
+                success_path=True,
+            )
+            progress = load_progress(orchestrator.context.workspace_root)
+            notify_phase = next(phase for phase in progress["phases"] if phase["id"] == "notify")
+            self.assertEqual("Notifications sent", notify_phase["detail"])
+
+    def test_final_notification_structured_skipped_still_succeeds(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            self._write_feishu_result(
+                orchestrator.context.result_file,
+                "skipped",
+                detail="FEISHU_WEBHOOK_URL not set",
+            )
+            orchestrator.report_notification_result(
+                orchestrator.context.result_file,
+                CommandResult(exit_code=0),
+                success_path=True,
+            )
+            progress = load_progress(orchestrator.context.workspace_root)
+            notify_phase = next(phase for phase in progress["phases"] if phase["id"] == "notify")
+            self.assertEqual("Notifications skipped", notify_phase["detail"])
+
+    def test_final_notification_structured_failed_reports_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            stderr = StringIO()
+            self._write_feishu_result(orchestrator.context.result_file, "failed", detail="Feishu notification failed")
+            with mock.patch("sys.stderr", stderr):
+                orchestrator.report_notification_result(
+                    orchestrator.context.result_file,
+                    CommandResult(exit_code=0),
+                    success_path=True,
+                )
+            progress = load_progress(orchestrator.context.workspace_root)
+            notify_phase = next(phase for phase in progress["phases"] if phase["id"] == "notify")
+            self.assertEqual("Notification attempted with warnings", notify_phase["detail"])
+            self.assertIn("Feishu notification failed", stderr.getvalue())
+
+    def test_final_notification_structured_dry_run_detail(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            self._write_feishu_result(orchestrator.context.result_file, "dry_run")
+            orchestrator.report_notification_result(
+                orchestrator.context.result_file,
+                CommandResult(exit_code=0),
+                success_path=True,
+            )
+            progress = load_progress(orchestrator.context.workspace_root)
+            notify_phase = next(phase for phase in progress["phases"] if phase["id"] == "notify")
+            self.assertEqual("Dry-run notification preview generated", notify_phase["detail"])
+
+    def test_final_notification_unknown_status_reports_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            orchestrator.context.result_file.write_text('{"delivery_status":"completed"}\n', encoding="utf-8")
+            orchestrator.report_notification_result(
+                orchestrator.context.result_file,
+                CommandResult(exit_code=0),
+                success_path=True,
+            )
+            progress = load_progress(orchestrator.context.workspace_root)
+            notify_phase = next(phase for phase in progress["phases"] if phase["id"] == "notify")
+            self.assertEqual("Notification attempted with warnings", notify_phase["detail"])
+
+    def test_failure_notification_provider_failed_remains_best_effort(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.finalize_paths()
+            stderr = StringIO()
+
+            def fake_render(self: DeliveryOrchestrator, result_path: Path, event: str, *, dry_run: bool = False) -> CommandResult:
+                payload = json.loads(result_path.read_text(encoding="utf-8")) if result_path.is_file() else {}
+                payload["feishu"] = {"status": "failed", "detail": "Feishu notification failed"}
+                result_path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+                return CommandResult(exit_code=0)
+
+            with (
+                mock.patch.object(DeliveryOrchestrator, "write_failure"),
+                mock.patch.object(DeliveryOrchestrator, "archive_result") as archive_mock,
+                mock.patch.object(DeliveryOrchestrator, "sync_metadata") as sync_mock,
+                mock.patch.object(DeliveryOrchestrator, "render_notification", fake_render),
+                mock.patch("sys.stderr", stderr),
+            ):
+                orchestrator.handle_failure("primary failure")
+            archive_mock.assert_called_once()
+            sync_mock.assert_called_once()
+            self.assertIn("Feishu notification failed", stderr.getvalue())
+            self.assertNotIn("Notifications sent", stderr.getvalue())
+
+    def test_notification_detail_redacts_webhook(self) -> None:
+        webhook = "https://open.feishu.cn/open-apis/bot/v2/hook/secret-token"
+        redacted = redact_notification_detail(f"request failed for {webhook}")
+        self.assertNotIn("secret-token", redacted)
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            stderr = StringIO()
+            self._write_feishu_result(orchestrator.context.result_file, "failed", detail=webhook)
+            with mock.patch("sys.stderr", stderr):
+                orchestrator.report_notification_result(
+                    orchestrator.context.result_file,
+                    CommandResult(exit_code=0),
+                    success_path=True,
+                )
+            combined = stderr.getvalue()
+            progress = load_progress(orchestrator.context.workspace_root)
+            messages = progress.get("messages", [])
+            self.assertNotIn("secret-token", combined)
+            self.assertTrue(all("secret-token" not in str(message) for message in messages))
+
+    def test_lock_filesystem_error_returns_clean_error(self) -> None:
+        from contextlib import contextmanager
+
+        @contextmanager
+        def denied_lock(*args, **kwargs):  # type: ignore[no-untyped-def]
+            raise PermissionError("permission denied")
+            yield
+
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            lock_dir = docs / "lumen" / "locks" / "delivery-run"
+            original = os.environ.copy()
+            os.environ["LOCK_ENV_MARKER"] = "restore-me"
+            stderr = StringIO()
+            with (
+                mock.patch("delivery_orchestrator.delivery_lock", denied_lock),
+                mock.patch("sys.stderr", stderr),
+            ):
+                exit_code = orchestrate([str(docs), "--story", "DEMO-story"], scripts_dir=SCRIPTS)
+            self.assertEqual(1, exit_code)
+            self.assertIn("Error: Failed to initialize delivery lock:", stderr.getvalue())
+            self.assertIn("permission denied", stderr.getvalue())
+            self.assertNotIn("Traceback (most recent call last)", stderr.getvalue())
+            self.assertEqual("restore-me", os.environ.get("LOCK_ENV_MARKER"))
+            self.assertFalse(lock_dir.exists())
+            os.environ.clear()
+            os.environ.update(original)
 
 
 class RunDeliveryShellWrapperTests(unittest.TestCase):
