@@ -18,7 +18,13 @@ sys.path.insert(0, str(SCRIPTS))
 from delivery_command import CommandResult, run_command, run_command_with_formatter  # noqa: E402
 from delivery_env import DeliveryEnvLoadError, load_delivery_environment  # noqa: E402
 from delivery_lock import DeliveryLockError, delivery_lock  # noqa: E402
-from delivery_orchestrator import DeliveryFailure, DeliveryOrchestrator, orchestrate  # noqa: E402
+from delivery_orchestrator import (  # noqa: E402
+    DeliveryFailure,
+    DeliveryOrchestrator,
+    StartedNotificationResult,
+    StartedNotificationStatus,
+    orchestrate,
+)
 from delivery_progress import load_progress  # noqa: E402
 from delivery_runtime import build_run_context, runtime_values  # noqa: E402
 
@@ -87,6 +93,31 @@ class DeliveryEnvTests(unittest.TestCase):
             (docs / "lumen" / ".env.common").write_text("exit 1\n", encoding="utf-8")
             with self.assertRaises(DeliveryEnvLoadError):
                 load_delivery_environment(docs, "lumen", base_env={})
+
+    def test_nonzero_source_command_fails_load(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            (docs / "lumen").mkdir()
+            env_file = docs / "lumen" / ".env.common"
+            env_file.write_text("CURSOR_API_KEY=abc\nfalse\n", encoding="utf-8")
+            with self.assertRaises(DeliveryEnvLoadError) as ctx:
+                load_delivery_environment(docs, "lumen", base_env={})
+            self.assertIn(str(env_file), str(ctx.exception))
+            self.assertNotIn("abc", str(ctx.exception))
+
+    def test_source_failure_stops_later_env_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            (docs / "lumen").mkdir()
+            common = docs / "lumen" / ".env.common"
+            local = docs / "lumen" / ".env.local"
+            common.write_text("false\n", encoding="utf-8")
+            local.write_text("exit 99\n", encoding="utf-8")
+            with self.assertRaises(DeliveryEnvLoadError) as ctx:
+                load_delivery_environment(docs, "lumen", base_env={})
+            error = str(ctx.exception)
+            self.assertIn(str(common), error)
+            self.assertNotIn(str(local), error)
 
     def test_secrets_are_not_printed_during_env_load(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -495,6 +526,223 @@ class DeliveryOrchestratorWorkflowTests(unittest.TestCase):
                 exit_code = orchestrate([str(docs), "--story", "DEMO-story"], scripts_dir=SCRIPTS)
             self.assertEqual(1, exit_code)
             self.assertFalse(lock_dir.exists())
+
+    def test_bootstrap_env_load_failure_returns_clean_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            (docs / "lumen").mkdir(parents=True)
+            (docs / "lumen" / "config").mkdir(parents=True)
+            (docs / "lumen" / "config" / "workspace.json").write_text(
+                '{"workspace_root":"."}\n',
+                encoding="utf-8",
+            )
+            (docs / "lumen" / ".env.common").write_text("false\n", encoding="utf-8")
+            original = os.environ.copy()
+            os.environ["BOOTSTRAP_ENV_MARKER"] = "should-restore"
+            stderr = StringIO()
+            with mock.patch("sys.stderr", stderr):
+                exit_code = orchestrate([str(docs), "--story", "DEMO-story"], scripts_dir=SCRIPTS)
+            self.assertEqual(1, exit_code)
+            self.assertIn("Error: Failed to initialize delivery runtime:", stderr.getvalue())
+            self.assertNotIn("Traceback (most recent call last)", stderr.getvalue())
+            self.assertEqual("should-restore", os.environ.get("BOOTSTRAP_ENV_MARKER"))
+            lock_dir = docs / "lumen" / "locks" / "delivery-run"
+            self.assertFalse(lock_dir.exists())
+            os.environ.clear()
+            os.environ.update(original)
+
+    def test_bootstrap_runtime_dir_failure_returns_clean_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            stderr = StringIO()
+            with (
+                mock.patch.object(DeliveryOrchestrator, "ensure_runtime_dirs", side_effect=OSError("permission denied")),
+                mock.patch("sys.stderr", stderr),
+            ):
+                exit_code = orchestrate([str(docs), "--story", "DEMO-story"], scripts_dir=SCRIPTS)
+            self.assertEqual(1, exit_code)
+            self.assertIn("Error: Failed to initialize delivery workspace:", stderr.getvalue())
+            self.assertIn("permission denied", stderr.getvalue())
+            self.assertNotIn("Traceback (most recent call last)", stderr.getvalue())
+            lock_dir = docs / "lumen" / "locks" / "delivery-run"
+            self.assertFalse(lock_dir.exists())
+
+    def test_traceback_logging_failure_does_not_block_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.finalize_paths()
+            stderr = StringIO()
+            real_open = Path.open
+            log_file = orchestrator.context.log_file
+
+            def guarded_open(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                if log_file is not None and self == log_file:
+                    raise OSError("log not writable")
+                return real_open(self, *args, **kwargs)
+
+            with (
+                mock.patch.object(Path, "open", guarded_open),
+                mock.patch.object(DeliveryOrchestrator, "write_failure") as failure_mock,
+                mock.patch.object(DeliveryOrchestrator, "archive_result") as archive_mock,
+                mock.patch.object(DeliveryOrchestrator, "sync_metadata") as sync_mock,
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=0),
+                ),
+                mock.patch("sys.stderr", stderr),
+            ):
+                orchestrator.handle_failure("primary failure", cause=RuntimeError("boom"))
+            failure_mock.assert_called_once()
+            archive_mock.assert_called_once()
+            sync_mock.assert_called_once()
+            self.assertIn("write unexpected failure traceback failed", stderr.getvalue())
+
+    def test_failure_helper_nonzero_exits_are_reported(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            stderr = StringIO()
+
+            def fake_run_python(self: DeliveryOrchestrator, script: str, *args: str, check: bool = True) -> CommandResult:
+                if script == "write_delivery_failure.py":
+                    return CommandResult(exit_code=4)
+                return CommandResult(exit_code=0)
+
+            def fake_archive(self: DeliveryOrchestrator) -> None:
+                raise DeliveryFailure("archive_delivery_run.py failed with exit code 5")
+
+            with (
+                mock.patch.object(DeliveryOrchestrator, "run_python", fake_run_python),
+                mock.patch.object(DeliveryOrchestrator, "archive_result", fake_archive),
+                mock.patch.object(DeliveryOrchestrator, "sync_metadata") as sync_mock,
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=0),
+                ),
+                mock.patch("sys.stderr", stderr),
+            ):
+                orchestrator.handle_failure("primary failure")
+            sync_mock.assert_called_once()
+            stderr_text = stderr.getvalue()
+            self.assertIn("write failure result failed", stderr_text)
+            self.assertIn("exit code 4", stderr_text)
+            self.assertIn("archive delivery run failed", stderr_text)
+            self.assertIn("exit code 5", stderr_text)
+
+    def test_started_notification_sent_on_renderer_success(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            with mock.patch.object(DeliveryOrchestrator, "run_python", return_value=CommandResult(exit_code=0)):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(StartedNotificationStatus.SENT, result.status)
+            detail = orchestrator.started_notification_detail(result)
+            self.assertIn("started notification sent", detail)
+
+    def test_started_notification_warning_on_renderer_nonzero(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            stderr = StringIO()
+            with (
+                mock.patch.object(DeliveryOrchestrator, "run_python", return_value=CommandResult(exit_code=5)),
+                mock.patch("sys.stderr", stderr),
+            ):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(StartedNotificationStatus.WARNING, result.status)
+            self.assertEqual(5, result.exit_code)
+            detail = orchestrator.started_notification_detail(result)
+            self.assertIn("started notification attempted with warnings", detail)
+            self.assertIn("exit code 5", stderr.getvalue())
+
+    def test_started_notification_skipped_when_renderer_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            renderer = orchestrator.context.scripts_dir / "render-delivery-and-notify.py"
+            original_is_file = Path.is_file
+
+            def selective_is_file(self: Path) -> bool:
+                if self == renderer:
+                    return False
+                return original_is_file(self)
+
+            with mock.patch.object(Path, "is_file", selective_is_file):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(StartedNotificationStatus.SKIPPED, result.status)
+            detail = orchestrator.started_notification_detail(result)
+            self.assertIn("started notification skipped", detail)
+
+    def test_started_notification_warning_on_renderer_exception(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            with mock.patch.object(
+                DeliveryOrchestrator,
+                "write_started_payload",
+                side_effect=RuntimeError("renderer broke"),
+            ):
+                result = orchestrator.send_started_notification()
+            self.assertEqual(StartedNotificationStatus.WARNING, result.status)
+            detail = orchestrator.started_notification_detail(result)
+            self.assertIn("started notification attempted with warnings", detail)
+
+    def test_started_notification_failures_do_not_fail_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = self._docs_workspace(Path(temp))
+            orchestrator = DeliveryOrchestrator(build_run_context([str(docs), "--story", "DEMO-story"], SCRIPTS))
+            orchestrator.context.env = os.environ.copy()
+            orchestrator.context.finalize_paths()
+            orchestrator.context.result_file.write_text('{"delivery_status":"completed"}\n', encoding="utf-8")
+            stderr = StringIO()
+            with (
+                mock.patch.object(DeliveryOrchestrator, "ensure_agent_ready"),
+                mock.patch.object(DeliveryOrchestrator, "init_progress"),
+                mock.patch.object(DeliveryOrchestrator, "sync_references"),
+                mock.patch.object(DeliveryOrchestrator, "run_prepare"),
+                mock.patch.object(DeliveryOrchestrator, "capture_jira_context"),
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "send_started_notification",
+                    return_value=StartedNotificationResult(
+                        status=StartedNotificationStatus.WARNING,
+                        detail="Started notification attempted with warnings",
+                        exit_code=5,
+                    ),
+                ),
+                mock.patch.object(DeliveryOrchestrator, "load_prompt", return_value="prompt"),
+                mock.patch.object(DeliveryOrchestrator, "print_runtime_notices"),
+                mock.patch.object(DeliveryOrchestrator, "run_agent"),
+                mock.patch.object(DeliveryOrchestrator, "verify_with_bounded_remediation"),
+                mock.patch.object(DeliveryOrchestrator, "finalize_delivery"),
+                mock.patch.object(
+                    DeliveryOrchestrator,
+                    "render_notification",
+                    return_value=CommandResult(exit_code=0),
+                ),
+                mock.patch.object(DeliveryOrchestrator, "sync_metadata"),
+                mock.patch.object(DeliveryOrchestrator, "archive_result"),
+                mock.patch.object(DeliveryOrchestrator, "cleanup_worktrees"),
+                mock.patch("sys.stderr", stderr),
+            ):
+                exit_code = orchestrator.run_real_delivery()
+            self.assertEqual(0, exit_code)
+            progress = load_progress(orchestrator.context.workspace_root)
+            jira_start = next(phase for phase in progress["phases"] if phase["id"] == "jira_start")
+            self.assertIn("started notification attempted with warnings", jira_start["detail"])
 
 
 class RunDeliveryShellWrapperTests(unittest.TestCase):

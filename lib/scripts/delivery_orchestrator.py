@@ -54,6 +54,19 @@ class DeliveryFailure(RuntimeError):
     pass
 
 
+class StartedNotificationStatus(str, Enum):
+    SENT = "sent"
+    WARNING = "warning"
+    SKIPPED = "skipped"
+
+
+@dataclass
+class StartedNotificationResult:
+    status: StartedNotificationStatus
+    detail: str
+    exit_code: int | None = None
+
+
 @dataclass
 class AgentConfig:
     model: str
@@ -241,16 +254,51 @@ class DeliveryOrchestrator:
         }
         write_json(self.context.started_file, payload)
 
-    def send_started_notification(self) -> None:
+    def started_notification_detail(self, result: StartedNotificationResult) -> str:
+        if result.status == StartedNotificationStatus.SENT:
+            suffix = "started notification sent"
+        elif result.status == StartedNotificationStatus.SKIPPED:
+            suffix = "started notification skipped"
+        else:
+            suffix = "started notification attempted with warnings"
+        return f"JIRA context captured; {suffix}"
+
+    def send_started_notification(self) -> StartedNotificationResult:
         starter = self.context.scripts_dir / "write_delivery_started.py"
         renderer = self.context.scripts_dir / "render-delivery-and-notify.py"
         if not starter.is_file() or not renderer.is_file() or self.context.started_file is None:
-            return
+            return StartedNotificationResult(
+                status=StartedNotificationStatus.SKIPPED,
+                detail="Started notification skipped",
+            )
         try:
             self.write_started_payload()
-            self.run_python("render-delivery-and-notify.py", str(self.context.started_file), "--event", "delivery.started", check=False)
-        except Exception:
-            return
+            render_result = self.run_python(
+                "render-delivery-and-notify.py",
+                str(self.context.started_file),
+                "--event",
+                "delivery.started",
+                check=False,
+            )
+        except Exception as exc:
+            return StartedNotificationResult(
+                status=StartedNotificationStatus.WARNING,
+                detail=f"Started notification attempted with warnings: {exc}",
+            )
+        if render_result.exit_code == 0:
+            return StartedNotificationResult(
+                status=StartedNotificationStatus.SENT,
+                detail="Started notification sent",
+                exit_code=0,
+            )
+        warning = f"Started notification failed with exit code {render_result.exit_code}"
+        self.progress_message(warning)
+        sys.stderr.write(f"Warning: {warning}\n")
+        return StartedNotificationResult(
+            status=StartedNotificationStatus.WARNING,
+            detail="Started notification attempted with warnings",
+            exit_code=render_result.exit_code,
+        )
 
     def load_prompt(self, remediation: bool = False) -> str:
         context = load_story_context(self.context.docs_dir, self.context.story_ref)
@@ -508,7 +556,7 @@ class DeliveryOrchestrator:
         if not archive_py.is_file() or self.context.result_file is None:
             return
         progress_path = delivery_results_dir(self.context.workspace_root) / "delivery-progress.json"
-        run_command(
+        result = run_command(
             [
                 sys.executable,
                 str(archive_py),
@@ -524,6 +572,10 @@ class DeliveryOrchestrator:
             env=self.context.env,
             stream=False,
         )
+        if result.exit_code != 0:
+            raise DeliveryFailure(
+                f"archive_delivery_run.py failed with exit code {result.exit_code}"
+            )
 
     def cleanup_worktrees(self) -> None:
         try:
@@ -537,7 +589,7 @@ class DeliveryOrchestrator:
 
     def write_failure(self, message: str) -> None:
         assert self.context.result_file is not None
-        self.run_python(
+        result = self.run_python(
             "write_delivery_failure.py",
             str(self.context.docs_dir),
             "--story",
@@ -552,12 +604,24 @@ class DeliveryOrchestrator:
             message,
             check=False,
         )
+        if result.exit_code != 0:
+            raise DeliveryFailure(
+                f"write_delivery_failure.py failed with exit code {result.exit_code}"
+            )
+
+    def write_failure_traceback(self, cause: BaseException) -> None:
+        if self.context.log_file is None:
+            return
+        with self.context.log_file.open("a", encoding="utf-8") as handle:
+            handle.write("\n[delivery] Unexpected failure traceback\n")
+            traceback.print_exception(type(cause), cause, cause.__traceback__, file=handle)
 
     def handle_failure(self, message: str, cause: BaseException | None = None) -> None:
-        if cause is not None and self.context.log_file is not None:
-            with self.context.log_file.open("a", encoding="utf-8") as handle:
-                handle.write("\n[delivery] Unexpected failure traceback\n")
-                traceback.print_exception(type(cause), cause, cause.__traceback__, file=handle)
+        if cause is not None:
+            self.best_effort(
+                "write unexpected failure traceback",
+                lambda: self.write_failure_traceback(cause),
+            )
 
         phase = self.context.current_phase or DeliveryPhase.NOTIFY.value
         self.best_effort(
@@ -633,7 +697,7 @@ class DeliveryOrchestrator:
         notify_result = self.render_notification(self.context.result_file, "delivery.dev_done", dry_run=True)
         self.report_notification_result(notify_result, success_path=True)
         finish_progress(self.context.workspace_root, "completed", detail="Dry run finished")
-        self.archive_result()
+        self.best_effort("archive delivery run", self.archive_result)
         self.log("\nDry-run delivery finished. No Cursor agent, commits, or PRs were created.")
         return 0
 
@@ -653,8 +717,12 @@ class DeliveryOrchestrator:
         self.progress_phase(DeliveryPhase.JIRA_START, "in_progress", "Notify JIRA IN DEV")
         self.log("[delivery] Phase 3/8 — JIRA IN DEV")
         self.capture_jira_context()
-        self.send_started_notification()
-        self.progress_phase(DeliveryPhase.JIRA_START, "completed", "Started notification sent")
+        started_notification = self.send_started_notification()
+        self.progress_phase(
+            DeliveryPhase.JIRA_START,
+            "completed",
+            self.started_notification_detail(started_notification),
+        )
 
         prompt = self.load_prompt()
         self.print_runtime_notices()
@@ -686,7 +754,7 @@ class DeliveryOrchestrator:
         self.sync_metadata()
         self.progress_phase(DeliveryPhase.JIRA_DONE, "completed", "JIRA sync attempted")
         finish_progress(self.context.workspace_root, "completed", detail="Delivery run finished")
-        self.archive_result()
+        self.best_effort("archive delivery run", self.archive_result)
         self.cleanup_worktrees()
         self.log(f"\nLumen delivery run finished at {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} UTC.")
         return 0
@@ -703,17 +771,25 @@ def orchestrate(argv: list[str] | None = None, scripts_dir: Path | None = None) 
     scripts = scripts_dir or Path(__file__).resolve().parent
     original_env = os.environ.copy()
     try:
-        context = build_run_context(argv, scripts_dir=scripts)
-        context.env = load_delivery_environment(
-            context.docs_dir,
-            context.workspace_dir_name,
-            base_env=original_env,
-        )
-        # ponytail: legacy helpers invoked in-process still read os.environ.
-        os.environ.update(context.env)
+        try:
+            context = build_run_context(argv, scripts_dir=scripts)
+            context.env = load_delivery_environment(
+                context.docs_dir,
+                context.workspace_dir_name,
+                base_env=original_env,
+            )
+            # ponytail: legacy helpers invoked in-process still read os.environ.
+            os.environ.update(context.env)
+        except Exception as exc:
+            sys.stderr.write(f"Error: Failed to initialize delivery runtime: {exc}\n")
+            return 1
 
         orchestrator = DeliveryOrchestrator(context)
-        orchestrator.ensure_runtime_dirs()
+        try:
+            orchestrator.ensure_runtime_dirs()
+        except Exception as exc:
+            sys.stderr.write(f"Error: Failed to initialize delivery workspace: {exc}\n")
+            return 1
 
         assert context.lock_dir is not None
         try:

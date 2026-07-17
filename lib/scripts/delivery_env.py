@@ -14,7 +14,10 @@ class DeliveryEnvLoadError(RuntimeError):
 
 _ENV_LOADER_SCRIPT = """set -a
 for file in "$@"; do
-  source "$file"
+  if ! source "$file"; then
+    printf 'Failed to source environment file: %s\\n' "$file" >&2
+    exit 1
+  fi
 done
 env -0
 """
