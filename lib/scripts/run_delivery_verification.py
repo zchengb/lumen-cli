@@ -44,7 +44,7 @@ DEFAULT_JAVA_GRADLE_STEPS = [
         "command": ["./gradlew", "test"],
         "optional": False,
         "allow_no_tests": True,
-        "requires_docker": True,
+        "requires_docker": False,
     },
 ]
 
@@ -79,8 +79,7 @@ def java_gradle_steps(repo_path: Path) -> list[dict[str, Any]]:
             for path in (repo_path / "src" / "test").rglob("*")
             if path.is_file()
         )
-    if uses_testcontainers:
-        test_step["requires_docker"] = True
+    test_step["requires_docker"] = uses_testcontainers
     steps.append(test_step)
     return steps
 
