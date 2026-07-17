@@ -57,8 +57,9 @@ A Topic is not implementation-ready. It is a discovery container. Lumen must not
 6. Agent records the clarified Q&A under `Clarifications`.
 7. Agent updates Acceptance Criteria and Business Rules when needed.
 8. Agent repeats only if another high-impact ambiguity remains.
-9. When clear, mark `businessStatus` as `ready`.
-10. Ask whether to create or bind a JIRA Story.
+9. When clear, present the Story goal, primary actor, key business rules, Acceptance Criteria summary, Out of Scope, non-blocking assumptions, and confirmation that no important TBD or high-impact question remains. Ask: `A. Confirm this Story and mark it ready`, `B. Continue refining`, or `C. Keep it as draft`.
+10. Set `businessStatus` to `ready` only after option A or equally explicit natural-language confirmation; the Agent's readiness assessment is not approval.
+11. Ask whether to create or bind a JIRA Story.
 11. If confirmed, create or bind JIRA and write the result to `metadata.json`.
 
 ## Language
@@ -138,3 +139,4 @@ A story is business-ready when:
 - Clarifications contain answers for previously unclear points.
 - Out of Scope prevents obvious overbuild.
 - No important `TBD` remains.
+- User explicitly confirmed the Story should be marked ready.

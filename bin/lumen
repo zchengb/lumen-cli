@@ -388,6 +388,8 @@ Usage:
                                  dashboard.html).
                                  Add --cli-only to upgrade only the CLI without touching workspace
                                  templates. Use --project <slug> to target a specific workspace.
+  lumen skills install --workspace <path> --platform claude|cursor|codex|all [--force]
+                                 Install the explicit Business and Technical Loop skills for a project.
   lumen version                 Print the installed Lumen CLI version
   lumen help                    Show this help message
 
@@ -415,6 +417,23 @@ EOF
 
 cmd_version() {
   printf 'lumen %s\n' "$(lumen_version)"
+}
+
+cmd_skills() {
+  local sub="${1:-}"
+  shift || true
+  case "${sub}" in
+    install)
+      require_python3
+      local installer="${LUMEN_LIB_DIR}/install_agent_skills.py"
+      [[ -f "${installer}" ]] || { err "Skills installer not found. Re-run install.sh to repair Lumen."; exit 1; }
+      python3 "${installer}" "$@"
+      ;;
+    *)
+      err "Usage: lumen skills install --workspace <path> --platform claude|cursor|codex|all [--force]"
+      exit 1
+      ;;
+  esac
 }
 
 sync_prompt_snippets() {
@@ -3212,6 +3231,7 @@ main() {
     doctor) cmd_doctor "$@" ;;
     config) cmd_config "$@" ;;
     issue) cmd_issue "$@" ;;
+    skills) cmd_skills "$@" ;;
     upgrade) cmd_upgrade "$@" ;;
     version|-v|--version) cmd_version ;;
     help|-h|--help) cmd_help ;;

@@ -31,6 +31,7 @@ from delivery_workspace import (  # noqa: E402
 )
 from render_delivery_dashboard import render  # noqa: E402
 from init_delivery_docs import init_docs  # noqa: E402
+from install_agent_skills import install as install_agent_skills  # noqa: E402
 from sync_workspace_repositories import sync as sync_scan_repositories  # noqa: E402
 from delivery_scheduler import current_jira_status, story_candidates  # noqa: E402
 from delivery_launchd import interval_minutes_from_cron  # noqa: E402
@@ -1075,6 +1076,24 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertTrue((workspace / "AGENTS.md").is_file())
             self.assertFalse((workspace / "stories" / "mini-web-welcome").exists())
             self.assertTrue((workspace / "lumen" / "config" / "delivery.json").is_file())
+
+    def test_agent_skills_install_is_project_scoped_and_preserves_unmanaged_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "workspace"
+            (workspace / "lumen" / "config").mkdir(parents=True)
+            (workspace / "lumen" / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+
+            install_agent_skills(str(workspace), ["all"], force=False)
+
+            self.assertTrue((workspace / "lumen" / "skills" / "lumen-business-loop" / "references" / "workflow.md").is_file())
+            self.assertIn("allow_implicit_invocation: false", (workspace / ".agents" / "openai.yaml").read_text(encoding="utf-8"))
+            adapter = workspace / ".cursor" / "commands" / "lumen-technical-loop.md"
+            self.assertIn("lumen/skills/lumen-technical-loop/SKILL.md", adapter.read_text(encoding="utf-8"))
+
+            unmanaged = workspace / ".claude" / "skills" / "lumen-business-loop" / "SKILL.md"
+            unmanaged.write_text("my workflow\n", encoding="utf-8")
+            with self.assertRaises(FileExistsError):
+                install_agent_skills(str(workspace), ["claude"], force=False)
 
     def test_repos_directory_is_shared_with_auto_scan(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

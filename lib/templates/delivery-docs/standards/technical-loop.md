@@ -49,7 +49,7 @@ Do not start the Development Loop until:
 
 1. Read `story.md`, `metadata.json`, `templates/technical-plan.md`, and this standard.
 2. Inspect the real repositories before drafting: architecture and package boundaries, modules, endpoints, jobs, tables, tests, architecture guard tests, Dockerfile, build files, permission conventions, and recent patterns.
-3. Keep `technicalStatus` as `draft` while planning or asking questions.
+3. Keep `technicalStatus` as `draft` while planning or asking questions. Recommend Light, Standard, or Complex after investigation, explain why, and let the user override. Light is a localized one-repository change without API, schema, authorization/data-scope, integration, async/scheduled, or material rollback impact; Standard is normal moderate work; Complex covers multi-repo, migration, permission/data scope, public/cross-service API, integration, async/state flow, high rollback risk, or major placement decisions. Use the smallest sufficient profile and never fill irrelevant sections.
 4. Build an initial impact map: repositories, modules, API/data/config/permission/test surfaces.
 5. Build a domain-concept map before choosing a class, table, API, method, or variable name. Compare every Story term with existing domain objects, APIs, database fields, and recent refactors. Explicitly distinguish the same concept with a new label, a specialization, and a genuinely new concept.
 6. Ask derived technical questions progressively when an answer affects concept mapping, design, delivery boundary, verification, or rollout. When an ambiguous business term may map to an existing model, ask and confirm this before drafting class-level changes.
@@ -58,8 +58,10 @@ Do not start the Development Loop until:
 9. For a non-trivial behavior, data, or multi-class change, add both a business flow diagram and an implementation interaction/class diagram. Name the existing and proposed classes, entry methods, and hand-off points that the Delivery Agent must use.
 10. Publish a naming contract for changed/new public methods, persisted fields, API fields, DTO properties, and key local variables whose semantics can be confused with an existing concept.
 11. Produce a file-level implementation plan detailed enough for another engineer or Agent to implement without guessing.
-12. Ask the user to review the plan and choose whether to approve, build, or keep refining.
-13. After explicit approval, set `technicalStatus` to `approved`.
+12. Add concise Repository Evidence for important decisions: decision, repository path and symbol, and what it proves. Paste only a 3-8 line excerpt when a path and symbol are insufficient.
+13. If inspection reveals a business ambiguity affecting ACs, rules, user-visible behavior, actor/role, permission/data visibility, scope, failure behavior, or promised freshness/timing/availability, keep draft, show evidence and options, and return to Business Loop; do not modify `story.md` from this loop.
+14. Before approval, confirm investigation, profile, questions, concrete verification, and Plan Quality Bar are complete with no blocking TBD. Present profile/reason, repositories, approach, important decisions, applicable impacts, verification, risks, and Out of Scope. Ask: `A. Approve this Technical Plan`, `B. Continue refining`, `C. Keep it as draft`, or `D. Request a Business Loop revision`.
+15. Only explicit A may set `technicalStatus` to `approved`. A substantive later change returns it to draft and requires approval again; formatting-only changes do not.
 
 ## Progressive Technical Q&A
 

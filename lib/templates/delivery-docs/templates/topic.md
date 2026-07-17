@@ -27,9 +27,11 @@ Summarize relevant existing product behavior, modules, APIs, data models, jobs, 
 
 ## Candidate Stories
 
-| Story | Goal | Notes | Status |
-|---|---|---|---|
-| TBD | TBD | TBD | draft |
+Do not create Story folders until the user confirms this split. Split by independently understandable and verifiable business outcomes, not technical layers.
+
+| Story title | Business goal | Acceptance boundary | Dependencies | Explicitly excluded scope | Status |
+|---|---|---|---|---|---|
+| TBD | TBD | TBD | TBD | TBD | draft |
 
 ## Open Risks
 

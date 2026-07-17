@@ -60,6 +60,16 @@ engineering-workspace/
 
 `repos/` holds reusable base checkouts. Delivery work never occurs in those base checkouts: it occurs in `lumen/worktrees/<story>/<repository>/`.
 
+## Business and Technical Loop Skills
+
+Install the explicitly invoked, project-scoped workflow skills for Claude Code, Cursor, and Codex:
+
+```bash
+lumen skills install --workspace ~/Projects/engineering-workspace --platform all
+```
+
+Lumen keeps the canonical packages in `lumen/skills/`; the generated platform adapters are thin pointers. Existing unmanaged adapter files are preserved unless `--force` is supplied.
+
 ## Quick Start
 
 ```bash
@@ -202,6 +212,7 @@ Jira integration uses the locally authenticated TWG CLI. Configure it through `l
 | `lumen schedule` | Manage Scan and Delivery schedules |
 | `lumen delivery run --story <story>` | Execute one approved Story |
 | `lumen delivery status` | Show latest delivery progress and evidence |
+| `lumen skills install --workspace <path> --platform all` | Install explicit Business and Technical Loop skills |
 | `lumen dashboard` | Open the interactive local control plane |
 | `lumen upgrade` | Update CLI and refresh missing workspace defaults |
 

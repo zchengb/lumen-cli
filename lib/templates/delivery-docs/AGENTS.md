@@ -174,7 +174,7 @@ If an edge case matters, express it as an Acceptance Criterion or Business Rule.
 - `updatedAt`
 - optional `logs` references
 
-Humans should normally change status through Lumen commands, not by hand-editing `metadata.json`.
+The explicitly invoked Business and Technical Loop skills may update the existing status fields in `metadata.json` after the required conversational confirmation. Do not add CLI approval commands.
 
 ## Business Status
 

@@ -1,5 +1,11 @@
 # Technical Plan: <Story Title>
 
+## Plan Profile
+
+Recommended or selected profile: `Standard`
+
+Reason: TBD
+
 ## Goal
 
 Describe the technical outcome and map it to Acceptance Criteria from `story.md`.
@@ -25,6 +31,14 @@ Record confirmed answers from progressive technical Q&A. Do not keep important d
 | Question | Confirmed answer | Impact on plan |
 |---|---|---|
 | TBD | TBD | TBD |
+
+## Repository Evidence
+
+Include only evidence that materially supports a technical decision. Prefer a repository path and symbol over pasted code.
+
+| Technical decision | Repository evidence | What it proves |
+|---|---|---|
+| TBD | `repository/path → symbol` | TBD |
 
 ## Domain Concept And Naming Contract
 
