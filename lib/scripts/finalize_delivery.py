@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from delivery_workspace import load_story_context, read_json, write_json
+from delivery_workspace import delivery_config_path, load_story_context, read_json, write_json
 
 
 def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -113,6 +113,12 @@ def open_pr(repo: Path, branch: str, base: str, title: str, body: str) -> str:
     return url
 
 
+def merge_pr(repo: Path, url: str) -> None:
+    merged = run_gh(repo, "pr", "merge", url, "--merge", "--delete-branch")
+    if merged.returncode != 0:
+        raise RuntimeError(failure_text(merged, "gh pr merge failed"))
+
+
 def update_result(path: Path, payload: dict[str, Any]) -> None:
     payload["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     write_json(path, payload)
@@ -134,6 +140,11 @@ def main() -> int:
 
     try:
         context = load_story_context(Path(args.docs_dir), args.story, validate_gates=False)
+        config = read_json(delivery_config_path(context.workspace_root), {})
+        publish = config.get("publish") if isinstance(config.get("publish"), dict) else {}
+        publish_mode = str(publish.get("mode", "pr")).strip().lower() or "pr"
+        if publish_mode not in {"pr", "merge"}:
+            raise RuntimeError("Delivery publish mode must be 'pr' or 'merge'")
         if str(result.get("delivery_status", "")).strip() not in {"completed", "ready_for_finalize"}:
             raise RuntimeError("Agent result must be completed or ready_for_finalize before finalization")
 
@@ -172,11 +183,15 @@ def main() -> int:
                 url = open_pr(repo.worktree_path, context.branch_name, repo.default_branch, pr_title, body)
                 item["pr_url"] = url
                 pr_urls.append(url)
+                if publish_mode == "merge":
+                    merge_pr(repo.worktree_path, url)
+                    item["merged"] = True
             touched.append(item)
 
         result["repos_touched"] = touched
         result["commits"] = commits
         result["pr_urls"] = pr_urls
+        result["publish_mode"] = publish_mode
         result["delivery_status"] = "completed"
         update_result(result_path, result)
         print(json.dumps({"commits": commits, "pr_urls": pr_urls}, indent=2, ensure_ascii=False))

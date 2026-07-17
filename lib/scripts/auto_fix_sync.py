@@ -266,6 +266,12 @@ def create_pr(
     return url
 
 
+def merge_pr(worktree: Path, url: str) -> None:
+    completed = run_gh(["pr", "merge", url, "--merge", "--delete-branch"], cwd=worktree)
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "gh pr merge failed").strip())
+
+
 def is_pr_candidate(finding: dict, repo_cfg: Optional[dict]) -> bool:
     if finding.get("pr_url"):
         return False
@@ -354,6 +360,21 @@ def record_pr_success(
         finding["issue_status"] = "pr_open"
 
 
+def record_merge_success(finding: dict, registry: dict, finished_at: str) -> None:
+    auto_fix = finding.setdefault("auto_fix", {})
+    if isinstance(auto_fix, dict):
+        auto_fix["status"] = "merged"
+        auto_fix["merged"] = True
+    finding["issue_status"] = "resolved"
+    issue_id = str(finding.get("issue_id", "")).strip()
+    for issue in registry.get("issues", []):
+        if issue.get("id") == issue_id:
+            issue["status"] = "resolved"
+            issue["resolved_at"] = finished_at
+            issue["last_seen_at"] = finished_at
+            break
+
+
 def sync_auto_fix_prs(
     scan: dict,
     registry: dict,
@@ -410,6 +431,10 @@ def sync_auto_fix_prs(
         os.environ["GH_HOST"] = gh_host
 
     finished_at = str(scan.get("finished_at", "")).strip() or ""
+    auto_fix_config = common.get("auto_fix") if isinstance(common.get("auto_fix"), dict) else {}
+    publish_mode = str(auto_fix_config.get("publish_mode", "pr")).strip().lower() or "pr"
+    if publish_mode not in {"pr", "merge"}:
+        raise RuntimeError("Auto Scan publish mode must be 'pr' or 'merge'")
 
     for finding, repository, repo_cfg in candidates:
         branch = resolve_branch(finding, repository, common)
@@ -437,6 +462,9 @@ def sync_auto_fix_prs(
             pr_body = build_pr_body(finding)
             pr_url = create_pr(git_root, branch, pr_title, pr_body, gh_host, repo_slug)
             record_pr_success(scan, finding, repository, branch, pr_title, pr_url, registry, finished_at)
+            if publish_mode == "merge":
+                merge_pr(git_root, pr_url)
+                record_merge_success(finding, registry, finished_at)
             summary["created"] += 1
         except Exception as exc:
             summary["failed"] += 1

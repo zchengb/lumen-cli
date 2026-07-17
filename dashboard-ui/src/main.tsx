@@ -5,14 +5,14 @@ import remarkGfm from "remark-gfm";
 import { version as lumenVersion } from "../package.json";
 import {
   Activity, ChevronDown, CircleAlert, CircleCheck, CircleDot, Code2, Copy,
-  Eye, EyeOff, ExternalLink, FileCode2, GitBranch, LoaderCircle, Menu,
+  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, LoaderCircle, Menu,
   RotateCcw, Save, ScanSearch, Settings2, Terminal,
   Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow
 } from "lucide-react";
 import "./styles.css";
 
 type RecordValue = Record<string, any>;
-type Tab = "scan" | "delivery" | "prompts" | "settings";
+type Tab = "scan" | "delivery" | "repositories" | "prompts" | "settings";
 
 declare global {
   interface Window { DASHBOARD_DATA?: DashboardData }
@@ -33,6 +33,7 @@ interface DashboardData extends RecordValue {
 const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
   { id: "scan", label: "AUTO SCAN", icon: ScanSearch },
   { id: "delivery", label: "AUTO DELIVERY", icon: Truck },
+  { id: "repositories", label: "REPOSITORY", icon: FolderGit2 },
   { id: "prompts", label: "WORKFLOW", icon: Workflow },
   { id: "settings", label: "SETTINGS", icon: Settings2 }
 ];
@@ -40,6 +41,7 @@ const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
 const tabContext: Record<Tab, { title: string; description: string }> = {
   scan: { title: "AUTO SCAN", description: "Review history and manage tracked findings." },
   delivery: { title: "AUTO DELIVERY", description: "Story execution, verification, and pull request delivery." },
+  repositories: { title: "REPOSITORY", description: "Local repositories, scan profiles, and delivery verification commands." },
   prompts: { title: "WORKFLOW", description: "The prompts, scripts, control points, and recovery paths behind each local automation." },
   settings: { title: "SETTINGS", description: "Workspace configuration, scheduling, and local integrations." }
 };
@@ -169,6 +171,7 @@ function App() {
         {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
         {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
         {data && activeTab === "delivery" && <DeliveryView data={data} project={project} />}
+        {data && activeTab === "repositories" && <RepositoryView data={data} interact={interact} />}
         {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={setNotice} />}
         {data && activeTab === "settings" && <SettingsView data={data} project={project} interact={interact} notify={setNotice} />}
       </div>
@@ -196,7 +199,7 @@ function ScanView({ data, project, interact }: { data: DashboardData; project: s
   const jumpToFindings = () => document.getElementById("tracked-findings")?.scrollIntoView({ behavior: "smooth", block: "start" });
   return <>
     <section className="metrics"><Metric label="Open findings" value={openIssues.length} onClick={jumpToFindings} /><Metric label="Successful · 7d" value={stats.success_7d || 0} /><Metric label="Failed · 7d" value={stats.failed_7d || 0} /><Metric label="Lookback window" value={`${data.scan_window_days || 7}d`} /></section>
-    <Panel title="Scan History" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Finished</th><th>Status</th><th>Issues</th><th>Duration</th><th>Artifacts</th></tr></thead><tbody>{pageRuns.map((run: RecordValue) => <tr key={run.id}><td>{when(run.finished_at || run.started_at)}</td><td><Badge value={run.status} /></td><td><SeverityBreakdown run={run} /></td><td>{text(run.duration)}</td><td className="artifact-links">{run.html && <a href={`${run.html}?project=${encodeURIComponent(project)}`} target="_blank">HTML</a>}{run.pdf && <a href={`${run.pdf}?project=${encodeURIComponent(project)}`} target="_blank">PDF</a>}{!run.html && !run.pdf && "—"}</td></tr>)}</tbody></table></div>{runs.length > runPageSize && <Pagination page={runPage} pageCount={Math.ceil(runs.length / runPageSize)} onChange={setRunPage} />}</Panel>
+    <Panel title="Scan History" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Finished</th><th>Status</th><th>Issues</th><th>Duration</th><th>Artifacts</th></tr></thead><tbody>{pageRuns.map((run: RecordValue) => <tr key={run.id}><td>{when(run.finished_at || run.started_at)}</td><td><Badge value={run.status} /></td><td><SeverityBreakdown run={run} /></td><td>{text(run.duration)}</td><td><div className="artifact-links">{run.html && <a href={`${run.html}?project=${encodeURIComponent(project)}`} target="_blank">HTML</a>}{run.pdf && <a href={`${run.pdf}?project=${encodeURIComponent(project)}`} target="_blank">PDF</a>}{!run.html && !run.pdf && "—"}</div></td></tr>)}</tbody></table></div>{runs.length > runPageSize && <Pagination page={runPage} pageCount={Math.ceil(runs.length / runPageSize)} onChange={setRunPage} />}</Panel>
     <Panel title="Tracked Findings" action={<span className="muted">{filteredIssues.length} of {issues.length} records</span>}><div className="finding-filters" role="tablist">{(["all", "open", "resolved", "ignored"] as const).map((value) => <button className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}>{value === "all" ? "All" : titleStatus(value)} <span>{counts[value]}</span></button>)}</div><div id="tracked-findings" className="findings">{filteredIssues.length ? filteredIssues.map((issue: RecordValue) => <Finding issue={issue} onIgnore={() => setIgnoreCandidate(issue)} key={issue.id} />) : <Empty label="No findings match this status." />}</div></Panel>
     {ignoreCandidate && <IgnoreDialog onClose={() => setIgnoreCandidate(null)} onConfirm={(reason) => { void interact("/api/issue/ignore", { issue_id: ignoreCandidate.id, reason }, "Finding ignored"); setIgnoreCandidate(null); }} />}
   </>;
@@ -413,6 +416,38 @@ function PromptInspectorDialog({ item, content, onChange, onClose, onSave }: { i
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : "Auto Delivery"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article></div></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={onSave}><Save size={14} />Save prompt</button></footer></section></div>;
 }
 
+function RepositoryView({ data, interact }: { data: DashboardData; interact: (path: string, json: RecordValue, message: string) => Promise<void> }) {
+  const workspace = data.interactive?.workspace || {};
+  const profiles = workspace.runtime_profiles || {};
+  const profileNames = Object.keys(profiles);
+  const [repositories, setRepositories] = useState<RecordValue[]>(workspace.repositories || []);
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  useEffect(() => setRepositories(workspace.repositories || []), [workspace.repositories]);
+  const update = (index: number, patch: RecordValue) => setRepositories((items) => items.map((item, current) => current === index ? { ...item, ...patch } : item));
+  const commandsFor = (repository: RecordValue) => (repository.delivery_steps || []).map((step: RecordValue) => Array.isArray(step.command) ? step.command.join(" ") : "").filter(Boolean).join("\n");
+  return <div className="repository-page">
+    <Panel title="Repository Registry" action={<button className="button secondary" onClick={() => setAddOpen(true)}>Add repository</button>}>
+      <div className="repository-intro">Add a clone URL once. Lumen stores the repository under <code>repos/</code>, infers its profile, and uses the selected branch for Scan and Delivery.</div>
+      <div className="repository-list">{repositories.map((repository, index) => {
+        const profile = profiles[repository.runtime_profile] || {};
+        const open = expanded === repository.name;
+        return <article className="repository-row" key={`${repository.name}-${index}`}>
+          <button className="repository-summary" onClick={() => setExpanded(open ? null : repository.name)}><div><strong>{repository.name || "Unnamed repository"}</strong><span>{profile.language || "generic"} · {repository.runtime_profile || "No profile"}</span></div><code>{repository.default_branch || "main"}</code></button>
+          {open && <div className="repository-editor"><div className="form-grid compact"><Field label="Default branch"><select value={repository.default_branch || ""} onChange={(event) => update(index, { default_branch: event.target.value })}>{Array.from(new Set([repository.default_branch, ...(repository.branches || [])].filter(Boolean))).map((branch) => <option value={branch} key={branch}>{branch}</option>)}</select></Field><Field label="Scan runtime profile"><select value={repository.runtime_profile || ""} onChange={(event) => update(index, { runtime_profile: event.target.value })}>{profileNames.map((name) => <option value={name} key={name}>{name}</option>)}</select></Field></div><div className="repository-policy"><label><input type="checkbox" checked={repository.allow_auto_fix !== false} onChange={(event) => update(index, { allow_auto_fix: event.target.checked })} />Allow automated Scan fixes</label><label><input type="checkbox" checked={repository.allow_pr !== false} onChange={(event) => update(index, { allow_pr: event.target.checked })} />Allow publish</label><span>Local Scan commands: disabled (review-only)</span></div><label className="field repository-commands"><span>Delivery verification commands</span><textarea value={repository.delivery_commands ?? commandsFor(repository)} rows={4} placeholder="One command per line, e.g. ./gradlew test" onChange={(event) => update(index, { delivery_commands: event.target.value })} /></label></div>}
+        </article>;
+      })}</div>
+      <footer className="repository-footer"><button className="button primary" onClick={() => void interact("/api/repositories", { repositories }, "Repository registry saved")}><Save size={15} />Save repositories</button></footer>
+    </Panel>
+    {addOpen && <AddRepositoryDialog onClose={() => setAddOpen(false)} onAdd={(url) => { void interact("/api/repositories/clone", { url }, "Repository cloned and registered"); setAddOpen(false); }} />}
+  </div>;
+}
+
+function AddRepositoryDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (url: string) => void }) {
+  const [url, setUrl] = useState("");
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal repository-modal" role="dialog" aria-modal="true" aria-label="Add repository" onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><strong>Add repository</strong><span>Paste a Git clone URL. Lumen derives the name, local path, branch, and runtime profile.</span></div></div><div className="repository-modal-body"><Field label="Clone URL"><input autoFocus value={url} placeholder="https://git.example.com/team/service.git" onChange={(event) => setUrl(event.target.value)} /></Field></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" disabled={!url.trim()} onClick={() => onAdd(url.trim())}>Clone and add</button></footer></section></div>;
+}
+
 function SettingsView({ data, project, interact, notify }: { data: DashboardData; project: string; interact: (path: string, json: RecordValue, message: string) => Promise<void>; notify: (message: string) => void }) {
   const workspace = data.interactive?.workspace || {};
   const schedules = data.interactive?.schedules || {};
@@ -424,7 +459,10 @@ function SettingsView({ data, project, interact, notify }: { data: DashboardData
   const [devDoneStatus, setDevDoneStatus] = useState(String(schedules.delivery?.dev_done_status || ""));
   const [workflowStatuses, setWorkflowStatuses] = useState<string[]>([]);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
+  const [scanPublishMode, setScanPublishMode] = useState(String(workspace.publish?.scan || "pr"));
+  const [deliveryPublishMode, setDeliveryPublishMode] = useState(String(workspace.publish?.delivery || "pr"));
   useEffect(() => { void request("/api/delivery/status-options", project).then((response) => setWorkflowStatuses(Array.isArray(response.options) ? response.options.map(String) : [])).catch(() => setWorkflowStatuses([])); }, [project]);
+  useEffect(() => { setScanPublishMode(String(workspace.publish?.scan || "pr")); setDeliveryPublishMode(String(workspace.publish?.delivery || "pr")); }, [workspace.publish?.scan, workspace.publish?.delivery]);
   const getSecret = async (name: string) => { const response = await request(`/api/integration?key=${encodeURIComponent(name)}`, project); return String(response.value); };
   const reveal = async (name: string) => { try { const result = await getSecret(name); setSecrets((current) => ({ ...current, [name]: result })); notify("Integration value revealed"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to reveal value"); } };
   const copy = async (name: string) => { try { const result = await getSecret(name); await navigator.clipboard.writeText(result); notify("Integration value copied"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to copy value"); } };
@@ -432,11 +470,13 @@ function SettingsView({ data, project, interact, notify }: { data: DashboardData
   const statusOptions = Array.from(new Set([...workflowStatuses, deliveryStatus, inDevStatus, devDoneStatus].filter(Boolean)));
   const saveScan = () => { void interact("/api/workspace", { scan_window_days: Number(scanWindow) }, "Auto Scan configuration saved"); void interact("/api/schedule", { kind: "scan", action: "save", cron: scanCron }, "Auto Scan schedule saved"); };
   const saveDelivery = () => void interact("/api/schedule", { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_status: deliveryStatus, in_dev_status: inDevStatus, dev_done_status: devDoneStatus }, "Auto Delivery schedule saved");
+  const savePublishPolicy = () => void interact("/api/publish-policy", { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode }, "Publish policy saved");
   return <div className="settings-stack">
     <Panel title="Automation Schedules">
       <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Scan</h4></div></div><p>{text(schedules.scan?.description, "No recurring scan is configured.")}</p></div><div className="settings-control wide"><div className="form-grid compact scan-settings-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 0, width: "100%" }}><Field label="Lookback, days"><input type="number" min="1" max="365" value={scanWindow} onChange={(event) => setScanWindow(event.target.value)} /></Field><Field label="Five-field cron"><input value={scanCron} onChange={(event) => setScanCron(event.target.value)} /></Field></div></div><div className="settings-footer" style={{ paddingBottom: 7 }}><ScheduleToggle enabled={Boolean(schedules.scan)} onChange={(enabled) => enabled ? void interact("/api/schedule", { kind: "scan", action: "save", cron: scanCron }, "Auto Scan schedule enabled") : void interact("/api/schedule", { kind: "scan", action: "remove" }, "Auto Scan schedule paused")} /><button className="button primary" onClick={saveScan}><Save size={15} />Save</button></div></div>
       <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Delivery</h4></div></div><p>{schedules.delivery?.enabled ? `Polling every ${Math.round(Number(schedules.delivery?.interval_seconds || 300) / 60)} minute(s).` : "Delivery polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => setDeliveryInterval(event.target.value)} /></Field><Field label="Eligible JIRA status"><select value={deliveryStatus} onChange={(event) => setDeliveryStatus(event.target.value)}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when started"><select value={inDevStatus} onChange={(event) => setInDevStatus(event.target.value)}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={devDoneStatus} onChange={(event) => setDevDoneStatus(event.target.value)}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">On failure, Lumen leaves the JIRA status unchanged and adds a Needs attention comment.</p></div><div className="settings-footer" style={{ paddingBottom: 7 }}><ScheduleToggle enabled={Boolean(schedules.delivery?.enabled)} onChange={(enabled) => enabled ? saveDelivery() : void interact("/api/schedule", { kind: "delivery", action: "remove" }, "Auto Delivery schedule paused")} /><button className="button primary" onClick={saveDelivery}><Save size={15} />Save</button></div></div>
     </Panel>
+    <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>PR keeps a review gate. Merge creates a PR first, then merges it into the configured default branch.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => setScanPublishMode(event.target.value)}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => setDeliveryPublishMode(event.target.value)}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field></div></div><div className="settings-footer" style={{ paddingBottom: 7 }}><button className="button primary" onClick={savePublishPolicy}><Save size={15} />Save</button></div></div></Panel>
     <Panel title="Variable Keys" action={<span className="muted">Stored only in this workspace</span>}><div className="settings-section"><div className="settings-copy"><h4>Available keys</h4><p>Only configured local values are shown.</p></div><div className="settings-control wide"><div className="secret-list">{configured.length ? configured.map((name: string) => <div className="secret-row" key={name}><code>{name}</code><input readOnly type={secrets[name] ? "text" : "password"} value={secrets[name] || "••••••••••••"} aria-label={`Value for ${name}`} /><div><IconButton label="Reveal value" onClick={() => void reveal(name)}>{secrets[name] ? <EyeOff size={15} /> : <Eye size={15} />}</IconButton><IconButton label="Copy value" onClick={() => void copy(name)}><Copy size={15} /></IconButton></div></div>) : <Empty label="No local integration keys configured." />}</div></div></div></Panel>
   </div>;
 }

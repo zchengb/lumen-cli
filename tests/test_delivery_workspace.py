@@ -39,10 +39,18 @@ from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # 
 from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  # noqa: E402
 from delivery_progress import print_progress_report  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
-from dashboard_server import DashboardServer, delivery_payload  # noqa: E402
+from dashboard_server import (  # noqa: E402
+    DashboardServer,
+    clone_repository,
+    delivery_payload,
+    repository_branches,
+    save_delivery_steps,
+    save_publish_policy,
+    save_repositories,
+)
 from capture_jira_context import image_urls, values_for_keys  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
-from auto_fix_sync import extract_pr_url  # noqa: E402
+from auto_fix_sync import extract_pr_url, record_merge_success  # noqa: E402
 
 
 def load_delivery_notification_renderer():
@@ -234,6 +242,81 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             registry = json.loads((workspace / "state" / "issue-registry.json").read_text(encoding="utf-8"))
             self.assertEqual("ignored", registry["issues"][0]["status"])
             self.assertEqual("Not applicable", registry["issues"][0]["ignore_reason"])
+
+    def test_repository_and_publish_configuration_persist_in_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "lumen"
+            repository = Path(temp) / "service"
+            subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
+            config = workspace / "config"
+            config.mkdir(parents=True)
+            (config / "common.json").write_text("{}\n", encoding="utf-8")
+            (config / "delivery.json").write_text("{}\n", encoding="utf-8")
+            (config / "runtime-profiles.json").write_text(
+                json.dumps({"local-java-review-only": {"language": "java", "validation": "review only"}}),
+                encoding="utf-8",
+            )
+
+            payload = save_repositories(workspace, [{
+                "name": "service",
+                "path": str(repository),
+                "default_branch": "main",
+                "runtime_profile": "local-java-review-only",
+                "allow_auto_fix": True,
+                "allow_pr": True,
+            }])
+            self.assertEqual("service", payload["repositories"][0]["name"])
+            save_delivery_steps(workspace, "service", ["./gradlew test", "./gradlew pmdMain"])
+            save_publish_policy(workspace, "pr", "merge")
+
+            delivery = json.loads((config / "delivery.json").read_text(encoding="utf-8"))
+            common = json.loads((config / "common.json").read_text(encoding="utf-8"))
+            self.assertEqual(["./gradlew", "test"], delivery["verification"]["steps"]["service"][0]["command"])
+            self.assertEqual("merge", delivery["publish"]["mode"])
+            self.assertEqual("pr", common["auto_fix"]["publish_mode"])
+
+    def test_auto_fix_merge_resolves_the_tracked_finding(self) -> None:
+        finding = {"issue_id": "ISSUE-42", "auto_fix": {"status": "pr_open"}, "issue_status": "pr_open"}
+        registry = {"issues": [{"id": "ISSUE-42", "status": "pr_open"}]}
+
+        record_merge_success(finding, registry, "2026-07-16T12:00:00Z")
+
+        self.assertEqual("merged", finding["auto_fix"]["status"])
+        self.assertEqual("resolved", finding["issue_status"])
+        self.assertEqual("resolved", registry["issues"][0]["status"])
+
+    def test_clone_repository_registers_in_docs_repos_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workspace = root / "docs" / "lumen"
+            remote = root / "service.git"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "config" / "delivery.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "config" / "runtime-profiles.json").write_text(
+                json.dumps({"local-generic-review-only": {"language": "generic", "validation": "review only"}}),
+                encoding="utf-8",
+            )
+
+            payload = clone_repository(workspace, str(remote))
+
+            repository = payload["repositories"][0]
+            self.assertEqual("service", repository["name"])
+            self.assertTrue((root / "docs" / "repos" / "service" / ".git").exists())
+
+    def test_repository_branch_options_include_local_and_remote_refs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repository = Path(temp) / "service"
+            subprocess.run(["git", "init", "-b", "main", str(repository)], check=True, capture_output=True)
+            git(repository, "config", "user.email", "lumen@example.test")
+            git(repository, "config", "user.name", "Lumen Test")
+            (repository / "README.md").write_text("base\n", encoding="utf-8")
+            git(repository, "add", "README.md")
+            git(repository, "commit", "-m", "initial")
+            git(repository, "branch", "release")
+
+            self.assertEqual(["main", "release"], repository_branches(repository, "main"))
 
     def test_delivery_report_prefers_terminal_result_over_stale_progress(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -897,6 +980,32 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertTrue(html.is_file())
             self.assertTrue(data.is_file())
             self.assertIn("DEMO-1", data.read_text(encoding="utf-8"))
+
+    def test_delivery_dashboard_recovers_story_title_after_docs_workspace_moves(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp) / "docs"
+            workspace = docs / "lumen"
+            history = workspace / "history" / "delivery"
+            story = docs / "stories" / "DEMO-1-example"
+            history.mkdir(parents=True)
+            story.mkdir(parents=True)
+            (story / "metadata.json").write_text('{"title":"Example delivery story"}\n', encoding="utf-8")
+            (history / "DEMO-1.json").write_text(
+                json.dumps({
+                    "delivery": {
+                        "delivery_status": "completed",
+                        "story_id": "DEMO-1",
+                        "story_path": "stories/DEMO-1-example",
+                        "docs_dir": "/obsolete/docs",
+                    },
+                    "progress": {},
+                }),
+                encoding="utf-8",
+            )
+
+            runs = delivery_payload(workspace)["runs"]
+
+            self.assertEqual("Example delivery story", runs[0]["story_title"])
 
     def test_init_merges_delivery_assets_into_an_existing_scan_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

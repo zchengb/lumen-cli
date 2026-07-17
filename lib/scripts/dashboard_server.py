@@ -8,6 +8,9 @@ import importlib.util
 import json
 import mimetypes
 import os
+import re
+import shlex
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
@@ -26,6 +29,7 @@ from projects_registry import find_by_slug, load_registry
 from scan_launchd import install as install_scan_schedule
 from scan_launchd import remove as remove_scan_schedule
 from scan_launchd import status as scan_schedule_status
+from discover_repos import default_branch, infer_profile
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -188,12 +192,166 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
             key, value = line.split("=", 1)
             if value.strip().strip('"').strip("'"):
                 configured_keys.append(key.strip())
+    repos_config = load_json(workspace / "config" / "repos.json", {"repositories": []})
+    profiles = load_json(workspace / "config" / "runtime-profiles.json", {})
+    delivery_config = load_json(workspace / "config" / "delivery.json", {})
+    verification = delivery_config.get("verification") if isinstance(delivery_config.get("verification"), dict) else {}
+    steps = verification.get("steps") if isinstance(verification.get("steps"), dict) else {}
+    repositories = repos_config.get("repositories") if isinstance(repos_config.get("repositories"), list) else []
+    enriched_repositories = []
+    for repository in repositories:
+        if not isinstance(repository, dict):
+            continue
+        entry = dict(repository)
+        entry["delivery_steps"] = steps.get(str(entry.get("name", "")), [])
+        entry["branches"] = repository_branches(Path(str(entry.get("path", ""))), str(entry.get("default_branch", "main")))
+        enriched_repositories.append(entry)
     return {
         "path": str(workspace),
         "scan_window_days": (common.get("execution") or {}).get("scan_window_days", 7),
         "configured_integrations": sorted(key for key in configured_keys if key),
-        "repositories": load_json(workspace / "config" / "repos.json", {"repositories": []}).get("repositories", []),
+        "repositories": enriched_repositories,
+        "runtime_profiles": profiles,
+        "publish": {
+            "scan": str(((common.get("auto_fix") or {}).get("publish_mode") or "pr")),
+            "delivery": str(((delivery_config.get("publish") or {}).get("mode") or "pr")),
+        },
     }
+
+
+def repository_branches(repository: Path, default: str) -> list[str]:
+    if not repository.is_dir() or not (repository / ".git").exists():
+        return [default] if default else []
+    branches: list[str] = []
+    for args in (("for-each-ref", "--format=%(refname:short)", "refs/heads"), ("for-each-ref", "--format=%(refname:short)", "refs/remotes/origin")):
+        completed = subprocess.run(["git", *args], cwd=repository, capture_output=True, text=True)
+        if completed.returncode != 0:
+            continue
+        for branch in completed.stdout.splitlines():
+            name = branch.strip().removeprefix("origin/")
+            if name and name != "HEAD" and not name.endswith("/HEAD") and name not in branches:
+                branches.append(name)
+    if default and default not in branches:
+        branches.insert(0, default)
+    return branches
+
+
+def repository_name_from_url(url: str) -> str:
+    candidate = url.rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
+    name = candidate.removesuffix(".git")
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", name):
+        raise ValueError("Repository URL must end with a repository name")
+    return name
+
+
+def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
+    if not isinstance(repositories, list):
+        raise ValueError("Repositories must be a list")
+    profiles = load_json(workspace / "config" / "runtime-profiles.json", {})
+    cleaned = []
+    delivery = load_json(workspace / "config" / "delivery.json", {})
+    verification = delivery.setdefault("verification", {})
+    steps = verification.setdefault("steps", {})
+    seen = set()
+    for repository in repositories:
+        if not isinstance(repository, dict):
+            raise ValueError("Each repository must be an object")
+        name = str(repository.get("name", "")).strip()
+        path = Path(str(repository.get("path", "")).strip()).expanduser()
+        branch = str(repository.get("default_branch", "")).strip() or "main"
+        profile = str(repository.get("runtime_profile", "")).strip() or "local-generic-review-only"
+        if not name or name in seen:
+            raise ValueError("Repository names must be unique")
+        if profile not in profiles:
+            raise ValueError(f"Unknown runtime profile: {profile}")
+        if not path.is_dir() or not (path / ".git").exists():
+            raise ValueError(f"Repository is not a local Git checkout: {path}")
+        seen.add(name)
+        cleaned.append({
+            "name": name,
+            "path": str(path.resolve()),
+            "remote_url": str(repository.get("remote_url", "")).strip(),
+            "default_branch": branch,
+            "runtime_profile": profile,
+            "validation_commands": [str(item) for item in repository.get("validation_commands", []) if str(item).strip()],
+            "allow_auto_fix": bool(repository.get("allow_auto_fix", True)),
+            "allow_pr": bool(repository.get("allow_pr", True)),
+        })
+        if "delivery_commands" in repository:
+            commands = repository["delivery_commands"]
+            lines = commands.splitlines() if isinstance(commands, str) else commands
+            if not isinstance(lines, list):
+                raise ValueError("Delivery commands must be a list or text")
+            parsed = [shlex.split(str(command)) for command in lines if str(command).strip()]
+            steps[name] = [
+                {"id": f"configured-{index + 1}", "label": f"Configured verification {index + 1}", "command": command, "optional": False}
+                for index, command in enumerate(parsed)
+            ]
+    write_json(workspace / "config" / "repos.json", {"repositories": cleaned})
+    write_json(workspace / "config" / "delivery.json", delivery)
+    return workspace_payload(workspace)
+
+
+def clone_repository(workspace: Path, url: object) -> dict[str, Any]:
+    remote_url = str(url).strip()
+    if not remote_url:
+        raise ValueError("Repository clone URL is required")
+    name = repository_name_from_url(remote_url)
+    destination = workspace.parent / "repos" / name
+    if destination.exists():
+        raise ValueError(f"Repository destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(["git", "clone", remote_url, str(destination)], capture_output=True, text=True)
+    if completed.returncode != 0:
+        raise RuntimeError((completed.stderr or completed.stdout or "git clone failed").strip())
+    config_path = workspace / "config" / "repos.json"
+    config = load_json(config_path, {"repositories": []})
+    repositories = config.get("repositories") if isinstance(config.get("repositories"), list) else []
+    repositories.append({
+        "name": name,
+        "path": str(destination.resolve()),
+        "remote_url": remote_url,
+        "default_branch": default_branch(destination),
+        "runtime_profile": infer_profile(destination),
+        "validation_commands": [],
+        "allow_auto_fix": True,
+        "allow_pr": True,
+    })
+    return save_repositories(workspace, repositories)
+
+
+def save_delivery_steps(workspace: Path, repository: str, commands: object) -> dict[str, Any]:
+    name = str(repository).strip()
+    if not name or not isinstance(commands, list):
+        raise ValueError("Repository and commands are required")
+    parsed = [shlex.split(str(command)) for command in commands if str(command).strip()]
+    if any(not command for command in parsed):
+        raise ValueError("Verification commands cannot be empty")
+    path = workspace / "config" / "delivery.json"
+    config = load_json(path, {})
+    verification = config.setdefault("verification", {})
+    steps = verification.setdefault("steps", {})
+    steps[name] = [
+        {"id": f"configured-{index + 1}", "label": f"Configured verification {index + 1}", "command": command, "optional": False}
+        for index, command in enumerate(parsed)
+    ]
+    write_json(path, config)
+    return workspace_payload(workspace)
+
+
+def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object) -> dict[str, Any]:
+    modes = {"pr", "merge"}
+    if scan_mode not in modes or delivery_mode not in modes:
+        raise ValueError("Publish mode must be PR or Merge")
+    common_path = workspace / "config" / "common.json"
+    common = load_json(common_path, {})
+    common.setdefault("auto_fix", {})["publish_mode"] = scan_mode
+    write_json(common_path, common)
+    delivery_path = workspace / "config" / "delivery.json"
+    delivery = load_json(delivery_path, {})
+    delivery.setdefault("publish", {})["mode"] = delivery_mode
+    write_json(delivery_path, delivery)
+    return workspace_payload(workspace)
 
 
 def integration_value(workspace: Path, key: str) -> str:
@@ -248,11 +406,18 @@ def delivery_duration(started_at: object, finished_at: object) -> str:
 
 def story_title(workspace: Path, delivery: dict[str, Any], progress: dict[str, Any]) -> str:
     story_path = str(delivery.get("story_path") or progress.get("story_path") or "").strip()
-    docs_dir = Path(str(delivery.get("docs_dir") or progress.get("docs_dir") or workspace.parent)).expanduser()
+    embedded_title = str(delivery.get("story_title") or progress.get("story_title") or "").strip()
+    if embedded_title:
+        return embedded_title
     if not story_path:
         return ""
-    metadata = read_delivery_json(docs_dir / story_path / "metadata.json", {})
-    return str(metadata.get("title") or "").strip()
+    configured_docs = Path(str(delivery.get("docs_dir") or progress.get("docs_dir") or workspace.parent)).expanduser()
+    for docs_dir in dict.fromkeys((configured_docs, workspace.parent)):
+        metadata = read_delivery_json(docs_dir / story_path / "metadata.json", {})
+        title = str(metadata.get("title") or "").strip()
+        if title:
+            return title
+    return ""
 
 
 def delivery_stages(phases: object) -> list[dict[str, Any]]:
@@ -570,6 +735,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/integration":
                 update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))
                 return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
+            if parsed.path == "/api/repositories":
+                return self.respond_json(HTTPStatus.OK, {"workspace": save_repositories(workspace, body.get("repositories"))})
+            if parsed.path == "/api/repositories/clone":
+                return self.respond_json(HTTPStatus.OK, {"workspace": clone_repository(workspace, body.get("url"))})
+            if parsed.path == "/api/repository/verification":
+                return self.respond_json(
+                    HTTPStatus.OK,
+                    {"workspace": save_delivery_steps(workspace, body.get("repository"), body.get("commands"))},
+                )
+            if parsed.path == "/api/publish-policy":
+                return self.respond_json(
+                    HTTPStatus.OK,
+                    {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"))},
+                )
             return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
         except (OSError, ValueError, RuntimeError) as exc:
             return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
