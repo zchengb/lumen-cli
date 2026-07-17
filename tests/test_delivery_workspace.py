@@ -1087,8 +1087,12 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
             self.assertTrue((workspace / "lumen" / "skills" / "lumen-business-loop" / "references" / "workflow.md").is_file())
             self.assertIn("allow_implicit_invocation: false", (workspace / ".agents" / "openai.yaml").read_text(encoding="utf-8"))
-            adapter = workspace / ".cursor" / "commands" / "lumen-technical-loop.md"
-            self.assertIn("lumen/skills/lumen-technical-loop/SKILL.md", adapter.read_text(encoding="utf-8"))
+            self.assertFalse((workspace / ".cursor" / "commands" / "lumen-technical-loop.md").exists())
+
+            install_agent_skills(str(workspace), ["cursor"], force=False)
+            self.assertTrue((workspace / ".cursor" / "commands" / "lumen-technical-loop.md").exists())
+            install_agent_skills(str(workspace), ["all"], force=False)
+            self.assertFalse((workspace / ".cursor" / "commands" / "lumen-technical-loop.md").exists())
 
             unmanaged = workspace / ".claude" / "skills" / "lumen-business-loop" / "SKILL.md"
             unmanaged.write_text("my workflow\n", encoding="utf-8")

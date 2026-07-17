@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
 
@@ -32,6 +31,11 @@ def write(path: Path, text: str, force: bool) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def remove_managed(path: Path) -> None:
+    if managed(path):
+        path.unlink()
+
+
 def copy_skill(source: Path, target: Path, force: bool) -> None:
     existing = target / "SKILL.md"
     if existing.exists() and not managed(existing) and not force:
@@ -52,16 +56,18 @@ def adapter(skill: str, platform: str, canonical: Path) -> tuple[Path, str]:
 def install(workspace: str, platforms: list[str], force: bool) -> None:
     root = project_root(workspace)
     source_root = Path(__file__).resolve().parents[1] / "templates" / "agent-skills"
-    selected = ("claude", "cursor", "codex") if "all" in platforms else tuple(dict.fromkeys(platforms))
+    selected = ("claude", "codex") if "all" in platforms else tuple(dict.fromkeys(platforms))
     for skill in SKILLS:
         canonical = root / "lumen" / "skills" / skill
         copy_skill(source_root / skill, canonical, force)
         for platform in selected:
             relative, text = adapter(skill, platform, Path("lumen") / "skills" / skill)
             write(root / relative, text, force)
+        if "all" in platforms:
+            remove_managed(root / ".cursor" / "commands" / f"{skill}.md")
     if "codex" in selected:
         write(root / ".agents" / "openai.yaml", f"{MANAGED}\npolicy:\n  allow_implicit_invocation: false\n", force)
-    print(f"Installed Lumen skills for {', '.join(selected)} in {root}")
+    print(f"Installed Lumen skills for {', '.join(selected)} in {root}; Cursor uses the shared .agents skills.")
 
 
 def main() -> int:

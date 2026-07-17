@@ -68,7 +68,7 @@ Install the explicitly invoked, project-scoped workflow skills for Claude Code, 
 lumen skills install --workspace ~/Projects/engineering-workspace --platform all
 ```
 
-Lumen keeps the canonical packages in `lumen/skills/`; the generated platform adapters are thin pointers. Existing unmanaged adapter files are preserved unless `--force` is supplied.
+Lumen keeps the canonical packages in `lumen/skills/`; the generated platform adapters are thin pointers. Cursor uses the shared `.agents/skills/` adapter installed by `--platform all`, avoiding duplicate command entries. Existing unmanaged adapter files are preserved unless `--force` is supplied.
 
 ## Quick Start
 
