@@ -48,6 +48,13 @@ def changed_files(repo: Path) -> list[str]:
     return files
 
 
+def branch_has_commits(repo: Path, base: str) -> bool:
+    completed = run_git(repo, "rev-list", "--count", f"origin/{base}..HEAD")
+    if completed.returncode != 0:
+        raise RuntimeError(failure_text(completed, "Unable to compare feature branch with base"))
+    return int(completed.stdout.strip() or "0") > 0
+
+
 def commit_subject(result: dict[str, Any], repo_name: str) -> str:
     for item in result.get("repos_touched") or []:
         if isinstance(item, dict) and str(item.get("name", "")) == repo_name:
@@ -176,16 +183,25 @@ def main() -> int:
                 if head.returncode == 0:
                     item["existing_head"] = head.stdout.strip()
 
+            if not branch_has_commits(repo.worktree_path, repo.default_branch):
+                item["publish_status"] = "skipped"
+                item["publish_reason"] = "No commits differ from the base branch"
+                touched.append(item)
+                continue
+
             if args.dry_run:
                 item["pr_url"] = "(dry-run)"
+                item["publish_status"] = "dry_run"
             else:
                 pr_title = subject or f"{context.metadata.get('jiraKey') or context.story_dir.name}: delivery"
                 url = open_pr(repo.worktree_path, context.branch_name, repo.default_branch, pr_title, body)
                 item["pr_url"] = url
+                item["publish_status"] = "pr_open"
                 pr_urls.append(url)
                 if publish_mode == "merge":
                     merge_pr(repo.worktree_path, url)
                     item["merged"] = True
+                    item["publish_status"] = "merged"
             touched.append(item)
 
         result["repos_touched"] = touched

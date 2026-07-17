@@ -2,47 +2,11 @@
 set -euo pipefail
 
 LUMEN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
-
-DOCS_DIR=""
-STORY_REF=""
-DRY_RUN="${LUMEN_DRY_RUN:-0}"
-WORKSPACE_DIR_NAME="lumen"
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --story)
-      STORY_REF="${2:-}"
-      shift 2
-      ;;
-    --dry-run)
-      DRY_RUN="1"
-      shift
-      ;;
-    --*)
-      printf 'Error: unknown option: %s\n' "$1" >&2
-      exit 1
-      ;;
-    *)
-      if [[ -z "${DOCS_DIR}" ]]; then
-        DOCS_DIR="$1"
-      else
-        STORY_REF="$1"
-      fi
-      shift
-      ;;
-  esac
-done
-
-[[ -n "${DOCS_DIR}" ]] || { printf 'Usage: run-delivery.sh <docs-dir> [--story <slug>] [--dry-run]\n' >&2; exit 1; }
-
 if [[ -f "${LUMEN_LIB_DIR}/ensure-path.sh" ]]; then
   # shellcheck source=/dev/null
   source "${LUMEN_LIB_DIR}/ensure-path.sh"
   ensure_lumen_path ""
 fi
-
-DOCS_DIR="$(cd "${DOCS_DIR}" && pwd)"
 
 load_env_file() {
   local file="$1"
@@ -54,36 +18,9 @@ load_env_file() {
   fi
 }
 
-workspace_root_from_docs() {
-  local resolve_py="${LUMEN_LIB_DIR}/resolve_delivery_workspace.py"
-  if [[ -f "${resolve_py}" ]]; then
-    python3 "${resolve_py}" "${DOCS_DIR}"
-    return
-  fi
-  python3 -c "from pathlib import Path
-import json
-docs = Path('${DOCS_DIR}').resolve()
-config = docs / 'lumen' / 'config' / 'workspace.json'
-if not config.is_file():
-    config = docs / '.lumen' / 'config' / 'workspace.json'
-if config.is_file():
-    data = json.loads(config.read_text())
-    root = str(data.get('workspace_root', '')).strip()
-    if root in {'.', './'}:
-        print(str(docs), end='')
-        raise SystemExit(0)
-    if root:
-        print(root, end='')
-        raise SystemExit(0)
-print(str(docs), end='')"
-}
-
-WORKSPACE_ROOT="$(workspace_root_from_docs)"
-if [[ ! -d "${WORKSPACE_ROOT}/${WORKSPACE_DIR_NAME}" && -d "${WORKSPACE_ROOT}/.lumen" ]]; then
-  WORKSPACE_DIR_NAME=".lumen"
-fi
-WORKSPACE_DIR="${WORKSPACE_ROOT}/${WORKSPACE_DIR_NAME}"
-DELIVERY_CONFIG="${WORKSPACE_DIR}/config/delivery.json"
+RUNTIME_PY="${LUMEN_LIB_DIR}/delivery_runtime.py"
+[[ -f "${RUNTIME_PY}" ]] || { printf 'Error: delivery runtime helper not found: %s\n' "${RUNTIME_PY}" >&2; exit 1; }
+eval "$(python3 "${RUNTIME_PY}" "$@")"
 RUN_ID="$(date -u '+%Y%m%d-%H%M%S')"
 LOG_DIR="${WORKSPACE_DIR}/logs/delivery"
 LOG_FILE="${LOG_DIR}/run-${RUN_ID}.log"

@@ -51,6 +51,9 @@ from dashboard_server import (  # noqa: E402
 from capture_jira_context import image_urls, values_for_keys  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
 from auto_fix_sync import extract_pr_url, record_merge_success  # noqa: E402
+from finalize_delivery import branch_has_commits  # noqa: E402
+from run_delivery_verification import java_gradle_steps  # noqa: E402
+from delivery_runtime import runtime_values  # noqa: E402
 
 
 def load_delivery_notification_renderer():
@@ -80,6 +83,57 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_delivery_runtime_parses_flags_and_resolves_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            (docs / "stories").mkdir()
+            (docs / "lumen" / "config").mkdir(parents=True)
+            (docs / "lumen" / "config" / "workspace.json").write_text('{"workspace_root":"."}\n', encoding="utf-8")
+
+            values = runtime_values([str(docs), "--story", "DEMO-1", "--dry-run"])
+
+        self.assertEqual(str(docs.resolve()), values["DOCS_DIR"])
+        self.assertEqual("DEMO-1", values["STORY_REF"])
+        self.assertEqual("1", values["DRY_RUN"])
+        self.assertEqual("lumen", values["WORKSPACE_DIR_NAME"])
+
+    def test_plain_gradle_project_does_not_require_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+
+            steps = java_gradle_steps(repo)
+
+        self.assertFalse(next(step for step in steps if step["id"] == "test_suite")["requires_docker"])
+
+    def test_testcontainers_gradle_project_requires_docker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "build.gradle").write_text("testImplementation 'org.testcontainers:junit-jupiter:1.20.0'\n", encoding="utf-8")
+
+            steps = java_gradle_steps(repo)
+
+        self.assertTrue(next(step for step in steps if step["id"] == "test_suite")["requires_docker"])
+
+    def test_branch_commit_check_ignores_clean_feature_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "service"
+            subprocess.run(["git", "init", "-b", "main", str(repo)], check=True, capture_output=True)
+            git(repo, "config", "user.email", "lumen@example.test")
+            git(repo, "config", "user.name", "Lumen Test")
+            (repo / "README.md").write_text("base\n", encoding="utf-8")
+            git(repo, "add", "README.md")
+            git(repo, "commit", "-m", "initial")
+            git(repo, "remote", "add", "origin", str(repo))
+            git(repo, "fetch", "origin", "main:refs/remotes/origin/main")
+            git(repo, "switch", "-c", "feature/DEMO-1")
+
+            self.assertFalse(branch_has_commits(repo, "main"))
+
+            (repo / "README.md").write_text("changed\n", encoding="utf-8")
+            git(repo, "commit", "-am", "change")
+            self.assertTrue(branch_has_commits(repo, "main"))
+
     def test_pr_url_extraction_rejects_gh_help_and_accepts_pull_request_urls(self) -> None:
         help_output = "Read the manual at https://cli.github.com/manual\n"
         self.assertEqual("", extract_pr_url(help_output))
