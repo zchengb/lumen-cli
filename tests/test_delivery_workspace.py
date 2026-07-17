@@ -38,7 +38,7 @@ from delivery_launchd import interval_minutes_from_cron  # noqa: E402
 from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
 from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  # noqa: E402
-from delivery_progress import print_progress_report  # noqa: E402
+from delivery_progress import print_progress_report, set_phase  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
 from dashboard_server import (  # noqa: E402
     DashboardServer,
@@ -254,6 +254,34 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("2026-07-14T06:00:00Z", current["finished_at"])
             self.assertEqual("passed", current["verification"][0]["status"])
 
+    def test_dashboard_exposes_active_remediation_and_restarts_phase_timer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            lumen = docs / "lumen"
+            results = lumen / "results"
+            results.mkdir(parents=True)
+            progress = {
+                "run_id": "20260718-010000",
+                "delivery_status": "in_progress",
+                "phases": [
+                    {"id": "agent", "status": "completed", "started_at": "2026-07-18T01:00:00Z", "finished_at": "2026-07-18T01:02:00Z"},
+                    {"id": "verification", "status": "failed", "started_at": "2026-07-18T01:02:00Z", "finished_at": "2026-07-18T01:03:00Z", "detail": "Verification failed"},
+                ],
+            }
+            (results / "delivery-progress.json").write_text(json.dumps(progress), encoding="utf-8")
+            (results / "delivery-remediation.json").write_text(json.dumps({"attempt": 2, "max_attempts": 3, "status": "in_progress"}), encoding="utf-8")
+
+            set_phase(docs, "agent", "in_progress", "Remediation attempt 2/3")
+            updated = json.loads((results / "delivery-progress.json").read_text(encoding="utf-8"))
+            agent = next(phase for phase in updated["phases"] if phase["id"] == "agent")
+            self.assertEqual("", agent["finished_at"])
+            self.assertEqual("in_progress", updated["delivery_status"])
+
+            current = delivery_payload(lumen)["current"]
+            self.assertEqual(2, current["remediation"]["attempt"])
+            self.assertEqual("in_progress", next(stage for stage in current["stages"] if stage["id"] == "implement")["status"])
+            self.assertEqual("failed", next(stage for stage in current["stages"] if stage["id"] == "verification")["status"])
+
     def test_dashboard_serves_report_artifacts_without_exposing_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
@@ -278,6 +306,36 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as error:
                     urllib.request.urlopen(f"{base_url}/reports/../config/common.json")
                 self.assertEqual(404, error.exception.code)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_delivery_log_endpoint_returns_live_uncached_content(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            log = workspace / "logs" / "delivery" / "run-live.log"
+            log.parent.mkdir(parents=True)
+            log.write_text("first line\n", encoding="utf-8")
+            (workspace / "results").mkdir()
+            (workspace / "results" / "delivery-progress.json").write_text(
+                json.dumps({"run_id": "live", "delivery_status": "in_progress", "log_file": str(log)}),
+                encoding="utf-8",
+            )
+            (workspace / "config").mkdir()
+            (workspace / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "config" / "repos.json").write_text('{"repositories": []}\n', encoding="utf-8")
+            server = DashboardServer(("127.0.0.1", 0), workspace, "demo", "lumen", str(REPO_ROOT))
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                url = f"http://127.0.0.1:{server.server_port}/api/delivery/log?run_id=live"
+                with urllib.request.urlopen(url) as response:
+                    self.assertEqual("no-store", response.headers["Cache-Control"])
+                    self.assertIn("first line", response.read().decode("utf-8"))
+                log.write_text("first line\nsecond line\n", encoding="utf-8")
+                with urllib.request.urlopen(url) as response:
+                    self.assertIn("second line", response.read().decode("utf-8"))
             finally:
                 server.shutdown()
                 server.server_close()

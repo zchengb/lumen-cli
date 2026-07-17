@@ -506,6 +506,11 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
         current["verification"] = result.get("verification_results") or progress.get("verification") or []
     else:
         current = progress
+    remediation = read_delivery_json(workspace / "results" / "delivery-remediation.json", {})
+    if not remediation and isinstance(result.get("remediation"), dict):
+        remediation = result["remediation"]
+    if remediation:
+        current["remediation"] = remediation
     current["story_title"] = story_title(workspace, result, progress)
     current["stages"] = delivery_stages(current.get("phases"))
     activity_path = workspace / "state" / "delivery-scheduler-activity.jsonl"
@@ -764,6 +769,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

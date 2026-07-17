@@ -124,8 +124,9 @@ def set_phase(
 
     phase = dict(payload["phases"][index])
     now = utc_now()
-    if status == "in_progress" and not phase.get("started_at"):
+    if status == "in_progress" and phase.get("status") not in {"in_progress", "running"}:
         phase["started_at"] = now
+        phase["finished_at"] = ""
     if status in {"completed", "failed", "skipped"}:
         phase["finished_at"] = now
     phase["status"] = status
@@ -137,7 +138,7 @@ def set_phase(
         payload["current_step"] = current_step
     if status == "failed":
         payload["delivery_status"] = "failed"
-    elif status == "in_progress" and payload.get("delivery_status") in {"", "not_started"}:
+    elif status == "in_progress":
         payload["delivery_status"] = "in_progress"
     return save_progress(workspace_root, payload) or payload
 

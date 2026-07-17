@@ -318,6 +318,7 @@ run_remediation_loop() {
       progress_message "Verification passed after remediation attempt ${attempt}/${max_attempts}"
       return 0
     fi
+    progress_phase verification failed "Verification failed after remediation attempt ${attempt}/${max_attempts}"
   done
   return 1
 }
@@ -412,6 +413,7 @@ run_real_delivery() {
   progress_phase verification in_progress "Compile, PMD, unit and integration tests"
   printf '\n[delivery] Phase 5/8 — Verification\n'
   if ! run_verification_profile; then
+    progress_phase verification failed "Verification failed; bounded remediation required"
     if ! run_remediation_loop; then
       progress_phase verification failed "Verification failed after bounded remediation attempts"
       fail "Delivery verification failed after bounded remediation. See log: ${LOG_FILE}"
