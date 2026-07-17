@@ -161,6 +161,27 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         rendered = json.dumps(card)
         self.assertIn("[DEMO-42](https://example.atlassian.net/browse/DEMO-42)", rendered)
 
+    def test_scan_without_findings_skips_report_artifacts(self) -> None:
+        renderer = load_scan_notification_renderer()
+        self.assertFalse(renderer.has_findings({"findings": []}))
+        self.assertTrue(renderer.has_findings({"findings": [{"title": "Demo"}]}))
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            result = workspace / "results" / "scan-result.json"
+            result.parent.mkdir()
+            result.write_text(json.dumps({"started_at": "2026-07-16T04:00:00Z", "findings": []}), encoding="utf-8")
+
+            subprocess.run(
+                [sys.executable, str(SCRIPTS / "render-report-and-notify.py"), str(result)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "FEISHU_WEBHOOK_URL": ""},
+            )
+
+            self.assertEqual("not_generated", json.loads(result.read_text(encoding="utf-8"))["report"]["status"])
+            self.assertFalse((workspace / "reports").exists())
+
     def test_delivery_notification_uses_run_started_at_for_duration(self) -> None:
         renderer = load_delivery_notification_renderer()
         with tempfile.TemporaryDirectory() as temp:

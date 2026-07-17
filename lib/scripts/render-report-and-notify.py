@@ -126,6 +126,10 @@ def severity_counts(findings: list) -> dict:
     return counts
 
 
+def has_findings(scan: dict) -> bool:
+    return bool(scan.get("findings"))
+
+
 def normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
@@ -862,30 +866,25 @@ def main() -> int:
         persist=not dry_run,
     )
 
-    reports_dir.mkdir(parents=True, exist_ok=True)
-    run_stamp = report_run_stamp(result_path, scan)
-    html_path = reports_dir / f"code-quality-security-scan-{run_stamp}.html"
-    pdf_path = reports_dir / f"code-quality-security-scan-{run_stamp}.pdf"
-
-    write_html(scan, html_path)
-    try:
-        engine_used = convert_html_to_pdf(html_path, pdf_path, pdf_engine_preference)
-        if pdf_path.is_file():
-            scan["report"] = {
-                "html_path": str(html_path),
-                "pdf_path": str(pdf_path),
-                "status": "generated",
-                "engine": engine_used,
-            }
-        else:
-            scan["report"] = {
-                "html_path": str(html_path),
-                "pdf_path": None,
-                "status": "pdf_failed",
-                "error": "PDF file was not created by the browser exporter.",
-            }
-    except Exception as exc:
-        scan["report"] = {"html_path": str(html_path), "pdf_path": None, "status": "pdf_failed", "error": redact(str(exc))}
+    scan.setdefault("finished_at", datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"))
+    html_path = None
+    pdf_path = None
+    if has_findings(scan):
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        run_stamp = report_run_stamp(result_path, scan)
+        html_path = reports_dir / f"code-quality-security-scan-{run_stamp}.html"
+        pdf_path = reports_dir / f"code-quality-security-scan-{run_stamp}.pdf"
+        write_html(scan, html_path)
+        try:
+            engine_used = convert_html_to_pdf(html_path, pdf_path, pdf_engine_preference)
+            if pdf_path.is_file():
+                scan["report"] = {"html_path": str(html_path), "pdf_path": str(pdf_path), "status": "generated", "engine": engine_used}
+            else:
+                scan["report"] = {"html_path": str(html_path), "pdf_path": None, "status": "pdf_failed", "error": "PDF file was not created by the browser exporter."}
+        except Exception as exc:
+            scan["report"] = {"html_path": str(html_path), "pdf_path": None, "status": "pdf_failed", "error": redact(str(exc))}
+    else:
+        scan["report"] = {"html_path": None, "pdf_path": None, "status": "not_generated", "reason": "no_findings"}
 
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
     if dry_run:
@@ -900,7 +899,6 @@ def main() -> int:
         except Exception as exc:
             scan["feishu"] = {"status": "failed", "error": redact(str(exc))}
 
-    scan["finished_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     write_json(result_path, scan)
     sync_archived_scan_results(workspace_root, scan)
     dashboard_status = "not_generated"
@@ -914,7 +912,7 @@ def main() -> int:
             dashboard_status = "failed"
             dashboard_error = redact(str(exc))
     print(json.dumps({
-        "html_path": str(html_path),
+        "html_path": scan["report"].get("html_path"),
         "pdf_path": scan["report"].get("pdf_path"),
         "report_status": scan["report"]["status"],
         "dashboard_status": dashboard_status,
