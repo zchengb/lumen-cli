@@ -363,8 +363,6 @@ Usage:
                                  Render the Delivery history dashboard for one workspace
   lumen delivery watch [workspace-dir|--workspace <root>]
                                  Watch the latest delivery log and progress in real time
-  lumen story import <JIRA-KEY> [workspace-dir]
-                                 Import an existing JIRA Story into the workspace
   lumen doctor                  Check that required and optional tools are installed
   lumen config set-webhook <url> [--project <slug>]
                                  Save the Feishu webhook in this workspace's .env.local
@@ -433,43 +431,6 @@ cmd_skills() {
       ;;
     *)
       err "Usage: lumen skills install --workspace <path> --platform claude|cursor|codex|all [--force]"
-      exit 1
-      ;;
-  esac
-}
-
-cmd_story() {
-  local sub="${1:-}"
-  shift || true
-  case "${sub}" in
-    import)
-      local jira_key="" docs_dir="."
-      while [[ $# -gt 0 ]]; do
-        case "$1" in
-          --*) err "Unknown option: $1"; exit 1 ;;
-          *)
-            if [[ -z "${jira_key}" ]]; then jira_key="$1"
-            elif [[ "${docs_dir}" == "." ]]; then docs_dir="$1"
-            else err "Unexpected argument: $1"; exit 1
-            fi
-            shift
-            ;;
-        esac
-      done
-      [[ -n "${jira_key}" ]] || { err "Usage: lumen story import <JIRA-KEY> [workspace-dir]"; exit 1; }
-      local import_py="${LUMEN_LIB_DIR}/import_jira_story.py"
-      [[ -f "${import_py}" ]] || { err "JIRA Story importer not found. Re-run install.sh to repair Lumen."; exit 1; }
-      docs_dir="$(cd "${docs_dir}" 2>/dev/null && pwd)" || { err "Workspace directory not found: ${docs_dir}"; exit 1; }
-      local args=("${docs_dir}" "${jira_key}")
-      python3 "${import_py}" "${args[@]}"
-      ;;
-    ""|help|-h|--help)
-      printf 'Usage:\n'
-      printf '  lumen story import <JIRA-KEY> [workspace-dir]\n'
-      ;;
-    *)
-      err "Unknown story command: ${sub}"
-      printf 'Run: lumen story help\n'
       exit 1
       ;;
   esac
@@ -3271,7 +3232,6 @@ main() {
     config) cmd_config "$@" ;;
     issue) cmd_issue "$@" ;;
     skills) cmd_skills "$@" ;;
-    story) cmd_story "$@" ;;
     upgrade) cmd_upgrade "$@" ;;
     version|-v|--version) cmd_version ;;
     help|-h|--help) cmd_help ;;

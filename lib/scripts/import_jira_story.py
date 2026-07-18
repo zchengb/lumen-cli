@@ -193,10 +193,13 @@ def import_story(docs_dir: Path, jira_key: str) -> Path:
         "jiraImportedAt": now(),
         "jiraSourceUpdatedAt": source_updated_at,
         "jiraSnapshotFile": str(snapshot_path.relative_to(docs_dir)),
-        "jiraSnapshotHash": source_hash,
+        "jiraSnapshotHash": source_hash if not source_changed else previous.get("jiraSnapshotHash", ""),
+        "jiraLatestSnapshotHash": source_hash,
         "jiraStoryHash": previous.get("jiraStoryHash") or digest(story),
         "jiraSyncStatus": "imported" if not previous else "changed" if source_changed else "synced",
-        "businessStatus": "draft" if not previous else "changed" if source_changed else previous.get("businessStatus") or "draft",
+        # A newer Jira copy invalidates the plan, but does not silently revoke the
+        # locally confirmed business contract. The Technical Loop asks which source wins.
+        "businessStatus": "draft" if not previous else previous.get("businessStatus") or "draft",
         "technicalStatus": "draft" if not previous or source_changed else previous.get("technicalStatus") or "draft",
         "deliveryStatus": "not_started" if not previous else previous.get("deliveryStatus") or "not_started",
         "linkedRepos": previous.get("linkedRepos") or [],

@@ -1231,9 +1231,12 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 import_jira_story.import_story(workspace, "DEMO-123")
                 changed = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
                 self.assertEqual("changed", changed["jiraSyncStatus"])
-                self.assertEqual("changed", changed["businessStatus"])
+                self.assertEqual("ready", changed["businessStatus"])
                 self.assertEqual("draft", changed["technicalStatus"])
                 self.assertIn("Existing Jira context.", (story_dir / "story.md").read_text(encoding="utf-8"))
+                import_jira_story.import_story(workspace, "DEMO-123")
+                still_changed = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
+                self.assertEqual("changed", still_changed["jiraSyncStatus"])
             finally:
                 import_jira_story.twg_ready, import_jira_story.run_twg = original_ready, original_run
 

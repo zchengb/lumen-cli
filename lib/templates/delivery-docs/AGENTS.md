@@ -112,9 +112,9 @@ so that <business value>.
 
 ## Existing Jira Story Import And Consistency
 
-For an existing Jira Story, run `lumen story import <JIRA-KEY> [workspace-dir]`. It creates the linked Story folder on first use and records the current Jira payload under `lumen/context/`. On later use it reads Jira again without overwriting `story.md`.
+For an existing Jira Story, invoke the `$lumen-jira-story-import` Agent Skill. It creates the linked Story folder on first use and records the current Jira payload under `lumen/context/`. On later use it reads Jira again without overwriting `story.md`.
 
-Before every Business or Technical Loop, run the import command when `metadata.json.jiraKey` exists. If `metadata.json.jiraSyncStatus` is `changed`, compare the latest snapshot with `story.md`, reconcile it through the Business Loop, and return both business and technical status to draft until the user confirms the updated Story. Never plan or deliver against a changed Jira Story.
+Before every Business or Technical Loop, invoke the import Skill when `metadata.json.jiraKey` exists. If `metadata.json.jiraSyncStatus` is `changed`, the Technical Loop must ask whether to reconcile Jira changes through the Business Loop, keep the local Story, or review the difference. A Jira change invalidates the technical plan but does not silently alter the locally confirmed business status. Only a confirmed reconciliation updates `story.md`; never overwrite it silently.
 
 ## Progressive Questioning Rule
 
