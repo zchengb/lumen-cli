@@ -110,6 +110,12 @@ so that <business value>.
 <relative docs path or repository URL when available>
 ```
 
+## Existing Jira Story Import And Consistency
+
+For an existing Jira Story, run `lumen story import <JIRA-KEY> [workspace-dir]`. It creates the linked Story folder on first use and records the current Jira payload under `lumen/context/`. On later use it reads Jira again without overwriting `story.md`.
+
+Before every Business or Technical Loop, run the import command when `metadata.json.jiraKey` exists. If `metadata.json.jiraSyncStatus` is `changed`, compare the latest snapshot with `story.md`, reconcile it through the Business Loop, and return both business and technical status to draft until the user confirms the updated Story. Never plan or deliver against a changed Jira Story.
+
 ## Progressive Questioning Rule
 
 During the Business Loop, ask clarification questions progressively.

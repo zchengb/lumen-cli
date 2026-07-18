@@ -2,7 +2,7 @@
 
 # Business Loop workflow
 
-Preflight: safely refresh the docs and relevant clean repositories; stop for local changes or non-fast-forward history. Never change application source code.
+Preflight: safely refresh the docs and relevant clean repositories; stop for local changes or non-fast-forward history. For a Story with `metadata.json.jiraKey`, run `lumen story import <JIRA-KEY> <workspace-root>` before reading requirements. If `jiraSyncStatus` is `changed`, compare the current Jira snapshot with `story.md`, ask the user one reconciliation question at a time, then update `story.md` only after confirmation. Never change application source code.
 
 For a Topic, inspect existing stories and repository context, ask one highest-impact business question at a time, and record confirmed answers. Propose Story candidates only when understood. Split by independently understandable and independently verifiable business outcomes: one primary goal, observable outcome, independent verification and delivery (or a stated dependency), explicit boundary, no duplicated business rule, and no unrelated actors/workflows. Split by business outcome, not frontend/backend/database layers unless those separately deliver an outcome. Present title, business goal, acceptance boundary, dependencies, and excluded scope. Do not create folders until the user confirms the split.
 

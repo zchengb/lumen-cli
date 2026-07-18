@@ -1201,7 +1201,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 install_agent_skills(str(workspace), ["claude"], force=False)
 
-    def test_import_jira_story_creates_a_draft_and_protects_local_edits(self) -> None:
+    def test_import_jira_story_creates_a_draft_and_detects_jira_changes(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp) / "workspace"
             (workspace / "stories").mkdir(parents=True)
@@ -1224,13 +1224,16 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 metadata["businessStatus"] = "ready"
                 metadata["technicalStatus"] = "approved"
                 (story_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
-                import_jira_story.import_story(workspace, "DEMO-123", refresh=True)
-                refreshed = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
-                self.assertEqual("ready", refreshed["businessStatus"])
-                self.assertEqual("approved", refreshed["technicalStatus"])
-                (story_dir / "story.md").write_text("# Local edit\n", encoding="utf-8")
-                with self.assertRaises(ValueError):
-                    import_jira_story.import_story(workspace, "DEMO-123", refresh=True)
+                import_jira_story.import_story(workspace, "DEMO-123")
+                unchanged = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
+                self.assertEqual("ready", unchanged["businessStatus"])
+                payload["data"]["fields"]["description"]["content"][0]["content"][0]["text"] = "Changed Jira context."
+                import_jira_story.import_story(workspace, "DEMO-123")
+                changed = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
+                self.assertEqual("changed", changed["jiraSyncStatus"])
+                self.assertEqual("changed", changed["businessStatus"])
+                self.assertEqual("draft", changed["technicalStatus"])
+                self.assertIn("Existing Jira context.", (story_dir / "story.md").read_text(encoding="utf-8"))
             finally:
                 import_jira_story.twg_ready, import_jira_story.run_twg = original_ready, original_run
 

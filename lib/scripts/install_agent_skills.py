@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 MANAGED = "<!-- Lumen managed: agent-skill -->"
-SKILLS = ("lumen-business-loop", "lumen-technical-loop")
+SKILLS = ("lumen-business-loop", "lumen-technical-loop", "lumen-jira-story-import")
 
 
 def project_root(value: str) -> Path:
