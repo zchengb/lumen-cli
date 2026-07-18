@@ -324,8 +324,8 @@ cmd_help() {
 Lumen - illuminate code health across your repositories
 
 Usage:
-  lumen init [dir] [--yes] [--force]  Create one Lumen workspace at <dir>
-                                 Includes scan, delivery docs, shared repos/, Cursor model, and Feishu setup.
+  lumen init [workspace-dir] [--yes] [--force]
+                                 Create one integrated Lumen workspace: stories/, repos/, AGENTS.md, and lumen/.
                                  Pass --yes (or run non-interactively) to skip prompts and use templates.
                                  If a previous init was interrupted, init removes the incomplete
                                  lumen folder and starts again. Use --force to replace a fully
@@ -1622,7 +1622,8 @@ cmd_init() {
     fi
   fi
 
-  printf 'Initializing Lumen workspace at: %s\n' "${lumen_dir}"
+  printf 'Initializing Lumen workspace at: %s\n' "${target}"
+  printf 'Control plane: %s\n' "${lumen_dir}"
 
   mkdir -p "${lumen_dir}/config" "${lumen_dir}/prompts" "${lumen_dir}/tmp" "${lumen_dir}/worktrees" \
     "${lumen_dir}/reports" "${lumen_dir}/results" "${lumen_dir}/logs" "${lumen_dir}/state"
@@ -2690,66 +2691,9 @@ collect_delivery_repositories_interactively() {
   done
 }
 
-cmd_delivery_init_docs() {
-  local target_dir=""
-  local project_name="Delivery Docs"
-  local example_key="DEMO-001"
-  local force="0"
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --project-name|--name)
-        project_name="${2:-}"
-        shift 2
-        ;;
-      --example-key|--key)
-        example_key="${2:-}"
-        shift 2
-        ;;
-      --force)
-        force="1"
-        shift
-        ;;
-      --*)
-        err "Unknown option: $1"
-        exit 1
-        ;;
-      *)
-        target_dir="$1"
-        shift
-        ;;
-    esac
-  done
-
-  if [[ -z "${target_dir}" ]]; then
-    if [[ -t 0 && -t 1 ]]; then
-      read -r -p "Docs folder [delivery-docs]: " target_dir || true
-      target_dir="${target_dir:-delivery-docs}"
-    else
-      target_dir="delivery-docs"
-    fi
-  fi
-
-  local init_py="${LUMEN_HOME}/lib/scripts/init_delivery_docs.py"
-  if [[ ! -f "${init_py}" ]]; then
-    err "Delivery docs initializer not found: ${init_py}"
-    exit 1
-  fi
-  command -v python3 >/dev/null 2>&1 || { err "Python 3 is required for delivery docs initialization."; exit 1; }
-
-  local args=(--target "${target_dir}" --project-name "${project_name}" --example-key "${example_key}")
-  [[ "${force}" == "1" ]] && args+=(--force)
-  python3 "${init_py}" "${args[@]}" || exit 1
-
-  local docs_dir
-  docs_dir="$(cd "${target_dir}" && pwd)"
-  if [[ -t 0 && -t 1 ]]; then
-    collect_delivery_repositories_interactively "${docs_dir}"
-  fi
-}
-
-cmd_set_up_docs() {
-  cmd_delivery_init_docs "$@"
+cmd_legacy_workspace_init() {
+  warn "This command is deprecated. Use: lumen init <workspace-dir>"
+  cmd_init "$@"
 }
 
 cmd_delivery_configure() {
@@ -3084,7 +3028,7 @@ cmd_delivery() {
   local sub="${1:-}"
   shift || true
   case "${sub}" in
-    init-docs) cmd_delivery_init_docs "$@" ;;
+    init-docs) cmd_legacy_workspace_init "$@" ;;
     configure) cmd_delivery_configure "$@" ;;
     dashboard) cmd_delivery_dashboard "$@" ;;
     schedule) cmd_delivery_schedule "$@" ;;
@@ -3224,7 +3168,7 @@ main() {
     register) cmd_register "$@" ;;
     scan) cmd_scan "$@" ;;
     schedule) cmd_schedule "$@" ;;
-    set-up-docs|setup-docs) cmd_set_up_docs "$@" ;;
+    set-up-docs|setup-docs) cmd_legacy_workspace_init "$@" ;;
     delivery) cmd_delivery "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
     watch) cmd_watch "$@" ;;

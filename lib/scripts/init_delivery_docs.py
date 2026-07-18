@@ -84,7 +84,7 @@ def init_docs(
         keep_dir.mkdir(parents=True, exist_ok=True)
         (keep_dir / ".gitkeep").touch()
 
-    print(f"✓ Initialized delivery docs project: {target}")
+    print(f"✓ Initialized Lumen workspace: {target}")
     print(f"✓ Workspace root: {docs_root}")
     print(f"✓ Code repositories directory: {target / 'repos'}")
     print(f"✓ Workspace config: {docs_root / 'lumen' / 'config' / 'workspace.json'}")
@@ -92,12 +92,12 @@ def init_docs(
         print(f"✓ Example story: stories/{story_slug(example_key)}/")
     print("Next:")
     print(f"  cd {target}")
-    print("  Add repositories under repos/; lumen init uses the same directory for scan and delivery")
+    print("  Add repositories under repos/; Scan and Delivery use the same workspace")
     print("  git init  # optional, recommended for team sharing")
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Initialize a Lumen delivery docs project.")
+    parser = argparse.ArgumentParser(description="Initialize Lumen workspace delivery assets.")
     parser.add_argument("--target", required=True)
     parser.add_argument("--project-name", default="Delivery Docs")
     parser.add_argument("--example-key", default="DEMO-001")
