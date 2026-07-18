@@ -124,11 +124,21 @@ def set_phase(
 
     phase = dict(payload["phases"][index])
     now = utc_now()
+    attempts = [item for item in phase.get("attempts", []) if isinstance(item, dict)]
+    if not attempts and phase.get("started_at"):
+        attempts.append({"started_at": phase["started_at"], "finished_at": phase.get("finished_at", "")})
     if status == "in_progress" and phase.get("status") not in {"in_progress", "running"}:
-        phase["started_at"] = now
+        attempts.append({"started_at": now, "finished_at": ""})
+        phase["started_at"] = attempts[0]["started_at"]
         phase["finished_at"] = ""
     if status in {"completed", "failed", "skipped"}:
+        if not attempts:
+            attempts.append({"started_at": phase.get("started_at") or now, "finished_at": now})
+        elif not attempts[-1].get("finished_at"):
+            attempts[-1]["finished_at"] = now
         phase["finished_at"] = now
+    if attempts:
+        phase["attempts"] = attempts
     phase["status"] = status
     if detail:
         phase["detail"] = detail

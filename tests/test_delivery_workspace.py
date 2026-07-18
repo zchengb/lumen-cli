@@ -44,12 +44,14 @@ from dashboard_server import (  # noqa: E402
     DashboardServer,
     clone_repository,
     delivery_payload,
+    delivery_stages,
     repository_branches,
     save_delivery_steps,
     save_publish_policy,
     save_repositories,
 )
 from capture_jira_context import image_urls, values_for_keys  # noqa: E402
+import import_jira_story  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
 from auto_fix_sync import extract_pr_url, record_merge_success  # noqa: E402
 from finalize_delivery import branch_has_commits  # noqa: E402
@@ -281,6 +283,26 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual(2, current["remediation"]["attempt"])
             self.assertEqual("in_progress", next(stage for stage in current["stages"] if stage["id"] == "implement")["status"])
             self.assertEqual("failed", next(stage for stage in current["stages"] if stage["id"] == "verification")["status"])
+
+    def test_phase_attempts_preserve_remediation_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            results = docs / "lumen" / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(json.dumps({
+                "phases": [{"id": "agent", "status": "completed", "started_at": "2026-07-18T01:00:00Z", "finished_at": "2026-07-18T01:02:00Z"}],
+            }), encoding="utf-8")
+            import delivery_progress
+            from unittest.mock import patch
+            with patch.object(delivery_progress, "utc_now", return_value="2026-07-18T01:03:00Z"):
+                set_phase(docs, "agent", "in_progress")
+            with patch.object(delivery_progress, "utc_now", return_value="2026-07-18T01:04:00Z"):
+                set_phase(docs, "agent", "completed")
+            agent = json.loads((results / "delivery-progress.json").read_text(encoding="utf-8"))["phases"][0]
+            self.assertEqual(2, len(agent["attempts"]))
+            stage = next(item for item in delivery_stages([agent]) if item["id"] == "implement")
+            self.assertEqual("3m 00s", stage["duration"])
+            self.assertEqual("active", stage["duration_kind"])
 
     def test_dashboard_serves_report_artifacts_without_exposing_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1165,6 +1187,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             install_agent_skills(str(workspace), ["all"], force=False)
 
             self.assertTrue((workspace / "lumen" / "skills" / "lumen-business-loop" / "references" / "workflow.md").is_file())
+            self.assertTrue((workspace / "lumen" / "skills" / "lumen-jira-story-import" / "SKILL.md").is_file())
             self.assertIn("allow_implicit_invocation: false", (workspace / ".agents" / "openai.yaml").read_text(encoding="utf-8"))
             self.assertFalse((workspace / ".cursor" / "commands" / "lumen-technical-loop.md").exists())
 
@@ -1177,6 +1200,39 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             unmanaged.write_text("my workflow\n", encoding="utf-8")
             with self.assertRaises(FileExistsError):
                 install_agent_skills(str(workspace), ["claude"], force=False)
+
+    def test_import_jira_story_creates_a_draft_and_protects_local_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "workspace"
+            (workspace / "stories").mkdir(parents=True)
+            (workspace / "templates").mkdir()
+            (workspace / "templates" / "technical-plan.md").write_text("# Technical Plan: <Story Title>\n", encoding="utf-8")
+            (workspace / "lumen" / "config").mkdir(parents=True)
+            (workspace / "lumen" / "config" / "common.json").write_text('{"notifications":{"jira":{"site":"example.atlassian.net"}}}\n', encoding="utf-8")
+            payload = {"data": {"key": "DEMO-123", "fields": {"summary": "Imported checkout", "description": {"type": "doc", "content": [{"type": "paragraph", "content": [{"type": "text", "text": "Existing Jira context."}]}]}, "issuetype": {"name": "Story"}, "updated": "2026-07-18T00:00:00Z"}}}
+            original_ready, original_run = import_jira_story.twg_ready, import_jira_story.run_twg
+            import_jira_story.twg_ready = lambda: (True, "")
+            import_jira_story.run_twg = lambda args: (0, json.dumps(payload))
+            try:
+                story_dir = import_jira_story.import_story(workspace, "demo-123")
+                metadata = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
+                self.assertEqual("DEMO-123", metadata["jiraKey"])
+                self.assertEqual("draft", metadata["businessStatus"])
+                self.assertEqual("https://example.atlassian.net/browse/DEMO-123", metadata["jiraUrl"])
+                self.assertIn("Existing Jira context.", (story_dir / "story.md").read_text(encoding="utf-8"))
+                self.assertTrue((workspace / metadata["jiraSnapshotFile"]).is_file())
+                metadata["businessStatus"] = "ready"
+                metadata["technicalStatus"] = "approved"
+                (story_dir / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+                import_jira_story.import_story(workspace, "DEMO-123", refresh=True)
+                refreshed = json.loads((story_dir / "metadata.json").read_text(encoding="utf-8"))
+                self.assertEqual("ready", refreshed["businessStatus"])
+                self.assertEqual("approved", refreshed["technicalStatus"])
+                (story_dir / "story.md").write_text("# Local edit\n", encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    import_jira_story.import_story(workspace, "DEMO-123", refresh=True)
+            finally:
+                import_jira_story.twg_ready, import_jira_story.run_twg = original_ready, original_run
 
     def test_repos_directory_is_shared_with_auto_scan(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

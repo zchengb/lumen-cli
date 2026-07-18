@@ -404,6 +404,29 @@ def delivery_duration(started_at: object, finished_at: object) -> str:
     return f"{seconds // 60}m {seconds % 60:02d}s"
 
 
+def phase_intervals(phase: dict[str, Any]) -> tuple[list[tuple[datetime, datetime]], bool]:
+    attempts = phase.get("attempts")
+    if isinstance(attempts, list):
+        intervals = [
+            (start, finish)
+            for item in attempts
+            if isinstance(item, dict)
+            for start, finish in [(parse_delivery_timestamp(item.get("started_at")), parse_delivery_timestamp(item.get("finished_at")))]
+            if start and finish and finish >= start
+        ]
+        return intervals, True
+    start = parse_delivery_timestamp(phase.get("started_at"))
+    finish = parse_delivery_timestamp(phase.get("finished_at"))
+    return ([(start, finish)] if start and finish and finish >= start else []), False
+
+
+def intervals_duration(intervals: list[tuple[datetime, datetime]]) -> str:
+    seconds = sum(int((finish - start).total_seconds()) for start, finish in intervals)
+    if seconds < 60:
+        return f"{seconds}s"
+    return f"{seconds // 60}m {seconds % 60:02d}s"
+
+
 def story_title(workspace: Path, delivery: dict[str, Any], progress: dict[str, Any]) -> str:
     story_path = str(delivery.get("story_path") or progress.get("story_path") or "").strip()
     embedded_title = str(delivery.get("story_title") or progress.get("story_title") or "").strip()
@@ -441,10 +464,10 @@ def delivery_stages(phases: object) -> list[dict[str, Any]]:
             status = "completed"
         else:
             status = "pending"
-        starts = [parse_delivery_timestamp(phase.get("started_at")) for phase in matched]
-        finishes = [parse_delivery_timestamp(phase.get("finished_at")) for phase in matched]
-        starts = [value for value in starts if value]
-        finishes = [value for value in finishes if value]
+        interval_sets = [phase_intervals(phase) for phase in matched]
+        intervals = [interval for values, _ in interval_sets for interval in values]
+        starts = [start for start, _ in intervals]
+        finishes = [finish for _, finish in intervals]
         started_at = min(starts).isoformat().replace("+00:00", "Z") if starts else ""
         finished_at = max(finishes).isoformat().replace("+00:00", "Z") if finishes else ""
         detail = " · ".join(dict.fromkeys(str(phase.get("detail") or "").strip() for phase in matched if phase.get("detail")))
@@ -454,7 +477,8 @@ def delivery_stages(phases: object) -> list[dict[str, Any]]:
             "status": status,
             "started_at": started_at,
             "finished_at": finished_at,
-            "duration": delivery_duration(started_at, finished_at),
+            "duration": intervals_duration(intervals) if intervals else "—",
+            "duration_kind": "active" if matched and all(has_attempts for _, has_attempts in interval_sets) else "span",
             "detail": detail,
         })
     return stages
@@ -491,7 +515,7 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
                     "pull_requests": pull_requests,
                     "verification": delivery.get("verification_results") or progress.get("verification") or [],
                     "started_at": progress.get("started_at") or delivery.get("started_at") or "",
-                    "finished_at": delivery.get("finished_at") or progress.get("finished_at") or "",
+                    "finished_at": progress.get("finished_at") or delivery.get("finished_at") or "",
                     "log_file": item.get("log_file") or progress.get("log_file") or "",
                 }
             )
@@ -501,7 +525,7 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     if str(result.get("delivery_status") or "") in terminal_states:
         current = {**progress, **result}
         current["started_at"] = progress.get("started_at") or result.get("started_at") or ""
-        current["finished_at"] = result.get("finished_at") or progress.get("finished_at") or ""
+        current["finished_at"] = progress.get("finished_at") or result.get("finished_at") or ""
         current["current_phase"] = "completed" if result.get("delivery_status") == "completed" else result.get("delivery_status")
         current["verification"] = result.get("verification_results") or progress.get("verification") or []
     else:
