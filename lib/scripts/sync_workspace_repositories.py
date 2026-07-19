@@ -10,10 +10,11 @@ from typing import Any
 
 from discover_repos import discover
 from delivery_workspace import read_json, workspace_lumen_dir, write_json
+from visual_delivery import detect_runtime
 
 
 def scan_entry(repo: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]:
-    return {
+    entry = {
         "name": repo["name"],
         "path": repo["path"],
         "default_branch": repo.get("default_branch") or "main",
@@ -22,6 +23,16 @@ def scan_entry(repo: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]
         "allow_auto_fix": existing.get("allow_auto_fix", True),
         "allow_pr": existing.get("allow_pr", True),
     }
+    if isinstance(existing.get("runtime"), dict):
+        entry["runtime_profile"] = existing.get("runtime_profile", entry["runtime_profile"])
+        entry["runtime"] = existing["runtime"]
+        entry["runtime_status"] = existing.get("runtime_status", "incomplete")
+    else:
+        detected = detect_runtime(Path(repo["path"]))
+        if detected:
+            entry["runtime_profile"], values = detected
+            entry.update(values)
+    return entry
 
 
 def sync(workspace_root: Path) -> list[dict[str, Any]]:

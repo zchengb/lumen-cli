@@ -445,6 +445,14 @@ def validate_story_gates(
         errors.append(f"technical-plan.md not found: {technical_plan}")
     elif technical_plan.stat().st_size < 80:
         errors.append("technical-plan.md is too short to be implementation-ready")
+    else:
+        from visual_delivery import validate_contract, visual_contract
+
+        contract = visual_contract(technical_plan)
+        if contract:
+            missing = validate_contract(contract)
+            if missing:
+                errors.append("Visual Delivery Contract is incomplete: " + ", ".join(missing))
     return errors
 
 

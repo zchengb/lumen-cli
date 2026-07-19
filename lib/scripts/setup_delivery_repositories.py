@@ -12,6 +12,7 @@ from typing import Any
 
 from discover_repos import infer_profile
 from delivery_workspace import read_json, workspace_lumen_dir, write_json, workspace_config_path
+from visual_delivery import detect_runtime
 
 
 def repos_dir_for_docs(docs_dir: Path, workspace_config: dict[str, Any]) -> Path:
@@ -74,9 +75,17 @@ def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str
         "allow_auto_fix": True,
         "allow_pr": True,
     }
+    detected = detect_runtime(repo_path)
+    if detected:
+        entry["runtime_profile"], values = detected
+        entry.update(values)
     updated = False
     for index, item in enumerate(repositories):
         if isinstance(item, dict) and str(item.get("name", "")).strip() == name:
+            if isinstance(item.get("runtime"), dict):
+                entry["runtime_profile"] = item.get("runtime_profile", entry["runtime_profile"])
+                entry["runtime"] = item["runtime"]
+                entry["runtime_status"] = item.get("runtime_status", "incomplete")
             repositories[index] = entry
             updated = True
             break

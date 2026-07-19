@@ -131,6 +131,24 @@ def update_result(path: Path, payload: dict[str, Any]) -> None:
     write_json(path, payload)
 
 
+def visual_pr_summary(result: dict[str, Any]) -> str:
+    visual = result.get("visual_verification")
+    if not isinstance(visual, dict):
+        return ""
+    lines = ["\n\n## Visual Verification\n", "| Screen | State | Platform | Result | Difference |", "|---|---|---|---|---|"]
+    for item in visual.get("results", []):
+        if not isinstance(item, dict):
+            continue
+        ratio = item.get("difference_ratio")
+        difference = f"{float(ratio):.2%}" if isinstance(ratio, (int, float)) else "N/A"
+        lines.append(
+            f"| {item.get('screen', '')} | {item.get('state', '')} | {item.get('platform', '')} | "
+            f"{str(item.get('status', '')).title()} | {difference} |"
+        )
+    lines.append("\nReference, implementation, and diff images are retained in Lumen delivery history.")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("docs_dir")
@@ -154,6 +172,9 @@ def main() -> int:
             raise RuntimeError("Delivery publish mode must be 'pr' or 'merge'")
         if str(result.get("delivery_status", "")).strip() not in {"completed", "ready_for_finalize"}:
             raise RuntimeError("Agent result must be completed or ready_for_finalize before finalization")
+        visual = result.get("visual_verification")
+        if isinstance(visual, dict) and visual.get("status") != "passed":
+            raise RuntimeError("Mandatory Visual Delivery has not passed; PR creation is blocked")
 
         commits: list[dict[str, str]] = []
         pr_urls: list[str] = []
@@ -162,7 +183,7 @@ def main() -> int:
             f"Story: {context.metadata.get('title') or context.story_dir.name}\n\n"
             f"JIRA: {context.metadata.get('jiraUrl') or context.metadata.get('jiraKey') or 'Not linked'}\n\n"
             "Verification is recorded by Lumen in the delivery result."
-        )
+        ) + visual_pr_summary(result)
 
         for repo in context.repos:
             ensure_branch(repo.worktree_path, context.branch_name)

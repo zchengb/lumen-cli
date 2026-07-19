@@ -172,6 +172,55 @@ Plan tests based on the actual repository setup. Include unit tests, integration
 |---|---|---|---|---|
 | TBD | TBD | TBD | TBD | TBD |
 
+<!-- Remove these comment markers for a UI Story, then complete every cell.
+
+## Visual Delivery Contract
+
+Omit this section for non-UI Stories. A UI plan cannot be approved while any required cell remains `TBD`.
+
+### Design Source
+
+| Screen | Figma file | Node ID | Approved reference |
+|---|---|---|---|
+| TBD | TBD | TBD | `assets/TBD.png` |
+
+### Runtime
+
+| Property | Value |
+|---|---|
+| Repository | TBD |
+| Runtime profile | TBD |
+| Platform | TBD |
+| Device | TBD |
+| Navigation | TBD |
+| Authentication | TBD |
+
+### Visual State Matrix
+
+| Screen | State | Fixture | Reference | Stable marker |
+|---|---|---|---|---|
+| TBD | Default | TBD | `assets/TBD.png` | TBD |
+
+### Figma-to-Code Component Mapping
+
+| Figma component | Existing implementation | Delivery action |
+|---|---|---|
+| TBD | TBD | Reuse / Extend / Create local Story component |
+
+### Platform Rules
+
+- Reuse existing tokens and styling conventions.
+- Settle animations and mask only explicitly approved dynamic areas.
+- Preserve accessibility, responsive behavior, and platform safe areas.
+
+### Visual Verification
+
+| Screen | State | Comparison | Maximum difference |
+|---|---|---|---|
+| TBD | Default | Full content area | `1%` |
+
+-->
+
 ## Observability And Support
 
 | Area | Plan |

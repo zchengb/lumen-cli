@@ -7,7 +7,21 @@
       "runtime_profile": "local-java-review-only",
       "validation_commands": [],
       "allow_auto_fix": true,
-      "allow_pr": true
+      "allow_pr": true,
+      "runtime_status": "incomplete",
+      "runtime": {
+        "platform": "web",
+        "package_manager": "pnpm",
+        "install_command": "pnpm install --frozen-lockfile",
+        "start_command": "pnpm dev --host 127.0.0.1",
+        "base_url": "http://127.0.0.1:5173",
+        "ready_url": "http://127.0.0.1:5173",
+        "ready_timeout_seconds": 60,
+        "browser": "chromium",
+        "auth_strategy": "playwright-storage-state",
+        "auth_storage_state_env": "LUMEN_VISUAL_STORAGE_STATE",
+        "fixture_strategy": "mock-server"
+      }
     },
     {
       "name": "web-or-mobile-app",

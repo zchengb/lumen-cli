@@ -326,6 +326,27 @@ run_verification_profile() {
   return "${verify_exit}"
 }
 
+visual_failure_is_remediable() {
+  python3 - "${RESULT_FILE}" <<'PY'
+import json
+import sys
+
+try:
+    payload = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(0)
+visual = payload.get("visual_verification")
+if not isinstance(visual, dict) or visual.get("status") != "failed":
+    raise SystemExit(0)
+categories = {
+    item.get("failure_category")
+    for item in visual.get("results", [])
+    if isinstance(item, dict) and item.get("status") == "failed"
+}
+raise SystemExit(0 if categories == {"visual_difference"} else 1)
+PY
+}
+
 run_remediation_loop() {
   local max_attempts
   max_attempts="$(remediation_max_attempts)"
@@ -455,6 +476,9 @@ run_real_delivery() {
   printf '\n[delivery] Phase 5/8 — Verification\n'
   if ! run_verification_profile; then
     progress_phase verification failed "Verification failed; bounded remediation required"
+    if ! visual_failure_is_remediable; then
+      fail "Visual Delivery failed outside UI comparison; fix runtime/authentication/fixture/navigation readiness and retry. See log: ${LOG_FILE}"
+    fi
     if ! run_remediation_loop; then
       progress_phase verification failed "Verification failed after bounded remediation attempts"
       fail "Delivery verification failed after bounded remediation. See log: ${LOG_FILE}"

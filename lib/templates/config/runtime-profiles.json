@@ -63,6 +63,25 @@
     "validation": "skipped_by_policy",
     "auto_fix_policy": "high_only_pr_allowed_without_local_validation"
   },
+  "web-visual": {
+    "runner": "local",
+    "language": "javascript",
+    "install_strategy": "runtime_config",
+    "allowed_commands": [],
+    "blocked_command_patterns": ["install", "build", "publish", "deploy", "release"],
+    "validation": "delivery_visual_runtime",
+    "auto_fix_policy": "high_only_pr_allowed_after_delivery_verification"
+  },
+  "react-native-ios-visual": {
+    "runner": "local",
+    "language": "javascript",
+    "install_strategy": "runtime_config",
+    "allowed_commands": [],
+    "blocked_command_patterns": ["install", "build", "publish", "deploy", "release"],
+    "native_build": "preinstalled_debug_app",
+    "validation": "delivery_visual_runtime",
+    "auto_fix_policy": "high_only_pr_allowed_after_delivery_verification"
+  },
   "local-generic-review-only": {
     "runner": "local",
     "language": "generic",

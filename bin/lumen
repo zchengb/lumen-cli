@@ -749,6 +749,11 @@ except Exception:
     fi
   fi
 
+  if [[ -n "${workspace}" && -f "${LUMEN_LIB_DIR}/visual_delivery.py" ]] && command -v python3 >/dev/null 2>&1; then
+    printf '\n%sVisual Delivery readiness%s\n' "${BOLD}" "${RESET}"
+    python3 "${LUMEN_LIB_DIR}/visual_delivery.py" doctor --workspace-root "${workspace}" || true
+  fi
+
   if [[ -n "${workspace}" && -f "${LUMEN_LIB_DIR}/agent_trace.py" ]] && command -v python3 >/dev/null 2>&1; then
     printf '\n%sAgent Trace readiness%s\n' "${BOLD}" "${RESET}"
     python3 "${LUMEN_LIB_DIR}/agent_trace.py" doctor --workspace-root "${workspace}" || true
@@ -1681,6 +1686,7 @@ cmd_init() {
     sed -i.bak "s#\"workspace_root\": \"\"#\"workspace_root\": \"$(sed_escape_replacement "${target}/repos")\"#" "${noninteractive_common}"
     rm -f "${noninteractive_common}.bak"
     sync_integrated_scan_repositories "${target}" || exit 1
+    python3 "${LUMEN_LIB_DIR}/visual_delivery.py" detect --workspace-root "${target}" >/dev/null || true
     ok "Workspace created (non-interactive)."
     try_register_project "${lumen_dir}" "$(workspace_display_name "${lumen_dir}")"
     cat <<EOF
@@ -1745,6 +1751,9 @@ EOF
     fi
     printf ']\n}\n'
   } > "${lumen_dir}/config/repos.json"
+
+  python3 "${LUMEN_LIB_DIR}/visual_delivery.py" detect --workspace-root "${target}" >/dev/null || \
+    warn "Runtime detection failed; edit ${lumen_dir}/config/repos.json and run lumen doctor."
 
   if [[ -n "${webhook}" ]]; then
     write_workspace_webhook "${lumen_dir}" "${webhook}"

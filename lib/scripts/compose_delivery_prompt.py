@@ -14,6 +14,7 @@ from delivery_workspace import (
     read_json,
     workspace_lumen_dir,
 )
+from visual_delivery import visual_contract
 
 
 def lumen_home() -> Path:
@@ -43,9 +44,15 @@ def compose_snippets(context: StoryContext | None = None) -> str:
         raise FileNotFoundError(f"Delivery prompt manifest not found: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     snippets = manifest.get("snippets", [])
+    if context is not None and visual_contract(context.technical_plan) is not None and "05-visual-delivery.md" not in snippets:
+        snippets = [*snippets, "05-visual-delivery.md"]
     parts: list[str] = []
     for name in snippets:
+        if name == "05-visual-delivery.md" and (context is None or visual_contract(context.technical_plan) is None):
+            continue
         snippet_path = prompts_dir / name
+        if name == "05-visual-delivery.md" and not snippet_path.is_file():
+            snippet_path = lumen_home() / "templates" / "prompts" / "delivery" / name
         if not snippet_path.is_file():
             raise FileNotFoundError(f"Delivery prompt snippet not found: {snippet_path}")
         parts.append(snippet_path.read_text(encoding="utf-8").strip())
