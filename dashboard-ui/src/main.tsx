@@ -318,8 +318,7 @@ function DeliveryFlow({ stages, deliveryStatus, startedAt, finishedAt, remediati
     const rawStatus = String(stage.status || "pending").toLowerCase();
     const state = terminalSuccess || rawStatus === "completed" ? "completed" : /running|progress/.test(rawStatus) ? "running" : /fail|block/.test(rawStatus) ? "failed" : "pending";
     const duration = state === "running" ? elapsed(stage.started_at, new Date(now).toISOString()) : stage.duration || "Pending";
-    const shownDuration = `${duration}${stage.duration_kind === "span" && duration !== "Pending" ? " span" : ""}`;
-    const caption = retrying && state === "running" && ["implement", "verification"].includes(stage.id) ? `Retry ${retry} · ${shownDuration}` : retrying && stage.id === "verification" && state === "failed" ? `Failed · remediation ${retry}` : state === "failed" ? "Needs attention" : shownDuration;
+    const caption = retrying && state === "running" && ["implement", "verification"].includes(stage.id) ? `Retry ${retry} · ${duration}` : retrying && stage.id === "verification" && state === "failed" ? `Failed · remediation ${retry}` : state === "failed" ? "Needs attention" : duration;
     return <li className={`flow-step ${state}`} key={`${stage.label}-${index}`}><button className="flow-stage-button" onClick={() => onStageClick(stage)}><span className="flow-marker">{state === "completed" ? "✓" : state === "running" ? <span className="pulse-dot" /> : index + 1}</span><span className="flow-copy"><strong>{text(stage.label)}</strong><span>{caption}</span></span></button></li>;
   })}</ol></div></div>;
 }
