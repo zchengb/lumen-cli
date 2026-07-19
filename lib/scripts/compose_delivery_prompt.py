@@ -110,6 +110,15 @@ Delivery result file: {delivery_result_path(context.workspace_root)}
 """
 
 
+def visual_iteration_block(context: StoryContext) -> str:
+    if visual_contract(context.technical_plan) is None:
+        return ""
+    return f"""# Visual Iteration
+
+When visual feedback is useful, operate the device and request a visual session on demand. Lumen bootstraps the runtime only for that request; inspect the resulting screenshot and evidence yourself, then make the smallest correction. The final delivery verification still runs the complete matrix.
+"""
+
+
 def delivery_remediation_path(result_path: Path) -> Path:
     return result_path.with_name("delivery-remediation.json")
 
@@ -175,7 +184,7 @@ The previous implementation already exists in the feature worktrees. Do not rest
 
 
 def compose_delivery_prompt(context: StoryContext, remediation: bool = False) -> str:
-    prompt = compose_snippets(context) + "\n\n" + render_context_block(context)
+    prompt = compose_snippets(context) + "\n\n" + render_context_block(context) + "\n\n" + visual_iteration_block(context)
     if remediation:
         prompt += "\n\n" + remediation_context_block(context)
     return prompt + "\n"

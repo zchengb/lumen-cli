@@ -95,6 +95,7 @@ def visual_contract(path: Path) -> dict[str, Any] | None:
                 "fixture": row.get("Fixture", ""),
                 "reference": row.get("Reference", ""),
                 "stable_marker": row.get("Stable marker", ""),
+                "maestro_flow": row.get("Maestro flow", ""),
                 "comparison": check.get("Comparison", "Full content area"),
                 "maximum_difference_ratio": ratio,
                 "maximum_difference": threshold,
@@ -142,6 +143,13 @@ def validate_contract(contract: dict[str, Any]) -> list[str]:
     if absent(contract.get("platform_rules")):
         missing.append("platform-specific behavior")
     return missing
+
+
+def matching_scenarios(contract: dict[str, Any] | None, screen: str = "", state: str = "") -> list[dict[str, Any]]:
+    return [
+        item for item in (contract or {}).get("scenarios", [])
+        if (not screen or item.get("screen") == screen) and (not state or item.get("state") == state)
+    ]
 
 
 def package_manager(repo: Path) -> str:
@@ -320,6 +328,45 @@ def fixture_auth_ready(runtime: dict[str, Any], env: dict[str, str]) -> bool:
     return bool(resolve_visual_auth_credential(runtime, env))
 
 
+def dependencies_installed(repo: Path) -> bool:
+    return (repo / "node_modules").is_dir()
+
+
+def configured_node_version(repo: Path, runtime: dict[str, Any]) -> str:
+    configured = str(runtime.get("node_version", "")).strip()
+    if configured:
+        return configured
+    for name in (".nvmrc", ".node-version"):
+        path = repo / name
+        if path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def runtime_command(repo: Path, runtime: dict[str, Any], command: str) -> list[str]:
+    version = configured_node_version(repo, runtime)
+    if not version:
+        return shlex.split(command)
+    nvm_dir = Path(os.environ.get("NVM_DIR", Path.home() / ".nvm"))
+    nvm = nvm_dir / "nvm.sh"
+    if not nvm.is_file():
+        raise EnvironmentError(f"Node {version} is required but nvm.sh was not found; set NVM_DIR or install nvm")
+    return ["bash", "-lc", f"source {shlex.quote(str(nvm))} && nvm install {shlex.quote(version)} >/dev/null && nvm exec {shlex.quote(version)} bash -lc {shlex.quote(command)}"]
+
+
+def ensure_dependencies(repo: Path, runtime: dict[str, Any], env: dict[str, str]) -> None:
+    if dependencies_installed(repo):
+        return
+    command = str(runtime.get("install_command", "")).strip()
+    if not command:
+        raise EnvironmentError("dependencies are missing and install_command is not configured")
+    print(f"[visual] Installing dependencies in {repo}", flush=True)
+    installed = subprocess.run(runtime_command(repo, runtime, command), cwd=repo, env=env, check=False, capture_output=True, text=True)
+    if installed.returncode != 0:
+        detail = redact((installed.stderr or installed.stdout or "dependency install failed").strip(), env)
+        raise EnvironmentError(detail[-500:])
+
+
 def prepare_web_auth_storage(
     repo: Path,
     runtime: dict[str, Any],
@@ -399,8 +446,6 @@ def doctor(workspace_root: Path) -> int:
             repo = Path(str(item.get("path", ""))).expanduser()
             if not repo.is_absolute():
                 repo = (workspace_root / repo).resolve()
-            if not (repo / "node_modules" / "playwright").exists() and not (repo / "node_modules" / "@playwright" / "test").exists():
-                problems.append("Playwright dependencies are not installed in the repository")
             if runtime.get("auth_strategy") == "playwright-storage-state":
                 env = dict(os.environ)
                 if not web_auth_ready(runtime, env):
@@ -436,6 +481,10 @@ def doctor(workspace_root: Path) -> int:
                 problems.append("bundle_id is missing")
             if not runtime.get("deep_link_scheme"):
                 problems.append("deep_link_scheme is missing")
+            ios = runtime.get("ios") if isinstance(runtime.get("ios"), dict) else {}
+            for key in ("build_command", "app_path"):
+                if not ios.get(key):
+                    problems.append(f"ios.{key} is missing")
             if not runtime.get("maestro_flow") and not runtime.get("settle_seconds"):
                 problems.append("maestro_flow or an explicit settle_seconds fallback is missing")
         if not runtime.get("fixture_strategy"):
@@ -461,13 +510,42 @@ def doctor(workspace_root: Path) -> int:
     return 1 if failed else 0
 
 
-def run_owned(command: str, cwd: Path, env: dict[str, str], processes: list[subprocess.Popen[str]]) -> subprocess.Popen[str]:
+def run_owned(command: str, cwd: Path, env: dict[str, str], processes: list[subprocess.Popen[str]], runtime: dict[str, Any] | None = None) -> subprocess.Popen[str]:
     process = subprocess.Popen(
-        shlex.split(command), cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        runtime_command(cwd, runtime, command) if runtime else shlex.split(command), cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         text=True, start_new_session=True,
     )
     processes.append(process)
     return process
+
+
+def ensure_ios_app(repo: Path, runtime: dict[str, Any], env: dict[str, str]) -> None:
+    ios = runtime.get("ios") if isinstance(runtime.get("ios"), dict) else {}
+    device, bundle_id = str(ios.get("device", "")), str(runtime.get("bundle_id", ""))
+    build, app_path = str(ios.get("build_command", "")), str(ios.get("app_path", ""))
+    if not device or not bundle_id or not build or not app_path:
+        raise EnvironmentError("iOS visual runtime requires device, bundle_id, ios.build_command, and ios.app_path")
+    subprocess.run(["xcrun", "simctl", "boot", device], check=False, capture_output=True, text=True)
+    boot = subprocess.run(["xcrun", "simctl", "bootstatus", device, "-b"], check=False, capture_output=True, text=True)
+    if boot.returncode != 0:
+        raise EnvironmentError(redact((boot.stderr or boot.stdout).strip(), env))
+    installed = subprocess.run(["xcrun", "simctl", "get_app_container", device, bundle_id], check=False, capture_output=True, text=True)
+    if installed.returncode == 0:
+        return
+    pods = str(ios.get("pod_install_command", "")).strip()
+    if pods:
+        prepared = subprocess.run(shlex.split(pods), cwd=repo, env=env, check=False, capture_output=True, text=True)
+        if prepared.returncode != 0:
+            raise EnvironmentError(redact((prepared.stderr or prepared.stdout or "pod install failed").strip(), env)[-500:])
+    built = subprocess.run(shlex.split(build), cwd=repo, env=env, check=False, capture_output=True, text=True)
+    if built.returncode != 0:
+        raise EnvironmentError(redact((built.stderr or built.stdout or "iOS build failed").strip(), env)[-500:])
+    app = repo / app_path
+    if not app.is_dir():
+        raise EnvironmentError(f"iOS build did not produce {app}")
+    deployed = subprocess.run(["xcrun", "simctl", "install", device, str(app)], check=False, capture_output=True, text=True)
+    if deployed.returncode != 0:
+        raise EnvironmentError(redact((deployed.stderr or deployed.stdout).strip(), env))
 
 
 def wait_ready(url: str, timeout: int, process: subprocess.Popen[str] | None = None) -> None:
@@ -589,7 +667,13 @@ def stage_result(category: str, detail: str, scenario: dict[str, Any]) -> dict[s
     return {**scenario, "status": "failed", "failure_category": category, "summary": detail, "stages": stages}
 
 
-def execute(context: StoryContext, result_path: Path) -> list[dict[str, Any]]:
+def execute(
+    context: StoryContext,
+    result_path: Path,
+    scenarios: list[dict[str, Any]] | None = None,
+    runtime_env: dict[str, str] | None = None,
+    runtime_running: bool = False,
+) -> list[dict[str, Any]]:
     contract = visual_contract(context.technical_plan)
     if not contract:
         return []
@@ -598,13 +682,13 @@ def execute(context: StoryContext, result_path: Path) -> list[dict[str, Any]]:
     repo_target = next((repo for repo in context.repos if repo.name == repo_name), None)
     config_items = read_json(repos_config(context.workspace_root), {}).get("repositories", [])
     repo_config = next((item for item in config_items if isinstance(item, dict) and item.get("name") == repo_name), None)
-    scenarios = contract.get("scenarios", [])
+    scenarios = scenarios if scenarios is not None else contract.get("scenarios", [])
     if not repo_target or not repo_config or not isinstance(repo_config.get("runtime"), dict):
         results = [stage_result("environment_failed", f"runtime configuration not found for {repo_name}", item) for item in scenarios]
         merge_visual_result(result_path, runtime_contract.get("runtime_profile", ""), results)
         return results
     runtime = repo_config["runtime"]
-    env = dict(os.environ)
+    env = runtime_env if runtime_env is not None else dict(os.environ)
     processes: list[subprocess.Popen[str]] = []
     def cleanup() -> None:
         for process in reversed(processes):
@@ -625,25 +709,23 @@ def execute(context: StoryContext, result_path: Path) -> list[dict[str, Any]]:
     try:
         if repo_config.get("runtime_status") != "ready":
             raise EnvironmentError("repository runtime_status is not ready; run lumen doctor")
-        fixture_start = str(runtime.get("fixture_start_command", ""))
-        if fixture_start:
-            run_owned(fixture_start, repo_target.worktree_path, env, processes)
-        platform = str(runtime.get("platform", ""))
-        if platform == "web":
-            server = run_owned(str(runtime.get("start_command", "")), repo_target.worktree_path, env, processes)
-            wait_ready(str(runtime.get("ready_url", "")), int(runtime.get("ready_timeout_seconds", 60)), server)
-            if runtime.get("auth_strategy") == "playwright-storage-state":
-                prepare_web_auth_storage(
-                    repo_target.worktree_path,
-                    runtime,
-                    env,
-                    evidence / "web-auth-storage.json",
-                )
-        elif platform == "react-native":
-            metro = run_owned(str(runtime.get("metro_command", "")), repo_target.worktree_path, env, processes)
-            wait_ready(str(runtime.get("ready_url", "http://127.0.0.1:8081/status")), int(runtime.get("ready_timeout_seconds", 120)), metro)
-        else:
-            raise EnvironmentError(f"unsupported visual platform: {platform}")
+        if not runtime_running:
+            ensure_dependencies(repo_target.worktree_path, runtime, env)
+            fixture_start = str(runtime.get("fixture_start_command", ""))
+            if fixture_start:
+                run_owned(fixture_start, repo_target.worktree_path, env, processes)
+            platform = str(runtime.get("platform", ""))
+            if platform == "web":
+                server = run_owned(str(runtime.get("start_command", "")), repo_target.worktree_path, env, processes, runtime)
+                wait_ready(str(runtime.get("ready_url", "")), int(runtime.get("ready_timeout_seconds", 60)), server)
+                if runtime.get("auth_strategy") == "playwright-storage-state":
+                    prepare_web_auth_storage(repo_target.worktree_path, runtime, env, evidence / "web-auth-storage.json")
+            elif platform == "react-native":
+                ensure_ios_app(repo_target.worktree_path, runtime, env)
+                metro = run_owned(str(runtime.get("metro_command", "")), repo_target.worktree_path, env, processes, runtime)
+                wait_ready(str(runtime.get("ready_url", "http://127.0.0.1:8081/status")), int(runtime.get("ready_timeout_seconds", 120)), metro)
+            else:
+                raise EnvironmentError(f"unsupported visual platform: {platform}")
     except (OSError, ValueError, TimeoutError) as exc:
         runtime_error = str(exc)
 
@@ -679,7 +761,7 @@ def execute(context: StoryContext, result_path: Path) -> list[dict[str, Any]]:
                 if installed.returncode != 0: raise EnvironmentError("configured debug app is not installed on the simulator")
                 opened = subprocess.run(["xcrun", "simctl", "openurl", device, str(scenario["navigation"])], check=False, capture_output=True, text=True)
                 if opened.returncode != 0: raise ConnectionError(redact((opened.stderr or opened.stdout).strip(), env))
-                flow = str(runtime.get("maestro_flow", ""))
+                flow = str(scenario.get("maestro_flow") or runtime.get("maestro_flow", ""))
                 if flow:
                     checked = subprocess.run(["maestro", "test", flow], cwd=repo_target.worktree_path, check=False, capture_output=True, text=True)
                     if checked.returncode != 0: raise TimeoutError(redact((checked.stderr or checked.stdout).strip(), env))
@@ -736,7 +818,26 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("detect", "doctor"):
         command = sub.add_parser(name); command.add_argument("--workspace-root", required=True)
+    check = sub.add_parser("check", help="Capture and compare one visual contract state.")
+    check.add_argument("--docs-dir", required=True)
+    check.add_argument("--story", default="")
+    check.add_argument("--screen", default="")
+    check.add_argument("--state", default="")
     args = parser.parse_args()
+    if args.command == "check":
+        from delivery_workspace import load_story_context
+
+        context = load_story_context(Path(args.docs_dir), args.story)
+        scenarios = matching_scenarios(visual_contract(context.technical_plan), args.screen, args.state)
+        if not scenarios:
+            print("No matching Visual State Matrix scenario.", file=sys.stderr)
+            return 2
+        result_path = workspace_lumen_dir(context.workspace_root) / "results" / "visual" / "implement-check.json"
+        if not result_path.is_file():
+            write_json(result_path, {"delivery_status": "visual_check"})
+        results = execute(context, result_path, scenarios)
+        print(json.dumps(results, indent=2, ensure_ascii=False))
+        return 0 if all(item.get("status") == "passed" for item in results) else 1
     root = Path(args.workspace_root).expanduser().resolve()
     if root.name in {"lumen", ".lumen"}:
         root = root.parent

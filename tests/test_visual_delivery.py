@@ -12,10 +12,14 @@ sys.path.insert(0, str(SCRIPTS))
 
 from visual_delivery import (  # noqa: E402
     compare_png,
+    configured_node_version,
+    dependencies_installed,
     detect_runtime,
     merge_visual_result,
+    matching_scenarios,
     redact,
     resolve_visual_auth_credential,
+    runtime_command,
     set_visual_auth_credential,
     validate_contract,
     visual_contract,
@@ -48,9 +52,9 @@ PLAN = """# Technical Plan
 
 ### Visual State Matrix
 
-| Screen | State | Fixture | Reference | Stable marker |
-|---|---|---|---|---|
-| Today | Default | today-default | `assets/today.png` | today-screen |
+| Screen | State | Fixture | Reference | Stable marker | Maestro flow |
+|---|---|---|---|---|---|
+| Today | Default | today-default | `assets/today.png` | today-screen | `maestro/today.yaml` |
 
 ### Figma-to-Code Component Mapping
 
@@ -81,6 +85,9 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertIsNotNone(contract)
             self.assertEqual([], validate_contract(contract or {}))
             self.assertEqual(0.01, contract["scenarios"][0]["maximum_difference_ratio"])
+            self.assertEqual("maestro/today.yaml", contract["scenarios"][0]["maestro_flow"])
+            self.assertEqual(["Today"], [item["screen"] for item in matching_scenarios(contract, "Today", "Default")])
+            self.assertEqual([], matching_scenarios(contract, "Missing", "Default"))
 
     def test_web_runtime_detection_remains_draft_after_tooling_is_found(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -108,6 +115,29 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertEqual("web-visual", profile)
             self.assertEqual("yarn start:dev", detected["runtime"]["start_command"])
             self.assertEqual("http://127.0.0.1:3000", detected["runtime"]["base_url"])
+
+    def test_dependency_detection_uses_the_worktree_node_modules(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            self.assertFalse(dependencies_installed(repo))
+            (repo / "node_modules").mkdir()
+            self.assertTrue(dependencies_installed(repo))
+
+    def test_node_version_prefers_runtime_then_project_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / ".nvmrc").write_text("16\n", encoding="utf-8")
+            self.assertEqual("16", configured_node_version(repo, {}))
+            self.assertEqual("20.20.2", configured_node_version(repo, {"node_version": "20.20.2"}))
+
+    def test_runtime_command_preserves_environment_assignments(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            nvm = Path.home() / ".nvm" / "nvm.sh"
+            if nvm.is_file():
+                command = runtime_command(repo, {"node_version": "16"}, "PORT=3000 yarn start")
+                self.assertIn("bash -lc 'PORT=3000 yarn start'", command[-1])
+
 
     def test_png_comparison_writes_diff_and_ratio(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -78,7 +78,7 @@
     "install_strategy": "runtime_config",
     "allowed_commands": [],
     "blocked_command_patterns": ["install", "build", "publish", "deploy", "release"],
-    "native_build": "preinstalled_debug_app",
+    "native_build": "runtime_config_build_and_install",
     "validation": "delivery_visual_runtime",
     "auto_fix_policy": "high_only_pr_allowed_after_delivery_verification"
   },
