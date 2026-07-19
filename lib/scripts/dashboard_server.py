@@ -517,6 +517,7 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
                     "started_at": progress.get("started_at") or delivery.get("started_at") or "",
                     "finished_at": progress.get("finished_at") or delivery.get("finished_at") or "",
                     "log_file": item.get("log_file") or progress.get("log_file") or "",
+                    "agent_trace": delivery.get("agent_trace") or {},
                 }
             )
     progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
@@ -535,6 +536,8 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
         remediation = result["remediation"]
     if remediation:
         current["remediation"] = remediation
+    if isinstance(result.get("agent_trace"), dict):
+        current["agent_trace"] = result["agent_trace"]
     current["story_title"] = story_title(workspace, result, progress)
     current["stages"] = delivery_stages(current.get("phases"))
     activity_path = workspace / "state" / "delivery-scheduler-activity.jsonl"
@@ -554,6 +557,71 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
         "scheduler_log_available": (workspace / "logs" / "delivery-schedule.log").is_file(),
         "config": read_delivery_json(workspace / "config" / "delivery.json", {}),
     }
+
+
+def trace_directory(workspace: Path, run_id: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+        raise ValueError("Invalid trace id")
+    for candidate in (
+        workspace / "results" / "agent-traces" / run_id,
+        workspace / "history" / "delivery" / run_id / "agent-trace",
+    ):
+        if (candidate / "trace.json").is_file():
+            return candidate
+    raise ValueError("Agent trace is no longer available")
+
+
+def capped_text(path: Path, maximum: int = 65536) -> tuple[str, bool]:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return "", False
+    truncated = len(data) > maximum
+    return data[-maximum:].decode("utf-8", errors="replace"), truncated
+
+
+def capped_ndjson(path: Path, maximum: int = 500) -> list[dict[str, Any]]:
+    text_value, _ = capped_text(path, 512 * 1024)
+    events: list[dict[str, Any]] = []
+    for line in text_value.splitlines()[-maximum:]:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+    return events
+
+
+def delivery_trace_payload(workspace: Path, run_id: str) -> dict[str, Any]:
+    root = trace_directory(workspace, run_id)
+    trace = read_delivery_json(root / "trace.json", {})
+    invocations = []
+    for summary in trace.get("invocations", []):
+        if not isinstance(summary, dict):
+            continue
+        invocation_id = str(summary.get("invocation_id") or "")
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", invocation_id):
+            continue
+        directory = root / "agents" / invocation_id
+        stdout, stdout_truncated = capped_text(directory / "stdout.log")
+        stderr, stderr_truncated = capped_text(directory / "stderr.log")
+        prompt, prompt_truncated = capped_text(directory / "prompt.md", 100 * 1024)
+        output, output_truncated = capped_text(directory / "final-output.md", 100 * 1024)
+        invocations.append({
+            **summary,
+            "request": read_delivery_json(directory / "request.json", {}),
+            "result": read_delivery_json(directory / "result.json", {}),
+            "context_manifest": read_delivery_json(directory / "context-manifest.json", {}),
+            "changed_files": read_delivery_json(directory / "changed-files.json", {}),
+            "events": capped_ndjson(directory / "events.ndjson"),
+            "prompt": prompt,
+            "stdout": stdout,
+            "stderr": stderr,
+            "final_output": output,
+            "truncated": {"prompt": prompt_truncated, "stdout": stdout_truncated, "stderr": stderr_truncated, "final_output": output_truncated},
+        })
+    return {"trace": trace, "spans": capped_ndjson(root / "spans.ndjson", 200), "invocations": invocations, "local_evidence": True}
 
 
 class DashboardServer(ThreadingHTTPServer):
@@ -616,6 +684,22 @@ class DashboardServer(ThreadingHTTPServer):
             raise ValueError("No scheduler log is available yet")
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
         return {"path": str(log_file.relative_to(workspace)), "content": "\n".join(lines[-220:])}
+
+    def update_observability(self, workspace: Path, body: dict[str, Any]) -> dict[str, Any]:
+        mode = str(body.get("capture_mode") or "").strip().lower()
+        if mode not in {"off", "metadata", "full"}:
+            raise ValueError("Capture mode must be off, metadata, or full")
+        retention = int(body.get("retention_days", 14))
+        if retention < 1 or retention > 3650:
+            raise ValueError("Retention must be between 1 and 3650 days")
+        path = workspace / "config" / "delivery.json"
+        config = load_json(path, {})
+        observability = config.setdefault("observability", {})
+        if not isinstance(observability, dict):
+            raise ValueError("Invalid observability configuration")
+        observability["agent_trace"] = {"enabled": mode != "off", "capture_mode": mode, "retention_days": retention}
+        write_json(path, config)
+        return observability["agent_trace"]
 
     def update_schedule(self, body: dict[str, Any], workspace: Path, project: str) -> dict[str, Any]:
         kind = str(body.get("kind", ""))
@@ -715,6 +799,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_json(HTTPStatus.OK, self.server.delivery_scheduler_log(workspace))
             except ValueError as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/delivery/trace":
+            try:
+                return self.respond_json(HTTPStatus.OK, delivery_trace_payload(workspace, query.get("run_id", [""])[0]))
+            except (OSError, ValueError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/delivery/status-options":
             return self.respond_json(HTTPStatus.OK, jira_status_options(workspace))
         if parsed.path in {"/", "/dashboard.html"}:
@@ -778,6 +867,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     HTTPStatus.OK,
                     {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"))},
                 )
+            if parsed.path == "/api/observability":
+                return self.respond_json(HTTPStatus.OK, {"agent_trace": self.server.update_observability(workspace, body)})
             return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
         except (OSError, ValueError, RuntimeError) as exc:
             return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))

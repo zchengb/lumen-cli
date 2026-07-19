@@ -22,12 +22,15 @@ RUNTIME_PY="${LUMEN_LIB_DIR}/delivery_runtime.py"
 [[ -f "${RUNTIME_PY}" ]] || { printf 'Error: delivery runtime helper not found: %s\n' "${RUNTIME_PY}" >&2; exit 1; }
 eval "$(python3 "${RUNTIME_PY}" "$@")"
 RUN_ID="$(date -u '+%Y%m%d-%H%M%S')"
+DELIVERY_STARTED_NS="$(python3 -c 'import time; print(time.monotonic_ns())')"
+TRACE_DELIVERY_RECORDED="0"
 LOG_DIR="${WORKSPACE_DIR}/logs/delivery"
 LOG_FILE="${LOG_DIR}/run-${RUN_ID}.log"
 RESULT_FILE="${WORKSPACE_DIR}/results/delivery-result.json"
 STARTED_FILE="${WORKSPACE_DIR}/results/delivery-started.json"
 PROGRESS_PY="${LUMEN_LIB_DIR}/delivery_progress.py"
 ARCHIVE_PY="${LUMEN_LIB_DIR}/archive_delivery_run.py"
+AGENT_TRACE_PY="${LUMEN_LIB_DIR}/agent_trace.py"
 
 mkdir -p "${LOG_DIR}" "${WORKSPACE_DIR}/results" "${WORKSPACE_DIR}/config" "${WORKSPACE_DIR}/worktrees"
 
@@ -67,9 +70,24 @@ fail() {
     fi
   fi
   sync_delivery_docs_metadata
+  record_delivery_span failed
   archive_delivery || true
   printf 'Error: %s\n' "${message}" >&2
   exit 1
+}
+
+record_trace_span() {
+  local span_id="$1" name="$2" started_ns="$3" status="${4:-succeeded}"
+  [[ -f "${AGENT_TRACE_PY}" ]] || return 0
+  python3 "${AGENT_TRACE_PY}" span --workspace-root "${WORKSPACE_ROOT}" --run-id "${RUN_ID}" \
+    --span-id "${span_id}" --name "${name}" --started-ns "${started_ns}" --status "${status}" || true
+}
+
+record_delivery_span() {
+  local status="$1"
+  [[ "${TRACE_DELIVERY_RECORDED}" == "0" ]] || return 0
+  TRACE_DELIVERY_RECORDED="1"
+  record_trace_span delivery delivery "${DELIVERY_STARTED_NS}" "${status}"
 }
 
 archive_delivery() {
@@ -253,7 +271,9 @@ PY
 
 run_delivery_agent() {
   local prompt="$1"
-  local stage_label="$2"
+  local stage="$2"
+  local attempt="$3"
+  local stage_label="$4"
   local agent_args=(
     --workspace "${WORKSPACE_ROOT}"
     --sandbox "${SANDBOX_MODE}"
@@ -269,12 +289,25 @@ run_delivery_agent() {
 
   printf 'Starting %s at %s UTC...\n' "${stage_label}" "$(date -u '+%Y-%m-%d %H:%M:%S')"
   set +e
-  if [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
+  if [[ -f "${AGENT_TRACE_PY}" ]]; then
+    local lumen_version="" provider_version=""
+    [[ -f "${LUMEN_LIB_DIR}/../../VERSION" ]] && lumen_version="$(tr -d '[:space:]' < "${LUMEN_LIB_DIR}/../../VERSION")"
+    provider_version="$(agent --version 2>/dev/null || true)"
+    python3 "${AGENT_TRACE_PY}" run \
+      --workspace-root "${WORKSPACE_ROOT}" --docs-dir "${DOCS_DIR}" --story "${STORY_REF}" \
+      --run-id "${RUN_ID}" --stage "${stage}" --attempt "${attempt}" \
+      --provider cursor-cli --model "${MODEL}" --output-format "${OUTPUT_FORMAT}" --sandbox "${SANDBOX_MODE}" \
+      --lumen-version "${lumen_version}" --provider-version "${provider_version}" --timeout 3600 \
+      -- agent "${agent_args[@]}" \
+      < <(printf '%s' "${prompt}") > >(tee -a "${LOG_FILE}") 2> >(tee -a "${LOG_FILE}" >&2)
+    local agent_exit=$?
+  elif [[ "${OUTPUT_FORMAT}" == "stream-json" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "${LUMEN_LIB_DIR}/format_scan_log.py" ]]; then
     agent "${agent_args[@]}" "${prompt}" 2>&1 | tee -a "${LOG_FILE}" | python3 "${LUMEN_LIB_DIR}/format_scan_log.py"
+    local agent_exit=${PIPESTATUS[0]}
   else
     agent "${agent_args[@]}" "${prompt}" 2>&1 | tee -a "${LOG_FILE}"
+    local agent_exit=${PIPESTATUS[0]}
   fi
-  local agent_exit=${PIPESTATUS[0]}
   set -e
   return "${agent_exit}"
 }
@@ -282,10 +315,14 @@ run_delivery_agent() {
 run_verification_profile() {
   local verify_py="${LUMEN_LIB_DIR}/run_delivery_verification.py"
   [[ -f "${verify_py}" ]] || return 0
+  local started_ns
+  started_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
   set +e
   python3 "${verify_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" --workspace-root "${WORKSPACE_ROOT}" | tee -a "${LOG_FILE}"
   local verify_exit=${PIPESTATUS[0]}
   set -e
+  VERIFY_RUN_COUNT=$((VERIFY_RUN_COUNT + 1))
+  record_trace_span "verification-${VERIFY_RUN_COUNT}" code-verification "${started_ns}" "$([[ "${verify_exit}" -eq 0 ]] && printf succeeded || printf failed)"
   return "${verify_exit}"
 }
 
@@ -297,13 +334,15 @@ run_remediation_loop() {
 
   local remediation_py="${LUMEN_LIB_DIR}/prepare_delivery_remediation.py"
   [[ -f "${remediation_py}" ]] || return 1
-  local attempt remediation_prompt
+  local attempt remediation_prompt prompt_started_ns
   for ((attempt = 1; attempt <= max_attempts; attempt++)); do
     progress_message "Verification failed; starting bounded remediation attempt ${attempt}/${max_attempts}"
     progress_phase agent in_progress "Remediation attempt ${attempt}/${max_attempts}: diagnose and minimally fix verification failures"
     python3 "${remediation_py}" --result "${RESULT_FILE}" --attempt "${attempt}" --max-attempts "${max_attempts}" || return 1
+    prompt_started_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
     remediation_prompt="$(load_delivery_prompt --remediation)" || return 1
-    if ! run_delivery_agent "${remediation_prompt}" "Lumen delivery remediation ${attempt}/${max_attempts}"; then
+    record_trace_span "remediation-prompt-${attempt}" prompt-composition "${prompt_started_ns}"
+    if ! run_delivery_agent "${remediation_prompt}" remediation "${attempt}" "Lumen delivery remediation ${attempt}/${max_attempts}"; then
       progress_phase agent failed "Remediation agent exited during attempt ${attempt}/${max_attempts}"
       return 1
     fi
@@ -380,8 +419,10 @@ run_real_delivery() {
   send_started_notification
   progress_phase jira_start completed "Started notification sent"
 
-  local delivery_prompt
+  local delivery_prompt prompt_started_ns
+  prompt_started_ns="$(python3 -c 'import time; print(time.monotonic_ns())')"
   delivery_prompt="$(load_delivery_prompt)" || fail "Failed to compose delivery prompt."
+  record_trace_span prompt-composition prompt-composition "${prompt_started_ns}"
 
   printf 'Docs repository: %s\n' "${DOCS_DIR}"
   printf 'Workspace root: %s\n' "${WORKSPACE_ROOT}"
@@ -402,7 +443,7 @@ run_real_delivery() {
   printf '\n[delivery] Phase 4/8 — Implementation agent\n'
   printf 'Starting Lumen delivery agent at %s UTC...\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
 
-  if ! run_delivery_agent "${delivery_prompt}" "Lumen delivery implementation agent"; then
+  if ! run_delivery_agent "${delivery_prompt}" implementation 1 "Lumen delivery implementation agent"; then
     progress_phase agent failed "Agent exited with a non-zero status"
     fail "Lumen delivery agent exited with a non-zero status. See log: ${LOG_FILE}"
   fi
@@ -453,12 +494,14 @@ run_real_delivery() {
   progress_phase jira_done completed "JIRA sync attempted"
   progress_phase notify completed "Notifications sent"
   finish_delivery_progress completed "Delivery run finished"
+  record_delivery_span succeeded
   archive_delivery
   cleanup_completed_worktrees
   printf '\nLumen delivery run finished at %s UTC.\n' "$(date -u '+%Y-%m-%d %H:%M:%S')"
 }
 
 cd "${DOCS_DIR}"
+VERIFY_RUN_COUNT=0
 
 if [[ "${DRY_RUN}" == "1" || "${DRY_RUN}" == "true" || "${DRY_RUN}" == "yes" ]]; then
   run_dry_delivery

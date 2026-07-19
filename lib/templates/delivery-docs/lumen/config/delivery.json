@@ -16,6 +16,13 @@
       "enabled": true
     }
   },
+  "observability": {
+    "agent_trace": {
+      "enabled": true,
+      "capture_mode": "metadata",
+      "retention_days": 14
+    }
+  },
   "automation": {
     "cleanup_worktrees_on_success": true,
     "scheduled_delivery": {

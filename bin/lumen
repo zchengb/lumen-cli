@@ -748,6 +748,11 @@ except Exception:
       ok "CURSOR_API_KEY is set in ${workspace}/.env.local."
     fi
   fi
+
+  if [[ -n "${workspace}" && -f "${LUMEN_LIB_DIR}/agent_trace.py" ]] && command -v python3 >/dev/null 2>&1; then
+    printf '\n%sAgent Trace readiness%s\n' "${BOLD}" "${RESET}"
+    python3 "${LUMEN_LIB_DIR}/agent_trace.py" doctor --workspace-root "${workspace}" || true
+  fi
 }
 
 write_workspace_webhook() {

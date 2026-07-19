@@ -4,11 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from delivery_workspace import delivery_history_dir, read_json, write_json
+from delivery_workspace import delivery_history_dir, read_json, workspace_lumen_dir, write_json
 
 
 def utc_now() -> str:
@@ -37,6 +38,12 @@ def main() -> int:
         "progress": progress,
         "log_file": args.log_file,
     }
+    trace = result.get("agent_trace") if isinstance(result.get("agent_trace"), dict) else {}
+    trace_source = workspace_lumen_dir(workspace_root) / str(trace.get("path") or "")
+    if trace_source.is_dir():
+        trace_target = delivery_history_dir(workspace_root) / run_id / "agent-trace"
+        shutil.copytree(trace_source, trace_target, dirs_exist_ok=True)
+        payload["agent_trace_path"] = str(trace_target)
     target = delivery_history_dir(workspace_root) / f"{run_id}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     write_json(target, payload)
