@@ -365,7 +365,11 @@ def integration_value(workspace: Path, key: str) -> str:
             continue
         candidate, value = line.split("=", 1)
         if candidate.strip() == key:
-            return value
+            try:
+                parsed = shlex.split(value, posix=True)
+            except ValueError:
+                return value
+            return parsed[0] if len(parsed) == 1 else value
     raise ValueError(f"Integration key is not configured: {key}")
 
 
@@ -374,7 +378,8 @@ def update_env_value(workspace: Path, key: str, value: str) -> None:
         raise ValueError("Integration key must use uppercase letters, numbers, and underscores")
     path = workspace / ".env.local"
     lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
-    entry = f"{key}={value}"
+    serialized = value if value and not re.search(r"[\s#'\"\\]", value) else shlex.quote(value)
+    entry = f"{key}={serialized}"
     for index, line in enumerate(lines):
         if line.split("=", 1)[0].strip() == key:
             lines[index] = entry
