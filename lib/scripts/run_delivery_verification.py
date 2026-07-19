@@ -86,7 +86,7 @@ def java_gradle_steps(repo_path: Path) -> list[dict[str, Any]]:
 
 
 def php_lint_step(repo_path: Path) -> Optional[dict[str, Any]]:
-    if not any(path.suffix == ".php" for path in repo_path.rglob("*.php")):
+    if not any(path.suffix == ".php" and "node_modules" not in path.parts for path in repo_path.rglob("*.php")):
         return None
     return {"id": "php_syntax", "label": "PHP Syntax Check", "kind": "php_lint"}
 

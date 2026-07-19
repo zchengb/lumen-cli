@@ -143,6 +143,9 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertFalse(dependencies_installed(repo))
             (repo / "node_modules").mkdir()
             self.assertTrue(dependencies_installed(repo))
+            self.assertFalse(dependencies_installed(repo, {"platform": "web"}))
+            (repo / "node_modules" / "playwright").mkdir()
+            self.assertTrue(dependencies_installed(repo, {"platform": "web"}))
 
     def test_node_version_prefers_runtime_then_project_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -177,6 +180,15 @@ class VisualDeliveryTests(unittest.TestCase):
             payload = json.loads(result.read_text(encoding="utf-8"))
             self.assertEqual("passed", payload["visual_verification"]["status"])
             self.assertNotIn("environment", json.dumps(payload).lower())
+
+    def test_visual_result_replaces_stale_results_for_the_same_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp) / "delivery-result.json"
+            result.write_text('{"verification_results":[{"id":"visual","repository":"app","status":"failed"}]}', encoding="utf-8")
+            merge_visual_result(result, "web-visual", [{"repository": "app", "screen": "Today", "state": "Default", "status": "passed", "difference_ratio": 0.0}])
+            payload = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual(1, len(payload["verification_results"]))
+            self.assertEqual("passed", payload["verification_results"][0]["status"])
 
     def test_secret_redaction_covers_visual_runtime_values(self) -> None:
         self.assertEqual(

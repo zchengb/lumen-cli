@@ -335,8 +335,11 @@ def fixture_auth_ready(runtime: dict[str, Any], env: dict[str, str]) -> bool:
     return bool(resolve_visual_auth_credential(runtime, env))
 
 
-def dependencies_installed(repo: Path) -> bool:
-    return (repo / "node_modules").is_dir()
+def dependencies_installed(repo: Path, runtime: Optional[dict[str, Any]] = None) -> bool:
+    node_modules = repo / "node_modules"
+    if not node_modules.is_dir():
+        return False
+    return not runtime or runtime.get("platform") != "web" or (node_modules / "playwright").is_dir()
 
 
 def configured_node_version(repo: Path, runtime: dict[str, Any]) -> str:
@@ -362,7 +365,7 @@ def runtime_command(repo: Path, runtime: dict[str, Any], command: str) -> list[s
 
 
 def ensure_dependencies(repo: Path, runtime: dict[str, Any], env: dict[str, str]) -> None:
-    if dependencies_installed(repo):
+    if dependencies_installed(repo, runtime):
         return
     command = str(runtime.get("install_command", "")).strip()
     if not command:
@@ -417,6 +420,8 @@ const { chromium } = require('playwright');
         )
         if completed.returncode != 0:
             detail = redact((completed.stderr or completed.stdout or "fake login failed").strip(), env)
+            if "Cannot find module 'playwright'" in detail:
+                raise ModuleNotFoundError("Playwright is not installed in the repository")
             raise PermissionError(detail[-500:])
         env[state_env] = str(output)
         return str(output)
@@ -740,6 +745,9 @@ def execute(
     except PermissionError as exc:
         runtime_error = str(exc)
         runtime_failure_category = "authentication_failed"
+    except ModuleNotFoundError as exc:
+        runtime_error = str(exc)
+        runtime_failure_category = "environment_failed"
     except (OSError, ValueError, TimeoutError) as exc:
         runtime_error = str(exc)
 
@@ -814,7 +822,11 @@ def merge_visual_result(result_path: Path, profile: str, results: list[dict[str,
     payload = read_json(result_path, {})
     status = "passed" if results and all(item.get("status") == "passed" for item in results) else "failed"
     payload["visual_verification"] = {"status": status, "runtime_profile": profile, "results": results}
-    verification = payload.get("verification_results") if isinstance(payload.get("verification_results"), list) else []
+    repositories = {str(item.get("repository", "")) for item in results}
+    verification = [
+        item for item in payload.get("verification_results", [])
+        if not (isinstance(item, dict) and item.get("id") == "visual" and item.get("repository") in repositories)
+    ]
     verification.extend({
         "repository": item.get("repository", ""), "id": "visual", "label": f"Visual: {item.get('screen', '')} / {item.get('state', '')}",
         "command": "internal visual delivery", "exit_code": 0 if item.get("status") == "passed" else 1,
