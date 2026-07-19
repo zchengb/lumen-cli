@@ -18,6 +18,8 @@
         "ready_url": "http://127.0.0.1:5173",
         "ready_timeout_seconds": 60,
         "browser": "chromium",
+        "browser_cdp_url": "",
+        "test_id_attribute": "data-testid",
         "auth_strategy": "playwright-storage-state",
         "auth_storage_state_env": "LUMEN_VISUAL_STORAGE_STATE",
         "auth_login_path": "/oauth-proxy-api/auth/admin/fake",

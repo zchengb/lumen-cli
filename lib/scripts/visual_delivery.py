@@ -393,17 +393,18 @@ def prepare_web_auth_storage(
         script = """
 const { chromium } = require('playwright');
 (async () => {
-  const [baseUrl, loginPath, bodyJson, outPath] = process.argv.slice(1);
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  const [baseUrl, loginPath, bodyJson, outPath, cdpUrl] = process.argv.slice(1);
+  const browser = cdpUrl ? await chromium.connectOverCDP(cdpUrl) : await chromium.launch({ headless: true });
+  const context = cdpUrl ? browser.contexts()[0] : await browser.newContext({ ignoreHTTPSErrors: true });
   const page = await context.newPage();
+  if (cdpUrl) await (await context.newCDPSession(page)).send('Security.setIgnoreCertificateErrors', { ignore: true });
   await page.goto(`${baseUrl}/user/login`, { waitUntil: 'domcontentloaded' });
-  const response = await page.request.post(`${baseUrl}${loginPath}`, {
-    data: JSON.parse(bodyJson),
-  });
-  if (!response.ok()) {
-    const detail = await response.text();
-    throw new Error(`fake login failed (${response.status()}): ${detail}`);
+  if (cdpUrl) {
+    const response = await page.evaluate(async ({ url, body }) => { const reply = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body }); return { ok: reply.ok, status: reply.status, detail: await reply.text() }; }, { url: `${baseUrl}${loginPath}`, body: bodyJson });
+    if (!response.ok) throw new Error(`fake login failed (${response.status}): ${response.detail}`);
+  } else {
+    const response = await page.request.post(`${baseUrl}${loginPath}`, { data: JSON.parse(bodyJson) });
+    if (!response.ok()) throw new Error(`fake login failed (${response.status()}): ${await response.text()}`);
   }
   await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
   await context.storageState({ path: outPath });
@@ -411,7 +412,7 @@ const { chromium } = require('playwright');
 })().catch((error) => { console.error(error.message); process.exit(1); });
 """
         completed = subprocess.run(
-            ["node", "-e", script, base, login_path, body, str(output)],
+            ["node", "-e", script, base, login_path, body, str(output), str(runtime.get("browser_cdp_url", ""))],
             cwd=repo, env=env, check=False, capture_output=True, text=True,
         )
         if completed.returncode != 0:
@@ -585,17 +586,17 @@ def web_capture(repo: Path, runtime: dict[str, Any], scenario: dict[str, Any], a
     viewport = runtime.get("viewport") if isinstance(runtime.get("viewport"), dict) else {"width": 1280, "height": 720}
     script = """
 const { chromium } = require('playwright');
-(async () => { const [url,out,marker,storage,width,height] = process.argv.slice(1);
- const browser = await chromium.launch({headless:true});
- const context = await browser.newContext({viewport:{width:+width,height:+height}, locale:'en-US', timezoneId:'UTC', ...(storage?{storageState:storage}:{})});
- const page = await context.newPage(); await page.goto(url,{waitUntil:'networkidle'});
- if(marker) await page.getByTestId(marker).waitFor({state:'visible'});
+(async () => { const [url,out,marker,storage,width,height,cdpUrl,testIdAttribute] = process.argv.slice(1);
+ const browser = cdpUrl ? await chromium.connectOverCDP(cdpUrl) : await chromium.launch({headless:true});
+ const context = cdpUrl ? browser.contexts()[0] : await browser.newContext({viewport:{width:+width,height:+height}, locale:'en-US', timezoneId:'UTC', ...(storage?{storageState:storage}:{})});
+ const page = await context.newPage(); if(cdpUrl) { await page.setViewportSize({width:+width,height:+height}); await (await context.newCDPSession(page)).send('Security.setIgnoreCertificateErrors',{ignore:true}); } await page.goto(url,{waitUntil:'networkidle'});
+ if(marker) await (testIdAttribute === 'data-testid' ? page.getByTestId(marker) : page.locator(`[${testIdAttribute}="${marker}"]`)).waitFor({state:'visible'});
  await page.addStyleTag({content:'*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}'});
  await page.screenshot({path:out,fullPage:false}); await browser.close();
 })().catch(e=>{console.error(e.message);process.exit(1)});
 """
     completed = subprocess.run(
-        ["node", "-e", script, url, str(actual), marker, storage, str(viewport.get("width", 1280)), str(viewport.get("height", 720))],
+        ["node", "-e", script, url, str(actual), marker, storage, str(viewport.get("width", 1280)), str(viewport.get("height", 720)), str(runtime.get("browser_cdp_url", "")), str(runtime.get("test_id_attribute", "data-testid"))],
         cwd=repo, env=env, check=False, capture_output=True, text=True,
     )
     if completed.returncode != 0:
