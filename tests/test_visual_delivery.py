@@ -23,6 +23,7 @@ from visual_delivery import (  # noqa: E402
     set_visual_auth_credential,
     validate_contract,
     visual_contract,
+    wait_ready,
     web_auth_auto_login_configured,
     web_auth_ready,
     write_diff,
@@ -75,6 +76,19 @@ PLAN = """# Technical Plan
 
 
 class VisualDeliveryTests(unittest.TestCase):
+    def test_local_https_readiness_accepts_development_certificates(self) -> None:
+        import urllib.request
+        from unittest.mock import patch
+
+        class Response:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *_args): return None
+
+        with patch.object(urllib.request, "urlopen", return_value=Response()) as request:
+            wait_ready("https://localhost:3000", 1)
+        self.assertIsNotNone(request.call_args.kwargs["context"])
+
     def test_contract_is_optional_and_validates_ui_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "technical-plan.md"

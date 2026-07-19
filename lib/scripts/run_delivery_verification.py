@@ -525,6 +525,7 @@ def run_verification(
                 "label": f"Visual: {visual.get('screen', '')} / {visual.get('state', '')}",
                 "status": visual.get("status", "failed"),
                 "failure_category": visual.get("failure_category", ""),
+                "summary": visual.get("summary", ""),
             }
             append_verification(progress_root, item)
             results.append(item)

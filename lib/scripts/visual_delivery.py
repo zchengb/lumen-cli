@@ -11,11 +11,13 @@ import re
 import shlex
 import shutil
 import signal
+import ssl
 import struct
 import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zlib
 from pathlib import Path
@@ -554,12 +556,14 @@ def ensure_ios_app(repo: Path, runtime: dict[str, Any], env: dict[str, str]) -> 
 
 
 def wait_ready(url: str, timeout: int, process: subprocess.Popen[str] | None = None) -> None:
+    parsed = urllib.parse.urlparse(url)
+    context = ssl._create_unverified_context() if parsed.scheme == "https" and parsed.hostname in {"localhost", "127.0.0.1", "::1"} else None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process and process.poll() is not None:
             raise RuntimeError("configured runtime process exited before readiness")
         try:
-            with urllib.request.urlopen(url, timeout=2) as response:
+            with urllib.request.urlopen(url, timeout=2, context=context) as response:
                 if response.status < 500:
                     return
         except (urllib.error.URLError, TimeoutError):
@@ -711,6 +715,7 @@ def execute(
     evidence = workspace_lumen_dir(context.workspace_root) / "results" / "visual" / time.strftime("%Y%m%d-%H%M%S", time.gmtime())
     evidence.mkdir(parents=True, exist_ok=True)
     runtime_error = ""
+    runtime_failure_category = "runtime_failed"
     try:
         if repo_config.get("runtime_status") != "ready":
             raise EnvironmentError("repository runtime_status is not ready; run lumen doctor")
@@ -731,6 +736,9 @@ def execute(
                 wait_ready(str(runtime.get("ready_url", "http://127.0.0.1:8081/status")), int(runtime.get("ready_timeout_seconds", 120)), metro)
             else:
                 raise EnvironmentError(f"unsupported visual platform: {platform}")
+    except PermissionError as exc:
+        runtime_error = str(exc)
+        runtime_failure_category = "authentication_failed"
     except (OSError, ValueError, TimeoutError) as exc:
         runtime_error = str(exc)
 
@@ -793,7 +801,7 @@ def execute(
         except TimeoutError as exc: results.append(stage_result("stability_failed", str(exc), scenario))
         except EnvironmentError as exc: results.append(stage_result("environment_failed", str(exc), scenario))
         except (RuntimeError, ValueError) as exc:
-            category = "runtime_failed" if runtime_error else "capture_failed"
+            category = runtime_failure_category if runtime_error else "capture_failed"
             results.append(stage_result(category, str(exc), scenario))
     cleanup()
     atexit.unregister(cleanup)
