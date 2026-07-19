@@ -22,7 +22,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 from delivery_launchd import install as install_delivery_schedule
 from delivery_launchd import remove as remove_delivery_schedule
 from delivery_launchd import status as delivery_schedule_status
+from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees
 from delivery_workspace import load_story_context, read_json as read_delivery_json, workspace_lumen_dir
+from jira_delivery_sync import add_delivery_comment, jira_delivery_config, should_sync_jira, transition_issue
 from jira_sync import parse_twg_json, run_twg, twg_ready
 from issue_registry import set_issue_status
 from projects_registry import find_by_slug, load_registry
@@ -702,14 +704,31 @@ class DashboardServer(ThreadingHTTPServer):
         story_ref = str(progress.get("story_id") or progress.get("jira_key") or "").strip()
         if not story_ref or workspace_lumen_dir(docs_dir).resolve() != workspace.resolve():
             raise ValueError("The failed delivery does not have a retryable workspace and story")
-        load_story_context(docs_dir, story_ref)
+        context = load_story_context(docs_dir, story_ref, validate_gates=False)
+        delivery_config = load_json(workspace / "config" / "delivery.json", {})
+        jira_config = jira_delivery_config(delivery_config)
+        jira_enabled, _ = should_sync_jira(delivery_config)
+        reset_status = str(
+            ((delivery_config.get("automation") or {}).get("scheduled_delivery") or {}).get("required_jira_status") or "Ready for Dev"
+        ).strip()
+        if jira_enabled and context.metadata.get("jiraKey") and reset_status:
+            transition_issue(str(context.metadata["jiraKey"]), reset_status, jira_config)
+            add_delivery_comment(str(context.metadata["jiraKey"]), "Lumen Delivery · Reset\n\n- Failed run reset; a new delivery run will start.", jira_config)
+        cleaned = cleanup_delivery_worktrees(docs_dir, story_ref)
+        metadata = load_json(context.metadata_path, {})
+        metadata["deliveryStatus"] = "not_started"
+        metadata["updatedAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        metadata["deliveryResetAt"] = utc_now()
+        for key in ("deliveryBranch", "prUrl", "jira_pr_url"):
+            metadata.pop(key, None)
+        write_json(context.metadata_path, metadata)
         env = dict(os.environ, LUMEN_HOME=self.lumen_home)
         subprocess.Popen(
             [self.lumen_bin, "delivery", "run", str(docs_dir), "--story", story_ref],
             cwd=docs_dir, env=env, start_new_session=True,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
-        return {"story": story_ref, "started_at": utc_now()}
+        return {"story": story_ref, "started_at": utc_now(), "worktrees": cleaned, "jira_status": reset_status if jira_enabled else "unchanged"}
 
     def update_observability(self, workspace: Path, body: dict[str, Any]) -> dict[str, Any]:
         mode = str(body.get("capture_mode") or "").strip().lower()
@@ -938,13 +957,14 @@ def main() -> int:
     parser.add_argument("--lumen-bin", required=True)
     parser.add_argument("--lumen-home", required=True)
     parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--version", default="")
     args = parser.parse_args()
 
     workspace = Path(args.workspace).expanduser().resolve()
     server = DashboardServer(("127.0.0.1", args.port), workspace, args.project, args.lumen_bin, args.lumen_home)
     url = f"http://127.0.0.1:{server.server_port}/"
     state_path = workspace / "state" / "dashboard-server.json"
-    write_json(state_path, {"pid": os.getpid(), "url": url, "started_at": utc_now()})
+    write_json(state_path, {"pid": os.getpid(), "url": url, "started_at": utc_now(), "version": args.version})
     print(url, flush=True)
     try:
         server.serve_forever()

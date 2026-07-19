@@ -144,14 +144,19 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             workspace = docs / "lumen"
             results = workspace / "results"
             results.mkdir(parents=True)
+            story = docs / "stories" / "DEMO-1"
+            story.mkdir(parents=True)
+            metadata_path = story / "metadata.json"
+            metadata_path.write_text(json.dumps({"jiraKey": "DEMO-1", "deliveryStatus": "blocked", "deliveryBranch": "feature/old", "prUrl": "https://example.test/pr/1"}), encoding="utf-8")
             (results / "delivery-progress.json").write_text(json.dumps({
                 "delivery_status": "failed", "story_id": "DEMO-1", "docs_dir": str(docs),
             }), encoding="utf-8")
             server = object.__new__(DashboardServer)
             server.lumen_bin = "/test/lumen"
             server.lumen_home = "/test/lumen-home"
+            context = SimpleNamespace(docs_dir=docs, workspace_root=docs, story_dir=story, metadata_path=metadata_path, metadata={"jiraKey": "DEMO-1"})
 
-            with patch.object(dashboard_server, "load_story_context"), patch.object(dashboard_server.subprocess, "Popen") as launch:
+            with patch.object(dashboard_server, "load_story_context", return_value=context), patch.object(dashboard_server, "should_sync_jira", return_value=(False, "not configured")), patch.object(dashboard_server, "cleanup_delivery_worktrees", return_value=["repo: removed"]), patch.object(dashboard_server.subprocess, "Popen") as launch:
                 retry = server.retry_delivery(workspace)
 
             self.assertEqual("DEMO-1", retry["story"])
@@ -159,6 +164,10 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 ["/test/lumen", "delivery", "run", str(docs.resolve()), "--story", "DEMO-1"],
                 launch.call_args.args[0],
             )
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            self.assertEqual("not_started", metadata["deliveryStatus"])
+            self.assertNotIn("deliveryBranch", metadata)
+            self.assertNotIn("prUrl", metadata)
             self.assertFalse((workspace / "history").exists())
 
     def test_delivery_runtime_parses_flags_and_resolves_workspace(self) -> None:

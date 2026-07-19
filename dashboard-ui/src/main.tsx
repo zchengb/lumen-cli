@@ -285,7 +285,7 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
   const retry = async () => {
     setRetrying(true); setRetryError("");
     try { await request("/api/delivery/retry", project, { method: "POST", json: {} }); setRetryOpen(false); }
-    catch (err) { setRetryError(err instanceof Error ? err.message : "Unable to retry delivery"); }
+    catch (err) { const message = err instanceof Error ? err.message : "Unable to retry delivery"; setRetryError(message === "Not found" ? "Dashboard is still running an older version. Run `lumen dashboard stop --project …`, then open the dashboard again." : message); }
     finally { setRetrying(false); }
   };
   const canRetry = /failed|blocked/i.test(String(current.delivery_status || ""));
@@ -303,7 +303,7 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
 }
 
 function RetryDeliveryDialog({ story, busy, error, onClose, onConfirm }: { story: string; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Reset and retry delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Retry {story}?</strong><p>This starts a new delivery run from the approved plan. The failed run and its logs stay in history.</p>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy} onClick={onConfirm}><RotateCcw size={14} />{busy ? "Starting…" : "Reset & retry"}</button></footer></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Reset and retry delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Reset and retry {story}?</strong><p>This removes the Story worktrees, resets its Delivery and JIRA status, then starts a new run. The failed run and logs stay in history.</p>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy} onClick={onConfirm}><RotateCcw size={14} />{busy ? "Starting…" : "Reset & retry"}</button></footer></section></div>;
 }
 
 function StoryReference({ jiraKey, title }: { jiraKey: string; title?: string }) { return <span className="story-reference"><code>{text(jiraKey, "No active delivery")}</code>{title && <span>{title}</span>}</span>; }
