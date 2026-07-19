@@ -20,6 +20,8 @@
         "browser": "chromium",
         "auth_strategy": "playwright-storage-state",
         "auth_storage_state_env": "LUMEN_VISUAL_STORAGE_STATE",
+        "auth_login_path": "/oauth-proxy-api/auth/admin/fake",
+        "auth_login_field": "wiw",
         "fixture_strategy": "mock-server"
       }
     },

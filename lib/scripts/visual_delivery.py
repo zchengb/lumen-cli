@@ -212,6 +212,58 @@ def repos_config(workspace_root: Path) -> Path:
     return workspace_lumen_dir(workspace_root) / "config" / "repos.json"
 
 
+def workspace_root_from(path: Path) -> Path:
+    resolved = path.expanduser().resolve()
+    if resolved.name in {"lumen", ".lumen"}:
+        return resolved.parent
+    return resolved
+
+
+def repo_config_entry(config: dict[str, Any], repository: str) -> dict[str, Any] | None:
+    for item in config.get("repositories", []):
+        if isinstance(item, dict) and str(item.get("name", "")).strip() == repository:
+            return item
+    return None
+
+
+def list_visual_auth_credentials(path: Path) -> dict[str, str]:
+    config = read_json(repos_config(workspace_root_from(path)), {"repositories": []})
+    credentials: dict[str, str] = {}
+    for item in config.get("repositories", []):
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name", "")).strip()
+        runtime = item.get("runtime")
+        if not name or not isinstance(runtime, dict):
+            continue
+        credential = str(runtime.get("visual_auth_credential", "")).strip()
+        if credential:
+            credentials[name] = credential
+    return credentials
+
+
+def set_visual_auth_credential(path: Path, repository: str, credential: str) -> None:
+    credential = str(credential).strip()
+    if not credential:
+        raise ValueError("credential must not be empty")
+    workspace_root = workspace_root_from(path)
+    config_path = repos_config(workspace_root)
+    config = read_json(config_path, {"repositories": []})
+    entry = repo_config_entry(config, repository)
+    if entry is None:
+        raise ValueError(f"repository '{repository}' is not configured in {config_path}")
+    runtime = entry.setdefault("runtime", {})
+    if not isinstance(runtime, dict):
+        runtime = {}
+        entry["runtime"] = runtime
+    runtime["visual_auth_credential"] = credential
+    write_json(config_path, config)
+
+
+def resolve_visual_auth_credential(runtime: dict[str, Any], env: dict[str, str]) -> str:
+    return str(runtime.get("visual_auth_credential", "")).strip()
+
+
 def enrich_repositories(workspace_root: Path) -> list[dict[str, Any]]:
     path = repos_config(workspace_root)
     config = read_json(path, {"repositories": []})
@@ -238,6 +290,88 @@ def redact(text: str, env: dict[str, str]) -> str:
         if value and len(value) >= 4 and (key.startswith("LUMEN_VISUAL_") or any(word in key.upper() for word in ("PASSWORD", "SECRET", "TOKEN"))):
             redacted = redacted.replace(value, "[REDACTED]")
     return redacted
+
+
+def web_auth_storage_path(runtime: dict[str, Any], env: dict[str, str]) -> str:
+    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
+    return str(env.get(state_env, "")).strip()
+
+
+def web_auth_auto_login_configured(runtime: dict[str, Any], env: dict[str, str]) -> bool:
+    login_path = str(runtime.get("auth_login_path", "")).strip()
+    if not login_path:
+        return False
+    return bool(resolve_visual_auth_credential(runtime, env))
+
+
+def web_auth_ready(runtime: dict[str, Any], env: dict[str, str]) -> bool:
+    if runtime.get("auth_strategy") != "playwright-storage-state":
+        return True
+    if web_auth_auto_login_configured(runtime, env):
+        return True
+    storage = web_auth_storage_path(runtime, env)
+    return bool(storage) and Path(storage).is_file()
+
+
+def fixture_auth_ready(runtime: dict[str, Any], env: dict[str, str]) -> bool:
+    fixture_command = str(runtime.get("fixture_command", ""))
+    if "{fixture}" not in fixture_command:
+        return True
+    return bool(resolve_visual_auth_credential(runtime, env))
+
+
+def prepare_web_auth_storage(
+    repo: Path,
+    runtime: dict[str, Any],
+    env: dict[str, str],
+    output: Path,
+) -> str:
+    if runtime.get("auth_strategy") != "playwright-storage-state":
+        return ""
+    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
+    username = resolve_visual_auth_credential(runtime, env)
+    login_path = str(runtime.get("auth_login_path", "")).strip()
+    login_field = str(runtime.get("auth_login_field", "wiw")).strip() or "wiw"
+    if username and login_path:
+        base = str(runtime.get("base_url", "")).rstrip("/")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        body = json.dumps({login_field: username})
+        script = """
+const { chromium } = require('playwright');
+(async () => {
+  const [baseUrl, loginPath, bodyJson, outPath] = process.argv.slice(1);
+  const browser = await chromium.launch({ headless: true });
+  const context = await browser.newContext({ ignoreHTTPSErrors: true });
+  const page = await context.newPage();
+  await page.goto(`${baseUrl}/user/login`, { waitUntil: 'domcontentloaded' });
+  const response = await page.request.post(`${baseUrl}${loginPath}`, {
+    data: JSON.parse(bodyJson),
+  });
+  if (!response.ok()) {
+    const detail = await response.text();
+    throw new Error(`fake login failed (${response.status()}): ${detail}`);
+  }
+  await page.goto(`${baseUrl}/`, { waitUntil: 'networkidle' });
+  await context.storageState({ path: outPath });
+  await browser.close();
+})().catch((error) => { console.error(error.message); process.exit(1); });
+"""
+        completed = subprocess.run(
+            ["node", "-e", script, base, login_path, body, str(output)],
+            cwd=repo, env=env, check=False, capture_output=True, text=True,
+        )
+        if completed.returncode != 0:
+            detail = redact((completed.stderr or completed.stdout or "fake login failed").strip(), env)
+            raise PermissionError(detail[-500:])
+        env[state_env] = str(output)
+        return str(output)
+    storage = web_auth_storage_path(runtime, env)
+    if storage and Path(storage).is_file():
+        return storage
+    raise PermissionError(
+        f"configure visual auth with: lumen config set-visual-auth <repository> <credential>, "
+        f"or provide a storage state file in {state_env}"
+    )
 
 
 def doctor(workspace_root: Path) -> int:
@@ -267,9 +401,24 @@ def doctor(workspace_root: Path) -> int:
                 repo = (workspace_root / repo).resolve()
             if not (repo / "node_modules" / "playwright").exists() and not (repo / "node_modules" / "@playwright" / "test").exists():
                 problems.append("Playwright dependencies are not installed in the repository")
-            auth_env = str(runtime.get("auth_storage_state_env", ""))
-            if runtime.get("auth_strategy") == "playwright-storage-state" and (not auth_env or not os.environ.get(auth_env)):
-                problems.append(f"authentication state environment variable '{auth_env or 'missing'}' is not set")
+            if runtime.get("auth_strategy") == "playwright-storage-state":
+                env = dict(os.environ)
+                if not web_auth_ready(runtime, env):
+                    login_path = str(runtime.get("auth_login_path", "")).strip()
+                    if login_path:
+                        if not resolve_visual_auth_credential(runtime, env):
+                            problems.append(
+                                f"visual auth credential for '{name}' is not set; "
+                                f"run: lumen config set-visual-auth {name} <credential>"
+                            )
+                    else:
+                        storage_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
+                        problems.append("auth_login_path is missing for automatic fake login")
+                        storage = web_auth_storage_path(runtime, env)
+                        if not storage:
+                            problems.append(f"authentication state environment variable '{storage_env}' is not set")
+                        elif not Path(storage).is_file():
+                            problems.append(f"authentication storage state file '{storage}' does not exist")
         elif platform == "react-native":
             for tool in ("xcrun", "maestro"):
                 if not shutil.which(tool):
@@ -295,6 +444,11 @@ def doctor(workspace_root: Path) -> int:
             runtime.get("fixture_command") or runtime.get("fixture_start_command")
         ):
             problems.append("configured fixture strategy has no fixture command")
+        if not fixture_auth_ready(runtime, dict(os.environ)):
+            problems.append(
+                f"visual auth credential for '{name}' is not set; "
+                f"run: lumen config set-visual-auth {name} <credential>"
+            )
         status = "Not Ready" if problems or item.get("runtime_status") != "ready" else "Ready"
         print(f"\nVisual Delivery: {status}\nRepository: {name}\nPlatform: {platform or 'unknown'}")
         if problems:
@@ -338,7 +492,9 @@ def web_capture(repo: Path, runtime: dict[str, Any], scenario: dict[str, Any], a
     state_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
     storage = env.get(state_env, "") if runtime.get("auth_strategy") == "playwright-storage-state" else ""
     if runtime.get("auth_strategy") == "playwright-storage-state" and (not storage or not Path(storage).is_file()):
-        raise PermissionError(f"storage state from {state_env} is unavailable")
+        raise PermissionError(
+            f"storage state from {state_env} is unavailable; run visual verification after runtime startup prepares auth"
+        )
     viewport = runtime.get("viewport") if isinstance(runtime.get("viewport"), dict) else {"width": 1280, "height": 720}
     script = """
 const { chromium } = require('playwright');
@@ -476,6 +632,13 @@ def execute(context: StoryContext, result_path: Path) -> list[dict[str, Any]]:
         if platform == "web":
             server = run_owned(str(runtime.get("start_command", "")), repo_target.worktree_path, env, processes)
             wait_ready(str(runtime.get("ready_url", "")), int(runtime.get("ready_timeout_seconds", 60)), server)
+            if runtime.get("auth_strategy") == "playwright-storage-state":
+                prepare_web_auth_storage(
+                    repo_target.worktree_path,
+                    runtime,
+                    env,
+                    evidence / "web-auth-storage.json",
+                )
         elif platform == "react-native":
             metro = run_owned(str(runtime.get("metro_command", "")), repo_target.worktree_path, env, processes)
             wait_ready(str(runtime.get("ready_url", "http://127.0.0.1:8081/status")), int(runtime.get("ready_timeout_seconds", 120)), metro)
@@ -497,7 +660,10 @@ def execute(context: StoryContext, result_path: Path) -> list[dict[str, Any]]:
                 raise FileNotFoundError(f"approved reference not found: {reference}")
             fixture_command = str(runtime.get("fixture_command", ""))
             if fixture_command:
-                command = fixture_command.replace("{fixture}", str(scenario.get("fixture", "")))
+                fixture_value = str(scenario.get("fixture", "")).strip()
+                if not fixture_value or fixture_value.upper() == "TBD":
+                    fixture_value = resolve_visual_auth_credential(runtime, env)
+                command = fixture_command.replace("{fixture}", fixture_value)
                 prepared = subprocess.run(shlex.split(command), cwd=repo_target.worktree_path, env=env, check=False, capture_output=True, text=True)
                 if prepared.returncode != 0:
                     raise ChildProcessError(redact((prepared.stderr or prepared.stdout or "fixture command failed").strip(), env)[-500:])

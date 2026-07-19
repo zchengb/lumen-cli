@@ -9,6 +9,17 @@ import re
 import sys
 from pathlib import Path
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from visual_delivery import (  # noqa: E402
+    list_visual_auth_credentials,
+    repos_config,
+    set_visual_auth_credential,
+    workspace_root_from,
+)
+
 DEFAULT_SCAN_WINDOW_DAYS = 7
 MIN_SCAN_WINDOW_DAYS = 1
 MAX_SCAN_WINDOW_DAYS = 365
@@ -185,6 +196,26 @@ def cmd_show(workspace: Path) -> int:
         print(f"notifications.jira.board_id: {board_id or '(auto-detect)'}")
         print(f"notifications.jira.assign_to_active_sprint: {jira.get('assign_to_active_sprint', True)}")
         print(f"notifications.jira.issue_type: {jira.get('issue_type', 'Bug')}")
+
+    visual_auth = list_visual_auth_credentials(workspace)
+    repos_path = repos_config(workspace_root_from(workspace))
+    print()
+    print(f"visual auth credentials: {repos_path}")
+    if visual_auth:
+        for repository, credential in sorted(visual_auth.items()):
+            print(f"runtime.visual_auth_credential ({repository}): {mask_secret(credential)}")
+    else:
+        print("runtime.visual_auth_credential: (not set)")
+    return 0
+
+
+def cmd_set_visual_auth(workspace: Path, repository: str, credential: str) -> int:
+    try:
+        set_visual_auth_credential(workspace, repository, credential)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    print(f"Saved visual auth credential for {repository} to {repos_config(workspace_root_from(workspace))}")
     return 0
 
 
@@ -288,6 +319,14 @@ def main() -> int:
         help="Assign new bugs to the active sprint",
     )
 
+    visual_auth_parser = subparsers.add_parser(
+        "set-visual-auth",
+        help="Save a Visual Delivery login credential for one repository",
+    )
+    visual_auth_parser.add_argument("workspace")
+    visual_auth_parser.add_argument("repository")
+    visual_auth_parser.add_argument("credential")
+
     args = parser.parse_args()
     workspace = Path(args.workspace).expanduser().resolve()
 
@@ -301,6 +340,8 @@ def main() -> int:
             days = set_scan_window_days(workspace, args.days)
             print(days)
             return 0
+        if args.command == "set-visual-auth":
+            return cmd_set_visual_auth(workspace, args.repository, args.credential)
         if args.command == "set-jira":
             return cmd_set_jira(workspace, args)
     except FileNotFoundError as exc:

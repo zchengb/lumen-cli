@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
 LUMEN_CLI_BIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+LUMEN_CLI_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ -z "${LUMEN_HOME:-}" && -f "${LUMEN_CLI_ROOT}/lib/scripts/workspace_config.py" ]]; then
+  LUMEN_HOME="${LUMEN_CLI_ROOT}"
+else
+  LUMEN_HOME="${LUMEN_HOME:-$HOME/.lumen}"
+fi
 if [[ -f "${LUMEN_HOME}/lib/scripts/ensure-path.sh" ]]; then
   # shellcheck source=/dev/null
   source "${LUMEN_HOME}/lib/scripts/ensure-path.sh"
@@ -372,6 +377,8 @@ Usage:
                                  Save GH_TOKEN (and optional GH_HOST) for scheduled PR creation on GHE/GitHub
   lumen config set-scan-window <days> [--project <slug>]
                                  Set how many days of git history each scan inspects
+  lumen config set-visual-auth <repository> <credential> [--project <slug>]
+                                 Save a Visual Delivery login credential in config/repos.json
   lumen config set-jira [--enable|--disable] [--project-key <key>]
                                  [--board-id <id>] [--no-active-sprint] [--project <slug>]
                                  Enable or update Jira sync (TWG CLI) for this workspace
@@ -813,7 +820,7 @@ write_workspace_jira() {
   local board_id="$4"
   local assign_sprint="$5"
   local board_id_set="${6:-0}"
-  local config_py="${LUMEN_HOME}/lib/scripts/workspace_config.py"
+  local config_py="${LUMEN_LIB_DIR}/workspace_config.py"
   local args=(set-jira "${workspace}")
 
   case "${mode}" in
@@ -859,7 +866,7 @@ write_workspace_jira() {
 cmd_config() {
   local sub="${1:-}"
   shift || true
-  local config_py="${LUMEN_HOME}/lib/scripts/workspace_config.py"
+  local config_py="${LUMEN_LIB_DIR}/workspace_config.py"
 
   case "${sub}" in
     set-webhook)
@@ -1012,6 +1019,50 @@ cmd_config() {
       fi
       ok "Saved execution.scan_window_days=${days} to ${RESOLVED_WORKSPACE}/config/common.json"
       ;;
+    set-visual-auth)
+      local repository="" credential="" filtered_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project|-p|--workspace)
+            filtered_args+=("$1" "${2:-}")
+            shift 2
+            ;;
+          --no-open)
+            filtered_args+=("$1")
+            shift
+            ;;
+          --*)
+            err "Unknown option: $1"
+            exit 1
+            ;;
+          *)
+            if [[ -z "${repository}" ]]; then
+              repository="$1"
+            elif [[ -z "${credential}" ]]; then
+              credential="$1"
+            else
+              err "Unexpected argument: $1"
+              exit 1
+            fi
+            shift
+            ;;
+        esac
+      done
+      if [[ -z "${repository}" || -z "${credential}" ]]; then
+        err "Usage: lumen config set-visual-auth <repository> <credential> [--project <slug>]"
+        exit 1
+      fi
+      resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+      if [[ ! -f "${config_py}" ]]; then
+        err "Config helper not found: ${config_py}"
+        exit 1
+      fi
+      command -v python3 >/dev/null 2>&1 || { err "Python 3 is required for lumen config."; exit 1; }
+      if ! python3 "${config_py}" set-visual-auth "${RESOLVED_WORKSPACE}" "${repository}" "${credential}"; then
+        exit 1
+      fi
+      ok "Saved visual auth credential for ${repository}"
+      ;;
     set-jira)
       local enable_flag="" disable_flag="" project_key="" board_id=""
       local assign_sprint="" board_id_set="0" interactive="0" filtered_args=()
@@ -1135,6 +1186,7 @@ cmd_config() {
       printf '  lumen config set-cursor-api-key <key> [--project <slug>]\n'
       printf '  lumen config set-gh-token <token> [--host <github-host>] [--project <slug>]\n'
       printf '  lumen config set-scan-window <days> [--project <slug>]\n'
+      printf '  lumen config set-visual-auth <repository> <credential> [--project <slug>]\n'
       printf '  lumen config set-jira [--enable|--disable] [--project-key <key>] [--board-id <id>] [--project <slug>]\n'
       printf '  lumen config show [--project <slug>]\n'
       printf '  lumen config unset-webhook [--project <slug>]\n'

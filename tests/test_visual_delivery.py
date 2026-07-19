@@ -15,8 +15,12 @@ from visual_delivery import (  # noqa: E402
     detect_runtime,
     merge_visual_result,
     redact,
+    resolve_visual_auth_credential,
+    set_visual_auth_credential,
     validate_contract,
     visual_contract,
+    web_auth_auto_login_configured,
+    web_auth_ready,
     write_diff,
 )
 from delivery_workspace import validate_story_gates  # noqa: E402
@@ -128,6 +132,65 @@ class VisualDeliveryTests(unittest.TestCase):
             "login failed for [REDACTED]",
             redact("login failed for secret-token", {"LUMEN_VISUAL_ACCESS_TOKEN": "secret-token"}),
         )
+
+    def test_web_auth_requires_credential_in_repos_runtime(self) -> None:
+        runtime = {
+            "auth_strategy": "playwright-storage-state",
+            "auth_login_path": "/oauth-proxy-api/auth/admin/fake",
+        }
+        self.assertFalse(web_auth_auto_login_configured(runtime, {}))
+        runtime["visual_auth_credential"] = "TESTWIW"
+        self.assertTrue(web_auth_auto_login_configured(runtime, {}))
+        self.assertTrue(web_auth_ready(runtime, {}))
+
+    def test_web_auth_prefers_repos_runtime_credential(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lumen = root / "lumen"
+            (lumen / "config").mkdir(parents=True)
+            (lumen / "config" / "repos.json").write_text(
+                json.dumps(
+                    {
+                        "repositories": [
+                            {
+                                "name": "digital-platform-admin",
+                                "runtime": {
+                                    "visual_auth_credential": "FILE-WIW",
+                                    "auth_login_path": "/oauth-proxy-api/auth/admin/fake",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            runtime = {
+                "auth_strategy": "playwright-storage-state",
+                "visual_auth_credential": "FILE-WIW",
+                "auth_login_path": "/oauth-proxy-api/auth/admin/fake",
+            }
+            self.assertEqual("FILE-WIW", resolve_visual_auth_credential(runtime, {}))
+            self.assertTrue(web_auth_auto_login_configured(runtime, {}))
+
+    def test_set_visual_auth_writes_runtime_credential_to_repos_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lumen = root / "lumen"
+            (lumen / "config").mkdir(parents=True)
+            (lumen / "config" / "repos.json").write_text(
+                json.dumps({"repositories": [{"name": "digital-platform-admin", "runtime": {}}]}),
+                encoding="utf-8",
+            )
+            set_visual_auth_credential(lumen, "digital-platform-admin", "STORED-WIW")
+            payload = json.loads((lumen / "config" / "repos.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                "STORED-WIW",
+                payload["repositories"][0]["runtime"]["visual_auth_credential"],
+            )
+
+    def test_web_auth_requires_storage_file_without_auto_login(self) -> None:
+        runtime = {"auth_strategy": "playwright-storage-state"}
+        self.assertFalse(web_auth_ready(runtime, {}))
 
     def test_approved_ui_story_is_blocked_when_visual_contract_is_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
