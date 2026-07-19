@@ -180,9 +180,11 @@ Omit this section for non-UI Stories. A UI plan cannot be approved while any req
 
 ### Design Source
 
-| Screen | Figma file | Node ID | Approved reference |
-|---|---|---|---|
-| TBD | TBD | TBD | `assets/TBD.png` |
+For each Figma-backed screen, use Figma MCP during Technical Loop to read the referenced node, then commit a concise, human-readable design-context snapshot under this Story's `assets/` directory. The snapshot records the node URL/ID, capture time, layout, typography, spacing, colors, component variants, and relevant states. It is the reproducible implementation input; the approved reference image remains the visual-comparison evidence.
+
+| Screen | Figma file | Node ID | Design context snapshot | Approved reference |
+|---|---|---|---|---|
+| TBD | TBD | TBD | `assets/TBD.design.md` | `assets/TBD.png` |
 
 ### Runtime
 

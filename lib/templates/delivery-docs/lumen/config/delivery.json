@@ -2,7 +2,8 @@
   "schema_version": "1.0",
   "execution": {
     "model": "composer-2.5",
-    "sandbox": "disabled"
+    "sandbox": "disabled",
+    "approve_mcps": false
   },
   "jira": {
     "enabled": true,

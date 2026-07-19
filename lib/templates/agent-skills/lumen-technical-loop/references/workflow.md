@@ -10,6 +10,8 @@ For important decisions, add concise repository evidence: decision, `repository/
 
 If repository facts expose a business ambiguity affecting ACs, rules, user-visible behavior, actors/roles, permission/data visibility, scope, failure behavior, or promised freshness/timing/availability: keep technical status draft, show evidence and business options/consequences, ask the owner/BA to run Business Loop, and resume only after `story.md` changes and business status is ready. Do not alter `story.md` yourself. Pure implementation decisions belong in the plan.
 
+For a UI Story that cites a Figma URL, use the available Figma MCP during planning to inspect every referenced node. Commit a concise `assets/<screen>.design.md` snapshot recording the node URL/ID, capture time, layout, typography, spacing, colors, variants, and states. Put that path and the approved reference image in the Visual Delivery Contract. A screenshot is comparison evidence, not a replacement for MCP design context. If MCP cannot read a referenced node, keep the plan draft and record the blocker; do not approve it.
+
 Before approval, complete repository investigation, selected profile, questions, concrete verification, and the quality bar; no blocking TBD. Present profile/reason, repositories, approach, architecture/domain decisions, applicable data/API/permission/integration/runtime impact, verification, risks, and out-of-scope. Ask exactly:
 
 ```text

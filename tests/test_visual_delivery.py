@@ -36,9 +36,9 @@ PLAN = """# Technical Plan
 
 ### Design Source
 
-| Screen | Figma file | Node ID | Approved reference |
-|---|---|---|---|
-| Today | App | `123:456` | `assets/today.png` |
+| Screen | Figma file | Node ID | Design context snapshot | Approved reference |
+|---|---|---|---|---|
+| Today | App | `123:456` | `assets/today.design.md` | `assets/today.png` |
 
 ### Runtime
 
@@ -88,6 +88,13 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertEqual("maestro/today.yaml", contract["scenarios"][0]["maestro_flow"])
             self.assertEqual(["Today"], [item["screen"] for item in matching_scenarios(contract, "Today", "Default")])
             self.assertEqual([], matching_scenarios(contract, "Missing", "Default"))
+
+    def test_figma_contract_requires_a_committed_design_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "technical-plan.md"
+            plan = PLAN.replace("| Today | App |", "| Today | https://www.figma.com/design/file |")
+            path.write_text(plan.replace("| `assets/today.design.md` |", "| TBD |"), encoding="utf-8")
+            self.assertIn("Figma design context snapshot", validate_contract(visual_contract(path) or {}))
 
     def test_web_runtime_detection_remains_draft_after_tooling_is_found(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

@@ -178,6 +178,20 @@ SANDBOX_MODE="${CURSOR_AGENT_SANDBOX:-disabled}"
 OUTPUT_FORMAT="${CURSOR_AGENT_OUTPUT_FORMAT:-stream-json}"
 STREAM_PARTIAL="${CURSOR_AGENT_STREAM_PARTIAL:-1}"
 
+figma_mcp_approved() {
+  [[ -f "${DELIVERY_CONFIG}" ]] || return 1
+  python3 - "${DELIVERY_CONFIG}" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        print("1" if json.load(handle).get("execution", {}).get("approve_mcps") is True else "0", end="")
+except Exception:
+    print("0", end="")
+PY
+}
+
 prepare_delivery() {
   local prepare_py="${LUMEN_LIB_DIR}/prepare_delivery_run.py"
   [[ -f "${prepare_py}" ]] || fail "prepare_delivery_run.py not found"
@@ -285,6 +299,9 @@ run_delivery_agent() {
   )
   if [[ "${OUTPUT_FORMAT}" == "stream-json" && "${STREAM_PARTIAL}" == "1" ]]; then
     agent_args+=(--stream-partial-output)
+  fi
+  if [[ "${prompt}" == *"Figma MCP access is explicitly approved for this delivery."* ]] && [[ "$(figma_mcp_approved)" == "1" ]]; then
+    agent_args+=(--approve-mcps)
   fi
 
   printf 'Starting %s at %s UTC...\n' "${stage_label}" "$(date -u '+%Y-%m-%d %H:%M:%S')"

@@ -119,6 +119,32 @@ When visual feedback is useful, operate the device and request a visual session 
 """
 
 
+def figma_mcp_block(context: StoryContext) -> str:
+    contract = visual_contract(context.technical_plan)
+    execution = context.delivery_config.get("execution", {}) if isinstance(context.delivery_config, dict) else {}
+    if not isinstance(execution, dict) or execution.get("approve_mcps") is not True or contract is None:
+        return ""
+    references = [
+        row for row in contract.get("references", [])
+        if "figma.com" in str(row.get("Figma file", "")).lower() and str(row.get("Node ID", "")).strip()
+    ]
+    if not references:
+        return ""
+    sources = "\n".join(
+        f"- {row.get('Screen', 'Design')}: {row.get('Figma file')} (node {row.get('Node ID')}); "
+        f"committed snapshot: {row.get('Design context snapshot', 'not provided')}"
+        for row in references
+    )
+    return f"""# Approved Figma Design Context
+
+Figma MCP access is explicitly approved for this delivery. If the `figma` MCP server is configured and callable, read the listed nodes before implementing their mapped UI. Use its live design context to resolve implementation details; do not modify the design.
+
+{sources}
+
+If Figma MCP is unavailable or a node cannot be read, continue from the approved committed design-context snapshot and reference image in the Visual Delivery Contract. Do not treat a local Cursor GUI plugin as evidence that MCP is available in this agent session.
+"""
+
+
 def delivery_remediation_path(result_path: Path) -> Path:
     return result_path.with_name("delivery-remediation.json")
 
@@ -184,7 +210,7 @@ The previous implementation already exists in the feature worktrees. Do not rest
 
 
 def compose_delivery_prompt(context: StoryContext, remediation: bool = False) -> str:
-    prompt = compose_snippets(context) + "\n\n" + render_context_block(context) + "\n\n" + visual_iteration_block(context)
+    prompt = compose_snippets(context) + "\n\n" + render_context_block(context) + "\n\n" + visual_iteration_block(context) + "\n\n" + figma_mcp_block(context)
     if remediation:
         prompt += "\n\n" + remediation_context_block(context)
     return prompt + "\n"

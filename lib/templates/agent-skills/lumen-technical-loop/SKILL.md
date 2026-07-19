@@ -7,4 +7,4 @@ description: Use only when explicitly asked to turn one business-ready Lumen Sto
 
 # Lumen Technical Loop
 
-Read `references/workflow.md` before acting. Use the smallest sufficient plan profile and keep status in `metadata.json`; do not use a CLI approval command.
+Read `references/workflow.md` before acting. For Figma-backed UI Stories, capture the required MCP design-context snapshots before approval. Use the smallest sufficient plan profile and keep status in `metadata.json`; do not use a CLI approval command.

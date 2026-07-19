@@ -129,6 +129,11 @@ def validate_contract(contract: dict[str, Any]) -> list[str]:
         for row in contract.get("references", [])
     ):
         missing.append("Figma node or approved reference")
+    for row in contract.get("references", []):
+        figma_file = str(row.get("Figma file", "")).strip()
+        snapshot = str(row.get("Design context snapshot", "")).strip()
+        if "figma.com" in figma_file and absent(snapshot):
+            missing.append("Figma design context snapshot")
     if not contract.get("scenarios"):
         missing.append("required visual states")
     else:

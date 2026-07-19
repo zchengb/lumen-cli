@@ -631,6 +631,34 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("Full test suite", prompt)
             self.assertNotIn('"label": "PMD"', prompt)
 
+    def test_figma_mcp_is_prompted_only_when_explicitly_approved(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            story_dir = workspace / "stories" / "MBPAS-101-figma"
+            story_dir.mkdir(parents=True)
+            story_md, plan, metadata = story_dir / "story.md", story_dir / "technical-plan.md", story_dir / "metadata.json"
+            story_md.write_text("# Story\n", encoding="utf-8")
+            plan.write_text(
+                "# Plan\n\n## Visual Delivery Contract\n\n### Design Source\n\n"
+                "| Screen | Figma file | Node ID | Design context snapshot |\n"
+                "|---|---|---|---|\n"
+                "| Home | https://www.figma.com/design/demo | `12:34` | `assets/home.context.json` |\n",
+                encoding="utf-8",
+            )
+            metadata.write_text("{}\n", encoding="utf-8")
+            context = StoryContext(
+                docs_dir=workspace, workspace_root=workspace, story_dir=story_dir, story_md=story_md,
+                technical_plan=plan, metadata_path=metadata, metadata={}, repos=[], branch_name="feature/MBPAS-101-figma",
+                delivery_config={"execution": {"approve_mcps": True}}, workspace_config={},
+            )
+            prompt = compose_delivery_prompt(context)
+            self.assertIn("# Approved Figma Design Context", prompt)
+            self.assertIn("Figma MCP access is explicitly approved for this delivery.", prompt)
+            self.assertIn("node 12:34", prompt)
+            self.assertIn("assets/home.context.json", prompt)
+            context.delivery_config = {"execution": {"approve_mcps": False}}
+            self.assertNotIn("Figma MCP access is explicitly approved for this delivery.", compose_delivery_prompt(context))
+
     def test_remediation_attempt_archives_previous_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             result = Path(temp) / "delivery-result.json"

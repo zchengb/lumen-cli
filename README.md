@@ -131,6 +131,16 @@ For an eligible Story, Lumen performs the following sequence:
 
 Delivery runs are serialized within one workspace because they share control-plane state and verification resources. Multiple completed or paused Story worktrees may coexist.
 
+### Figma design context
+
+For a UI Story with a Figma Design Source, the Technical Loop stores the node ID, a committed design-context snapshot, and an approved reference in the Visual Delivery Contract. Delivery uses the snapshot and reference by default. To let a headless Cursor agent read the live node through an already configured `figma` MCP server, explicitly enable it in `lumen/config/delivery.json`:
+
+```json
+{ "execution": { "approve_mcps": true } }
+```
+
+This only approves MCP use for a delivery with a Figma contract; it does not install or configure Figma MCP. If the server is unavailable, Delivery continues from the committed snapshot and reference.
+
 ### Delivery Scheduling
 
 ```bash
