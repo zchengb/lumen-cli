@@ -13,6 +13,8 @@ import urllib.request
 from contextlib import redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "lib" / "scripts"
@@ -50,6 +52,7 @@ from dashboard_server import (  # noqa: E402
     save_publish_policy,
     save_repositories,
 )
+import dashboard_server  # noqa: E402
 from capture_jira_context import image_urls, values_for_keys  # noqa: E402
 import import_jira_story  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
@@ -79,6 +82,16 @@ def load_scan_notification_renderer():
     return module
 
 
+def load_delivery_failure_writer():
+    path = SCRIPTS / "write_delivery_failure.py"
+    spec = importlib.util.spec_from_file_location("delivery_failure_writer_test", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load delivery failure writer")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def git(path: Path, *args: str) -> None:
     completed = subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True)
     if completed.returncode != 0:
@@ -86,6 +99,68 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_delivery_failure_discards_previous_run_identity_and_outputs(self) -> None:
+        writer = load_delivery_failure_writer()
+        renderer = load_delivery_notification_renderer()
+        docs = Path("/tmp/docs")
+        context = SimpleNamespace(
+            docs_dir=docs,
+            workspace_root=docs,
+            story_dir=docs / "stories" / "MBPAS-1527-new-delivery",
+            metadata={"storyId": "MBPAS-1527", "jiraKey": "MBPAS-1527"},
+            branch_name="feature/MBPAS-1527-new-delivery",
+            repos=[SimpleNamespace(name="digital-platform-admin")],
+        )
+        delivery = writer.build_failure_payload(
+            context, "20260719-073633", "preflight", "Contract incomplete", "2026-07-19T07:36:33Z"
+        )
+        delivery["finished_at"] = "2026-07-19T07:37:33Z"
+        card = renderer.build_delivery_feishu_card("delivery.failed", delivery, {"title": "New delivery"}, docs)
+        rendered = json.dumps(card, ensure_ascii=False)
+
+        self.assertEqual("MBPAS-1527 · New delivery", card["card"]["header"]["subtitle"]["content"])
+        self.assertIn("feature/MBPAS-1527-new-delivery", rendered)
+        self.assertIn("**Duration:**  1m 00s", rendered)
+        self.assertNotIn("MBPAS-1342", rendered)
+        self.assertNotIn("/pull/", rendered)
+
+    def test_delivery_payload_keeps_the_latest_progress_when_result_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "lumen"
+            results = workspace / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(json.dumps({
+                "run_id": "new-run", "delivery_status": "failed", "story_id": "NEW-1", "docs_dir": str(Path(temp)),
+            }), encoding="utf-8")
+            (results / "delivery-result.json").write_text(json.dumps({
+                "run_id": "old-run", "delivery_status": "failed", "story_id": "OLD-1",
+            }), encoding="utf-8")
+
+            self.assertEqual("NEW-1", delivery_payload(workspace)["current"]["story_id"])
+
+    def test_retry_delivery_starts_the_failed_story_without_deleting_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp) / "docs"
+            workspace = docs / "lumen"
+            results = workspace / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(json.dumps({
+                "delivery_status": "failed", "story_id": "DEMO-1", "docs_dir": str(docs),
+            }), encoding="utf-8")
+            server = object.__new__(DashboardServer)
+            server.lumen_bin = "/test/lumen"
+            server.lumen_home = "/test/lumen-home"
+
+            with patch.object(dashboard_server, "load_story_context"), patch.object(dashboard_server.subprocess, "Popen") as launch:
+                retry = server.retry_delivery(workspace)
+
+            self.assertEqual("DEMO-1", retry["story"])
+            self.assertEqual(
+                ["/test/lumen", "delivery", "run", str(docs.resolve()), "--story", "DEMO-1"],
+                launch.call_args.args[0],
+            )
+            self.assertFalse((workspace / "history").exists())
+
     def test_delivery_runtime_parses_flags_and_resolves_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             docs = Path(temp)

@@ -6,12 +6,37 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
-from delivery_workspace import load_story_context, read_json, write_json
+from delivery_workspace import load_story_context, read_json, workspace_lumen_dir, write_json
 
 
 def now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def build_failure_payload(context: Any | None, run_id: str, phase: str, message: str, started_at: str) -> dict[str, Any]:
+    """A failure belongs only to the active run; never carry a prior result forward."""
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "delivery_status": "failed",
+        "started_at": started_at or now(),
+        "finished_at": now(),
+        "pr_urls": [],
+        "verification_results": [],
+        "failures": [{"stage": phase or "delivery", "detail": message}],
+    }
+    if context is not None:
+        payload.update({
+            "docs_dir": str(context.docs_dir),
+            "workspace_root": str(context.workspace_root),
+            "story_id": context.metadata.get("storyId") or context.story_dir.name,
+            "story_path": str(context.story_dir.relative_to(context.docs_dir)),
+            "jira_key": context.metadata.get("jiraKey", ""),
+            "branch": context.branch_name,
+            "repos_touched": [{"name": repo.name} for repo in context.repos],
+        })
+    return payload
 
 
 def main() -> int:
@@ -25,25 +50,16 @@ def main() -> int:
     args = parser.parse_args()
 
     result_path = Path(args.result).expanduser().resolve()
-    payload = read_json(result_path, {})
+    context = None
+    started_at = ""
     try:
         context = load_story_context(Path(args.docs_dir), args.story, validate_gates=False)
-        payload.setdefault("docs_dir", str(context.docs_dir))
-        payload.setdefault("workspace_root", str(context.workspace_root))
-        payload.setdefault("story_id", context.metadata.get("storyId") or context.story_dir.name)
-        payload.setdefault("story_path", str(context.story_dir.relative_to(context.docs_dir)))
-        payload.setdefault("jira_key", context.metadata.get("jiraKey", ""))
-        payload.setdefault("branch", context.branch_name)
-        payload.setdefault("repos_touched", [{"name": repo.name} for repo in context.repos])
+        progress = read_json(workspace_lumen_dir(context.workspace_root) / "results" / "delivery-progress.json", {})
+        if progress.get("run_id") == args.run_id:
+            started_at = str(progress.get("started_at") or "")
     except Exception:
         pass
-    payload.setdefault("started_at", now())
-    payload["finished_at"] = now()
-    payload["run_id"] = args.run_id or payload.get("run_id", "")
-    payload["delivery_status"] = "failed"
-    failures = payload.get("failures") if isinstance(payload.get("failures"), list) else []
-    failures.append({"stage": args.phase or "delivery", "detail": args.message})
-    payload["failures"] = failures
+    payload = build_failure_payload(context, args.run_id, args.phase, args.message, started_at)
     write_json(result_path, payload)
     return 0
 

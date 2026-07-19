@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from delivery_launchd import install as install_delivery_schedule
 from delivery_launchd import remove as remove_delivery_schedule
 from delivery_launchd import status as delivery_schedule_status
-from delivery_workspace import read_json as read_delivery_json
+from delivery_workspace import load_story_context, read_json as read_delivery_json, workspace_lumen_dir
 from jira_sync import parse_twg_json, run_twg, twg_ready
 from issue_registry import set_issue_status
 from projects_registry import find_by_slug, load_registry
@@ -528,7 +528,9 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
     result = read_delivery_json(workspace / "results" / "delivery-result.json", {})
     terminal_states = {"completed", "failed", "blocked", "dev_done", "pr_open"}
-    if str(result.get("delivery_status") or "") in terminal_states:
+    if str(result.get("delivery_status") or "") in terminal_states and (
+        not progress.get("run_id") or progress.get("run_id") == result.get("run_id")
+    ):
         current = {**progress, **result}
         current["started_at"] = progress.get("started_at") or result.get("started_at") or ""
         current["finished_at"] = progress.get("finished_at") or result.get("finished_at") or ""
@@ -689,6 +691,25 @@ class DashboardServer(ThreadingHTTPServer):
             raise ValueError("No scheduler log is available yet")
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
         return {"path": str(log_file.relative_to(workspace)), "content": "\n".join(lines[-220:])}
+
+    def retry_delivery(self, workspace: Path) -> dict[str, Any]:
+        progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
+        if str(progress.get("delivery_status") or "").lower() not in {"failed", "blocked"}:
+            raise ValueError("Only a failed or blocked delivery can be retried")
+        if (workspace / "locks" / "delivery-run").exists():
+            raise RuntimeError("A delivery run is already active")
+        docs_dir = Path(str(progress.get("docs_dir") or "")).expanduser().resolve()
+        story_ref = str(progress.get("story_id") or progress.get("jira_key") or "").strip()
+        if not story_ref or workspace_lumen_dir(docs_dir).resolve() != workspace.resolve():
+            raise ValueError("The failed delivery does not have a retryable workspace and story")
+        load_story_context(docs_dir, story_ref)
+        env = dict(os.environ, LUMEN_HOME=self.lumen_home)
+        subprocess.Popen(
+            [self.lumen_bin, "delivery", "run", str(docs_dir), "--story", story_ref],
+            cwd=docs_dir, env=env, start_new_session=True,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return {"story": story_ref, "started_at": utc_now()}
 
     def update_observability(self, workspace: Path, body: dict[str, Any]) -> dict[str, Any]:
         mode = str(body.get("capture_mode") or "").strip().lower()
@@ -874,6 +895,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 )
             if parsed.path == "/api/observability":
                 return self.respond_json(HTTPStatus.OK, {"agent_trace": self.server.update_observability(workspace, body)})
+            if parsed.path == "/api/delivery/retry":
+                return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace)})
             return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
         except (OSError, ValueError, RuntimeError) as exc:
             return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
