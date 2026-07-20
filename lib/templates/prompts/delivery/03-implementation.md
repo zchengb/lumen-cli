@@ -30,6 +30,8 @@ When Lumen invokes you with a `# Verification Remediation Context` section, this
 - Diagnose from the failed-check evidence and make the smallest correction.
 - Do not restart implementation, weaken tests, disable checks, commit, push, or create a PR.
 - Update `delivery-result.json` honestly. Lumen reruns the full verification profile after your response.
+- Preserve every existing `repos_touched` entry from the current result. Update only repositories you changed in this remediation pass.
+- Never shrink `repos_touched` to a single repository. Keep all prior `commit_subject` values unless you intentionally change that repository.
 
 ## JIRA
 

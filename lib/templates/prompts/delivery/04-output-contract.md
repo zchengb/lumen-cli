@@ -6,6 +6,8 @@ Write the run result to:
 
 Overwrite any previous file for this run.
 
+During verification remediation, merge updates into the existing result instead of replacing it with only the repositories you touched in that pass. Keep every prior `repos_touched` entry and `commit_subject` unless you intentionally change that repository.
+
 Schema:
 
 ```json

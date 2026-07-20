@@ -385,7 +385,7 @@ run_remediation_loop() {
       return 1
     fi
     [[ -f "${RESULT_FILE}" ]] || return 1
-    python3 "${remediation_py}" --result "${RESULT_FILE}" --restore || return 1
+    python3 "${remediation_py}" --result "${RESULT_FILE}" --restore --docs-dir "${DOCS_DIR}" --story "${STORY_REF}" || return 1
     progress_phase agent completed "Remediation attempt ${attempt}/${max_attempts} finished; result updated"
 
     progress_phase verification in_progress "Verification after remediation attempt ${attempt}/${max_attempts}"
@@ -511,6 +511,10 @@ run_real_delivery() {
 
   progress_phase finalize in_progress "Commit verified changes, push feature branches, and create PRs"
   printf '\n[delivery] Phase 6/8 — Commit, push, and PR\n'
+  local merge_py="${LUMEN_LIB_DIR}/delivery_result_merge.py"
+  if [[ -f "${merge_py}" ]]; then
+    python3 "${merge_py}" --result "${RESULT_FILE}" --docs-dir "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}" || true
+  fi
   local finalize_py="${LUMEN_LIB_DIR}/finalize_delivery.py"
   if [[ ! -f "${finalize_py}" ]]; then
     progress_phase finalize failed "Finalization runner not installed"

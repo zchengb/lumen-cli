@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from delivery_result_merge import stabilize_delivery_result
 from delivery_workspace import delivery_config_path, load_story_context, read_json, write_json
 
 PUBLISH_RETRY_ATTEMPTS = 3
@@ -243,6 +244,7 @@ def main() -> int:
             raise RuntimeError("Delivery publish mode must be 'pr' or 'merge'")
         if str(result.get("delivery_status", "")).strip() not in {"completed", "ready_for_finalize"}:
             raise RuntimeError("Agent result must be completed or ready_for_finalize before finalization")
+        result = stabilize_delivery_result(result, context, result_path)
         commits: list[dict[str, str]] = []
         pr_urls: list[str] = []
         touched: list[dict[str, Any]] = []

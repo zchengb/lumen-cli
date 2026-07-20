@@ -11,6 +11,7 @@ if str(LIB_DIR) not in sys.path:
 
 import finalize_delivery as finalize  # noqa: E402
 import write_delivery_failure as failure_writer  # noqa: E402
+from delivery_result_merge import merge_repos_touched  # noqa: E402
 
 
 class FinalizeDeliveryTests(unittest.TestCase):
@@ -50,6 +51,24 @@ class FinalizeDeliveryTests(unittest.TestCase):
         )
         self.assertEqual("mbpass-app: Agent did not provide commit_subject", payload["failures"][0]["detail"])
         self.assertEqual([{"status": "passed"}], payload["verification_results"])
+
+    def test_merge_repos_touched_restores_missing_repositories(self) -> None:
+        baseline = [
+            {"name": "mbpass-app", "commit_subject": "[lumen] #MBPAS-1331 feat: app heartbeat"},
+            {"name": "mbpass-business", "commit_subject": "[lumen] #MBPAS-1331 feat: business changes"},
+        ]
+        current = [
+            {
+                "name": "mbpass-business",
+                "commit_subject": "[lumen] #MBPAS-1331 fix: remediate migration",
+                "files_changed": ["src/main/resources/db/migration/foo.sql"],
+            }
+        ]
+        merged = merge_repos_touched(current, baseline)
+        names = [item["name"] for item in merged]
+        self.assertEqual(["mbpass-app", "mbpass-business"], names)
+        self.assertEqual("[lumen] #MBPAS-1331 feat: app heartbeat", merged[0]["commit_subject"])
+        self.assertEqual("[lumen] #MBPAS-1331 fix: remediate migration", merged[1]["commit_subject"])
 
 
 if __name__ == "__main__":
