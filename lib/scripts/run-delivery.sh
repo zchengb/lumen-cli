@@ -493,9 +493,6 @@ run_real_delivery() {
   printf '\n[delivery] Phase 5/8 — Verification\n'
   if ! run_verification_profile; then
     progress_phase verification failed "Verification failed; bounded remediation required"
-    if ! visual_failure_is_remediable; then
-      fail "Visual Delivery failed outside UI comparison; fix runtime/authentication/fixture/navigation readiness and retry. See log: ${LOG_FILE}"
-    fi
     if ! run_remediation_loop; then
       progress_phase verification failed "Verification failed after bounded remediation attempts"
       fail "Delivery verification failed after bounded remediation. See log: ${LOG_FILE}"

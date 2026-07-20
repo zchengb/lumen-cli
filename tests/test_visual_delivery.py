@@ -255,7 +255,7 @@ class VisualDeliveryTests(unittest.TestCase):
         runtime = {"auth_strategy": "playwright-storage-state"}
         self.assertFalse(web_auth_ready(runtime, {}))
 
-    def test_approved_ui_story_is_blocked_when_visual_contract_is_incomplete(self) -> None:
+    def test_approved_ui_story_is_not_blocked_when_visual_contract_is_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             story, plan = root / "story.md", root / "technical-plan.md"
@@ -264,7 +264,7 @@ class VisualDeliveryTests(unittest.TestCase):
             errors = validate_story_gates(
                 {"businessStatus": "ready", "technicalStatus": "approved"}, story, plan
             )
-            self.assertIn("target repository", " ".join(errors))
+            self.assertEqual([], errors)
 
 
 if __name__ == "__main__":

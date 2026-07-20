@@ -69,7 +69,16 @@
     "install_strategy": "runtime_config",
     "allowed_commands": [],
     "blocked_command_patterns": ["install", "build", "publish", "deploy", "release"],
-    "validation": "delivery_visual_runtime",
+    "validation": "delivery_code_verification",
+    "auto_fix_policy": "high_only_pr_allowed_after_delivery_verification"
+  },
+  "web-review-only": {
+    "runner": "local",
+    "language": "javascript",
+    "install_strategy": "none",
+    "allowed_commands": [],
+    "blocked_command_patterns": ["publish", "deploy", "release"],
+    "validation": "delivery_code_verification",
     "auto_fix_policy": "high_only_pr_allowed_after_delivery_verification"
   },
   "react-native-ios-visual": {
@@ -79,7 +88,7 @@
     "allowed_commands": [],
     "blocked_command_patterns": ["install", "build", "publish", "deploy", "release"],
     "native_build": "runtime_config_build_and_install",
-    "validation": "delivery_visual_runtime",
+    "validation": "delivery_code_verification",
     "auto_fix_policy": "high_only_pr_allowed_after_delivery_verification"
   },
   "local-generic-review-only": {

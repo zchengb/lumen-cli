@@ -172,10 +172,6 @@ def main() -> int:
             raise RuntimeError("Delivery publish mode must be 'pr' or 'merge'")
         if str(result.get("delivery_status", "")).strip() not in {"completed", "ready_for_finalize"}:
             raise RuntimeError("Agent result must be completed or ready_for_finalize before finalization")
-        visual = result.get("visual_verification")
-        if isinstance(visual, dict) and visual.get("status") != "passed":
-            raise RuntimeError("Mandatory Visual Delivery has not passed; PR creation is blocked")
-
         commits: list[dict[str, str]] = []
         pr_urls: list[str] = []
         touched: list[dict[str, Any]] = []

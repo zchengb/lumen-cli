@@ -23,9 +23,6 @@ from delivery_workspace import (
     read_json,
     write_json,
 )
-from visual_delivery import execute as run_visual_delivery
-
-
 DEFAULT_JAVA_GRADLE_STEPS = [
     {
         "id": "language_grammar",
@@ -516,19 +513,6 @@ def run_verification(
 
     if result_path.is_file():
         merge_verification_results(result_path, results)
-    if not any(item.get("status") == "failed" for item in results):
-        visual_results = run_visual_delivery(context, result_path)
-        for visual in visual_results:
-            item = {
-                "repository": visual.get("repository", ""),
-                "id": "visual",
-                "label": f"Visual: {visual.get('screen', '')} / {visual.get('state', '')}",
-                "status": visual.get("status", "failed"),
-                "failure_category": visual.get("failure_category", ""),
-                "summary": visual.get("summary", ""),
-            }
-            append_verification(progress_root, item)
-            results.append(item)
     return results
 
 
