@@ -54,6 +54,58 @@ def runtime_context_section(workspace_root: Path) -> str:
     return "".join(lines)
 
 
+def read_snippet(prompts_dir: Path, name: str) -> str:
+    snippet_path = prompts_dir / name
+    if not snippet_path.is_file():
+        raise FileNotFoundError(f"Prompt snippet not found: {snippet_path}")
+    return snippet_path.read_text(encoding="utf-8").strip()
+
+
+def catalog_when_applies(when: str) -> bool:
+    normalized = str(when or "always").strip().casefold()
+    return normalized in {"", "always", "required"}
+
+
+def catalog_priority(when: str) -> str:
+    return "REQUIRED" if str(when or "").strip().casefold() == "required" else "Read when needed"
+
+
+def render_prompt_catalog(prompts_dir: Path, manifest: dict) -> str:
+    entries = manifest.get("catalog")
+    if not isinstance(entries, list):
+        return ""
+    rows: list[str] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            file_name = entry
+            title = Path(entry).stem
+            description = "Reference scan snippet."
+            when = "always"
+        elif isinstance(entry, dict):
+            file_name = str(entry.get("file", "")).strip()
+            title = str(entry.get("title") or Path(file_name).stem).strip()
+            description = str(entry.get("description", "")).strip() or "Reference scan snippet."
+            when = str(entry.get("when", "always")).strip()
+        else:
+            continue
+        if not file_name or not catalog_when_applies(when):
+            continue
+        snippet_path = prompts_dir / file_name
+        if not snippet_path.is_file():
+            raise FileNotFoundError(f"Prompt snippet not found: {snippet_path}")
+        rows.append(f"| `{snippet_path}` | {title} | {catalog_priority(when)} | {description} |")
+    if not rows:
+        return ""
+    return (
+        "# Scan Prompt Catalog\n\n"
+        "Lumen does not inline every reference snippet. Read the files below from disk when you need them. "
+        "Read every snippet marked `REQUIRED` before classifying findings or writing `scan-result.json`.\n\n"
+        "| Path | Snippet | When | Summary |\n"
+        "|---|---|---|---|\n"
+        + "\n".join(rows)
+    )
+
+
 def compose_prompt(workspace_root: Path) -> str:
     prompts_dir = workspace_root / "prompts" / "scan"
     manifest_path = prompts_dir / "manifest.json"
@@ -69,16 +121,23 @@ def compose_prompt(workspace_root: Path) -> str:
 
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict):
+            raise ValueError(f"Invalid scan prompt manifest: {manifest_path}")
+
+        catalog = manifest.get("catalog")
+        if isinstance(catalog, list):
+            for name in manifest.get("inline", ["01-role-and-mission.md"]):
+                parts.append(read_snippet(prompts_dir, str(name)))
+            catalog_block = render_prompt_catalog(prompts_dir, manifest)
+            if catalog_block:
+                parts.append(catalog_block)
+            return "\n\n".join(parts) + "\n"
+
         snippets = manifest.get("snippets", [])
         if not snippets:
             raise ValueError(f"No snippets listed in {manifest_path}")
-
         for name in snippets:
-            snippet_path = prompts_dir / name
-            if not snippet_path.is_file():
-                raise FileNotFoundError(f"Prompt snippet not found: {snippet_path}")
-            parts.append(snippet_path.read_text(encoding="utf-8").strip())
-
+            parts.append(read_snippet(prompts_dir, str(name)))
         return "\n\n".join(parts) + "\n"
 
     if legacy_prompt.is_file():

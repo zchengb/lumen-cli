@@ -602,8 +602,71 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             (REPO_ROOT / "lib" / "templates" / "prompts" / "scan" / "manifest.json").read_text(encoding="utf-8")
         )
         self.assertIn("# Delivery Agent Role", delivery_prompt)
-        for scan_snippet in scan_manifest["snippets"]:
-            self.assertNotIn(scan_snippet, delivery_prompt)
+        self.assertIn("# Delivery Prompt Catalog", delivery_prompt)
+        self.assertNotIn("# Implementation Rules", delivery_prompt)
+        scan_files = [
+            *(scan_manifest.get("inline") or []),
+            *[
+                entry if isinstance(entry, str) else entry.get("file", "")
+                for entry in (scan_manifest.get("catalog") or scan_manifest.get("snippets") or [])
+            ],
+        ]
+        for scan_snippet in scan_files:
+            if scan_snippet:
+                self.assertNotIn(scan_snippet, delivery_prompt)
+
+    def test_delivery_prompt_catalog_marks_visual_snippet_required(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            story_dir = workspace / "stories" / "MBPAS-101-visual"
+            story_dir.mkdir(parents=True)
+            plan = story_dir / "technical-plan.md"
+            plan.write_text(
+                "# Plan\n\n## Visual Delivery Contract\n\n### Visual State Matrix\n\n"
+                "| Screen | State | Fixture | Reference | Stable marker |\n"
+                "|---|---|---|---|---|\n"
+                "| Dealer | Disabled | /mbtw/message/create | assets/disabled.png | dealer-filter-section |\n\n"
+                "### Visual Verification\n\n"
+                "| Screen | State | Comparison | Maximum difference |\n"
+                "|---|---|---|---|\n"
+                "| Dealer | Disabled | Full content area | 1% |\n\n"
+                "### Design Source\n\n"
+                "| Screen | Figma file | Node ID | Approved reference | Design context snapshot |\n"
+                "|---|---|---|---|---|\n"
+                "| Dealer | https://www.figma.com/design/demo | `12:34` | assets/ref.png | assets/ref.context.json |\n\n"
+                "### Figma-to-Code Component Mapping\n\n"
+                "| Figma component | Code component | Notes |\n"
+                "|---|---|---|\n"
+                "| Tag | DealerTag | reuse |\n\n"
+                "### Platform Rules\n\nUse web.\n\n"
+                "### Runtime\n\n"
+                "| Property | Value |\n|---|---|\n"
+                "| repository | digital-platform-admin |\n"
+                "| runtime_profile | web-review-only |\n"
+                "| platform | web |\n"
+                "| navigation | /mbtw/message/create |\n"
+                "| authentication | fake login |\n",
+                encoding="utf-8",
+            )
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=story_dir,
+                story_md=story_dir / "story.md",
+                technical_plan=plan,
+                metadata_path=story_dir / "metadata.json",
+                metadata={},
+                repos=[],
+                branch_name="feature/MBPAS-101-visual",
+                delivery_config={},
+                workspace_config={},
+            )
+            prompt = compose_delivery_prompt(context)
+            self.assertIn("05-visual-delivery.md", prompt)
+            self.assertIn("REQUIRED", prompt)
+            self.assertIn("# Visual State Matrix (verify every row)", prompt)
+            self.assertIn("Dealer | Disabled", prompt)
+            self.assertNotIn("# Implementation Rules", prompt.split("# Delivery Context")[0])
 
     def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -636,6 +699,48 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("# Workspace Scan Prompt", compose_prompt(workspace / "lumen"))
             self.assertNotIn("Delivery Prompt", compose_prompt(workspace / "lumen"))
             self.assertEqual("# Workspace Delivery Prompt", compose_snippets(context))
+
+    def test_scan_prompt_catalog_is_used_instead_of_full_inline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "lumen"
+            scan_dir = workspace / "prompts" / "scan"
+            scan_dir.mkdir(parents=True)
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (scan_dir / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "inline": ["01-role-and-mission.md"],
+                        "catalog": [
+                            {
+                                "file": "09-severity-guideline.md",
+                                "title": "Severity guideline",
+                                "description": "High Medium Low rules",
+                                "when": "required",
+                            },
+                            {
+                                "file": "02-pipeline.md",
+                                "title": "Pipeline",
+                                "description": "Scan sequence",
+                                "when": "always",
+                            },
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (scan_dir / "01-role-and-mission.md").write_text("# Role And Mission\n\nScan role.\n", encoding="utf-8")
+            (scan_dir / "09-severity-guideline.md").write_text("## Severity Guideline\n\nHigh only.\n", encoding="utf-8")
+            (scan_dir / "02-pipeline.md").write_text("## Pipeline\n\nStep one.\n", encoding="utf-8")
+
+            prompt = compose_prompt(workspace)
+            self.assertIn("# Role And Mission", prompt)
+            self.assertIn("# Scan Prompt Catalog", prompt)
+            self.assertIn("09-severity-guideline.md", prompt)
+            self.assertIn("REQUIRED", prompt)
+            self.assertIn("Read when needed", prompt)
+            self.assertNotIn("## Severity Guideline", prompt)
+            self.assertNotIn("## Pipeline", prompt)
 
     def test_workspace_coding_guideline_overrides_cli_default_for_delivery(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -742,6 +847,59 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("assets/home.context.json", prompt)
             context.delivery_config = {"execution": {"approve_mcps": False}}
             self.assertNotIn("Figma MCP access is explicitly approved for this delivery.", compose_delivery_prompt(context))
+
+    def test_quick_login_block_is_injected_from_repos_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            lumen = workspace / "lumen" / "config"
+            lumen.mkdir(parents=True)
+            (lumen / "repos.json").write_text(
+                json.dumps(
+                    {
+                        "repositories": [
+                            {
+                                "name": "digital-platform-admin",
+                                "path": str(workspace / "repos" / "digital-platform-admin"),
+                                "runtime_profile": "web-review-only",
+                                "runtime": {
+                                    "platform": "web",
+                                    "start_command": "yarn start:dev",
+                                    "base_url": "http://127.0.0.1:3000",
+                                    "auth_login_path": "/oauth-proxy-api/auth/admin/fake",
+                                    "auth_login_field": "wiw",
+                                    "visual_auth_credential": "TEST-WIW",
+                                },
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            story_dir = workspace / "stories" / "MBPAS-200-login"
+            story_dir.mkdir(parents=True)
+            story_md = story_dir / "story.md"
+            plan = story_dir / "technical-plan.md"
+            metadata = story_dir / "metadata.json"
+            story_md.write_text("# Story\n", encoding="utf-8")
+            plan.write_text("# Plan\n", encoding="utf-8")
+            metadata.write_text("{}\n", encoding="utf-8")
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=story_dir,
+                story_md=story_md,
+                technical_plan=plan,
+                metadata_path=metadata,
+                metadata={},
+                repos=[RepoTarget("digital-platform-admin", workspace / "repos" / "digital-platform-admin", workspace / "lumen" / "worktrees" / "demo" / "digital-platform-admin", "master")],
+                branch_name="feature/MBPAS-200-login",
+                delivery_config={},
+                workspace_config={},
+            )
+            prompt = compose_delivery_prompt(context)
+            self.assertIn("# Quick Login", prompt)
+            self.assertIn("POST http://127.0.0.1:3000/oauth-proxy-api/auth/admin/fake", prompt)
+            self.assertIn("TEST-WIW", prompt)
 
     def test_remediation_attempt_archives_previous_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

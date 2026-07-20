@@ -1,19 +1,81 @@
 {
-  "schema_version": "1.0",
-  "description": "Ordered scan prompt snippets. Composed at scan time by compose_scan_prompt.py.",
-  "snippets": [
-    "01-role-and-mission.md",
-    "02-pipeline.md",
-    "03-configuration.md",
-    "04-workspace-and-worktrees.md",
-    "05-review-only-mode.md",
-    "06-issue-registry.md",
-    "07-error-handling.md",
-    "08-github-pr-and-git.md",
-    "09-severity-guideline.md",
-    "10-findings-and-auto-fix.md",
-    "11-output-contract.md",
-    "12-secrets-and-safety.md",
-    "13-console-summary.md"
+  "schema_version": "2.0",
+  "description": "Scan prompt catalog. Core rules are inlined; reference snippets are listed for on-demand reading.",
+  "inline": [
+    "01-role-and-mission.md"
+  ],
+  "catalog": [
+    {
+      "file": "02-pipeline.md",
+      "title": "Pipeline",
+      "description": "End-to-end scan sequence from load env through review, result write, and handoff.",
+      "when": "always"
+    },
+    {
+      "file": "03-configuration.md",
+      "title": "Configuration model",
+      "description": "Where workspace config lives and what must stay out of hardcoded prompts.",
+      "when": "always"
+    },
+    {
+      "file": "04-workspace-and-worktrees.md",
+      "title": "Workspace and worktrees",
+      "description": "Worktree isolation, no direct repo edits, and no push/gh during the scan.",
+      "when": "always"
+    },
+    {
+      "file": "05-review-only-mode.md",
+      "title": "Review-only mode",
+      "description": "Runtime profiles as safety labels; blocked install/build/test/lint commands.",
+      "when": "always"
+    },
+    {
+      "file": "06-issue-registry.md",
+      "title": "Issue registry",
+      "description": "Persistent finding registry path, statuses, and dedupe rules.",
+      "when": "always"
+    },
+    {
+      "file": "07-error-handling.md",
+      "title": "Error handling",
+      "description": "Fail loudly but safely; how to record blockers without unsafe recovery.",
+      "when": "always"
+    },
+    {
+      "file": "08-github-pr-and-git.md",
+      "title": "GitHub PR and git",
+      "description": "Post-scan PR creation boundaries; what the agent must not push during the run.",
+      "when": "always"
+    },
+    {
+      "file": "09-severity-guideline.md",
+      "title": "Severity guideline",
+      "description": "Official High/Medium/Low classification rules for every finding.",
+      "when": "required"
+    },
+    {
+      "file": "10-findings-and-auto-fix.md",
+      "title": "Findings and auto-fix",
+      "description": "Required finding fields and when a High finding may get a local auto-fix commit.",
+      "when": "required"
+    },
+    {
+      "file": "11-output-contract.md",
+      "title": "Output contract",
+      "description": "scan-result.json schema and fields the wrapper fills after the agent exits.",
+      "when": "required"
+    },
+    {
+      "file": "12-secrets-and-safety.md",
+      "title": "Secrets and safety",
+      "description": "How to redact credentials and keep sensitive values out of reports and PRs.",
+      "when": "always"
+    },
+    {
+      "file": "13-console-summary.md",
+      "title": "Console summary",
+      "description": "Short final console summary format after the scan completes.",
+      "when": "always"
+    }
   ]
 }

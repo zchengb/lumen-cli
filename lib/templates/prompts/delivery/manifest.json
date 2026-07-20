@@ -1,9 +1,33 @@
 {
-  "snippets": [
-    "01-role.md",
-    "02-workspace.md",
-    "03-implementation.md",
-    "04-output-contract.md",
-    "05-visual-delivery.md"
+  "schema_version": "2.0",
+  "description": "Delivery prompt catalog. Core rules are inlined; reference snippets are listed for on-demand reading.",
+  "inline": [
+    "01-role.md"
+  ],
+  "catalog": [
+    {
+      "file": "02-workspace.md",
+      "title": "Workspace and worktrees",
+      "description": "Prepared worktree paths, branch safety, commit-subject preparation, and no-push rules.",
+      "when": "always"
+    },
+    {
+      "file": "03-implementation.md",
+      "title": "Implementation rules",
+      "description": "Step-by-step delivery flow, verification boundaries, remediation, and JIRA handling.",
+      "when": "always"
+    },
+    {
+      "file": "04-output-contract.md",
+      "title": "Delivery output contract",
+      "description": "delivery-result.json schema, allowed statuses, and fields Lumen fills after verification.",
+      "when": "always"
+    },
+    {
+      "file": "05-visual-delivery.md",
+      "title": "Visual delivery QA",
+      "description": "Mandatory rendered UI inspection checklist when the plan has a Visual Delivery Contract.",
+      "when": "visual_contract"
+    }
   ]
 }

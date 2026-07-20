@@ -14,7 +14,7 @@ from delivery_workspace import (
     read_json,
     workspace_lumen_dir,
 )
-from visual_delivery import visual_contract
+from visual_delivery import repo_config_entry, repos_config, resolve_visual_auth_credential, visual_contract
 
 
 def lumen_home() -> Path:
@@ -37,25 +37,93 @@ def delivery_prompts_dir(context: StoryContext | None = None) -> Path:
     return lumen_home() / "templates" / "prompts" / "delivery"
 
 
-def compose_snippets(context: StoryContext | None = None) -> str:
-    prompts_dir = delivery_prompts_dir(context)
+def load_manifest(prompts_dir: Path) -> dict:
     manifest_path = prompts_dir / "manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Delivery prompt manifest not found: {manifest_path}")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError(f"Invalid delivery prompt manifest: {manifest_path}")
+    return manifest
+
+
+def read_snippet(prompts_dir: Path, name: str, context: StoryContext | None) -> str:
+    snippet_path = prompts_dir / name
+    if name == "05-visual-delivery.md" and not snippet_path.is_file():
+        snippet_path = lumen_home() / "templates" / "prompts" / "delivery" / name
+    if not snippet_path.is_file():
+        raise FileNotFoundError(f"Delivery prompt snippet not found: {snippet_path}")
+    return snippet_path.read_text(encoding="utf-8").strip()
+
+
+def catalog_when_applies(when: str, context: StoryContext | None) -> bool:
+    normalized = str(when or "always").strip().casefold()
+    if normalized in {"", "always"}:
+        return True
+    if normalized == "visual_contract":
+        return context is not None and visual_contract(context.technical_plan) is not None
+    return True
+
+
+def render_prompt_catalog(prompts_dir: Path, manifest: dict, context: StoryContext | None) -> str:
+    entries = manifest.get("catalog")
+    if not isinstance(entries, list):
+        return ""
+    rows: list[str] = []
+    for entry in entries:
+        if isinstance(entry, str):
+            file_name = entry
+            title = Path(entry).stem
+            description = "Reference delivery snippet."
+            when = "always"
+        elif isinstance(entry, dict):
+            file_name = str(entry.get("file", "")).strip()
+            title = str(entry.get("title") or Path(file_name).stem).strip()
+            description = str(entry.get("description", "")).strip() or "Reference delivery snippet."
+            when = str(entry.get("when", "always")).strip()
+        else:
+            continue
+        if not file_name or not catalog_when_applies(when, context):
+            continue
+        snippet_path = prompts_dir / file_name
+        if not snippet_path.is_file() and file_name == "05-visual-delivery.md":
+            snippet_path = lumen_home() / "templates" / "prompts" / "delivery" / file_name
+        if not snippet_path.is_file():
+            raise FileNotFoundError(f"Delivery prompt snippet not found: {snippet_path}")
+        priority = "REQUIRED" if when in {"visual_contract", "required"} else "Read when needed"
+        rows.append(f"| `{snippet_path}` | {title} | {priority} | {description} |")
+    if not rows:
+        return ""
+    return (
+        "# Delivery Prompt Catalog\n\n"
+        "Lumen does not inline every reference snippet. Read the files below from disk when you need them.\n\n"
+        "| Path | Snippet | When | Summary |\n"
+        "|---|---|---|---|\n"
+        + "\n".join(rows)
+    )
+
+
+def compose_snippets(context: StoryContext | None = None) -> str:
+    prompts_dir = delivery_prompts_dir(context)
+    manifest = load_manifest(prompts_dir)
+    catalog = manifest.get("catalog")
+    if isinstance(catalog, list):
+        parts: list[str] = []
+        for name in manifest.get("inline", ["01-role.md"]):
+            parts.append(read_snippet(prompts_dir, str(name), context))
+        catalog_block = render_prompt_catalog(prompts_dir, manifest, context)
+        if catalog_block:
+            parts.append(catalog_block)
+        return "\n\n".join(parts)
+
     snippets = manifest.get("snippets", [])
     if context is not None and visual_contract(context.technical_plan) is not None and "05-visual-delivery.md" not in snippets:
         snippets = [*snippets, "05-visual-delivery.md"]
-    parts: list[str] = []
+    parts = []
     for name in snippets:
         if name == "05-visual-delivery.md" and (context is None or visual_contract(context.technical_plan) is None):
             continue
-        snippet_path = prompts_dir / name
-        if name == "05-visual-delivery.md" and not snippet_path.is_file():
-            snippet_path = lumen_home() / "templates" / "prompts" / "delivery" / name
-        if not snippet_path.is_file():
-            raise FileNotFoundError(f"Delivery prompt snippet not found: {snippet_path}")
-        parts.append(snippet_path.read_text(encoding="utf-8").strip())
+        parts.append(read_snippet(prompts_dir, str(name), context))
     return "\n\n".join(parts)
 
 
@@ -110,12 +178,80 @@ Delivery result file: {delivery_result_path(context.workspace_root)}
 """
 
 
+def agent_quick_login_block(context: StoryContext) -> str:
+    config = read_json(repos_config(context.workspace_root), {"repositories": []})
+    sections: list[str] = []
+    for repo in context.repos:
+        entry = repo_config_entry(config, repo.name)
+        if not entry or not isinstance(entry.get("runtime"), dict):
+            continue
+        runtime = entry["runtime"]
+        platform = str(runtime.get("platform", "")).strip()
+        lines = [f"### {repo.name}"]
+        if runtime.get("start_command"):
+            lines.append(f"- Start: `{runtime['start_command']}`")
+        if runtime.get("metro_command"):
+            lines.append(f"- Metro: `{runtime['metro_command']}`")
+        if runtime.get("base_url"):
+            lines.append(f"- Base URL: `{runtime['base_url']}`")
+        login_path = str(runtime.get("auth_login_path", "")).strip()
+        login_field = str(runtime.get("auth_login_field", "wiw")).strip() or "wiw"
+        credential = resolve_visual_auth_credential(runtime, {})
+        if platform == "web" and login_path:
+            base = str(runtime.get("base_url", "")).rstrip("/")
+            lines.append(
+                f"- Quick login: `POST {base}{login_path}` with JSON body `{{\"{login_field}\": \"<credential>\"}}`"
+            )
+            if credential:
+                lines.append(f"- Credential (`{login_field}`): `{credential}`")
+            else:
+                lines.append(
+                    f"- Credential: not set; run `lumen config set-visual-auth {repo.name} <value>` before delivery"
+                )
+        elif credential:
+            lines.append(f"- Auth credential: `{credential}`")
+        notes = str(runtime.get("agent_auth_notes", "")).strip()
+        if notes:
+            lines.append(f"- Notes: {notes}")
+        if len(lines) > 1:
+            sections.append("\n".join(lines))
+    if not sections:
+        return ""
+    return "# Quick Login\n\nUse these workspace auth instructions before inspecting rendered UI. Automated Playwright login is disabled; authenticate yourself with the steps below.\n\n" + "\n\n".join(sections)
+
+
+def visual_state_matrix_block(context: StoryContext) -> str:
+    contract = visual_contract(context.technical_plan)
+    if contract is None:
+        return ""
+    lines = [
+        "# Visual State Matrix (verify every row)",
+        "",
+        "Complete rendered visual QA for each state before handoff. Read `05-visual-delivery.md` from the Delivery Prompt Catalog and follow its checklist.",
+        "",
+        "| Screen | State | Fixture / route | Reference | Compare |",
+        "|---|---|---|---|---|",
+    ]
+    for scenario in contract.get("scenarios", []):
+        lines.append(
+            "| {screen} | {state} | {fixture} | {reference} | {comparison} ≤ {threshold} |".format(
+                screen=scenario.get("screen", ""),
+                state=scenario.get("state", ""),
+                fixture=scenario.get("fixture", ""),
+                reference=scenario.get("reference", ""),
+                comparison=scenario.get("comparison", "Full content area"),
+                threshold=scenario.get("maximum_difference", "approved design"),
+            )
+        )
+    return "\n".join(lines)
+
+
 def visual_iteration_block(context: StoryContext) -> str:
     if visual_contract(context.technical_plan) is None:
         return ""
-    return f"""# Visual Iteration
+    return """# Visual Iteration
 
-When visual feedback is useful, operate the device and request a visual session on demand. Lumen bootstraps the runtime only for that request; inspect the resulting screenshot and evidence yourself, then make the smallest correction. The final delivery verification still runs the complete matrix.
+Visual QA is agent-owned. Start the app, authenticate with `# Quick Login` when present, inspect each Visual State Matrix row in a real browser or device, and fix visual defects before handoff. Lumen does not run automated screenshot comparison during delivery verification.
 """
 
 
@@ -210,7 +346,19 @@ The previous implementation already exists in the feature worktrees. Do not rest
 
 
 def compose_delivery_prompt(context: StoryContext, remediation: bool = False) -> str:
-    prompt = compose_snippets(context) + "\n\n" + render_context_block(context) + "\n\n" + visual_iteration_block(context) + "\n\n" + figma_mcp_block(context)
+    prompt = (
+        compose_snippets(context)
+        + "\n\n"
+        + render_context_block(context)
+        + "\n\n"
+        + agent_quick_login_block(context)
+        + "\n\n"
+        + visual_state_matrix_block(context)
+        + "\n\n"
+        + visual_iteration_block(context)
+        + "\n\n"
+        + figma_mcp_block(context)
+    )
     if remediation:
         prompt += "\n\n" + remediation_context_block(context)
     return prompt + "\n"
