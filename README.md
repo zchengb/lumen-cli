@@ -210,6 +210,57 @@ lumen config set-scan-window 14 --project <project-slug>
 
 Jira integration uses the locally authenticated TWG CLI. Configure it through `lumen config set-jira`; authenticate TWG separately before scheduled or delivery operations.
 
+### Jira and TWG OAuth token refresh
+
+Lumen does not store Jira credentials. When Jira sync is enabled, it calls the locally installed [TWG CLI](https://developer.atlassian.com/cloud/twg-cli/) using OAuth tokens in `~/.config/twg/auth.conf`.
+
+TWG access tokens are short-lived (typically about one hour). TWG is designed to refresh them automatically with a refresh token. If refresh fails or the session is idle for too long, Jira steps can fail with `AUTH_EXPIRED` even though `twg doctor` passed earlier.
+
+**What Lumen refreshes automatically**
+
+When Jira sync is enabled for the workspace, Lumen runs `twg auth refresh --force` before:
+
+- a scheduled or manual **scan** starts
+- a scheduled or manual **delivery** run starts
+- the delivery scheduler reads Jira status
+- the Dashboard **Retry** action resets a failed delivery in Jira
+- post-scan Jira issue creation
+- delivery Jira transitions and comments (including at the end of long runs)
+
+If Jira sync is disabled in `config/common.json` or `config/delivery.json`, Lumen skips the refresh call.
+
+**What you should configure on the machine**
+
+Enable TWG background upkeep so tokens stay fresh during long scan or delivery runs (often 30–60+ minutes):
+
+```bash
+twg upkeep enable
+twg auth refresh --force
+twg doctor
+```
+
+Upkeep runs on a per-user schedule and refreshes OAuth credentials before they expire. Lumen’s start-of-run refresh does not replace upkeep for runs that stay active longer than one access-token lifetime.
+
+**When re-login is required**
+
+Refresh tokens eventually require interactive re-authentication, for example after roughly 30 days without use or if the credential is revoked. In that case:
+
+```bash
+twg login --force
+twg doctor
+```
+
+There is no permanent “forever” personal access token for TWG. For fully headless automation outside a logged-in user session, use your organization’s TWG OAuth service-account setup ([Atlassian docs](https://support.atlassian.com/organization-administration/docs/configure-oauth-2-1-for-teamwork-graph-cli/)).
+
+**Manual refresh**
+
+```bash
+python3 ~/.lumen/lib/scripts/jira_sync.py refresh --scan-workspace <workspace>/lumen
+python3 ~/.lumen/lib/scripts/jira_sync.py refresh --delivery-workspace <workspace>/lumen
+```
+
+These commands refresh only when Jira sync is enabled for that workspace.
+
 ## Command Reference
 
 | Command | Purpose |

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from delivery_workspace import workspace_lumen_dir
-from jira_sync import parse_twg_json, run_twg, twg_ready
+from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, twg_ready
 
 
 MAX_ACTIVITY_EVENTS = 200
@@ -71,6 +71,9 @@ def story_candidates(docs_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
 def current_jira_status(jira_key: str) -> str:
     ready, reason = twg_ready()
     if not ready:
+        raise RuntimeError(reason)
+    refreshed, reason = refresh_twg_auth(force=True)
+    if not refreshed:
         raise RuntimeError(reason)
     code, output = run_twg(["jira", "workitem", "get", jira_key, "-o", "json"])
     if code != 0:

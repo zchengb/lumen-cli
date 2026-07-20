@@ -25,7 +25,7 @@ from delivery_launchd import status as delivery_schedule_status
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees
 from delivery_workspace import load_story_context, read_json as read_delivery_json, workspace_lumen_dir
 from jira_delivery_sync import add_delivery_comment, jira_delivery_config, should_sync_jira, transition_issue
-from jira_sync import parse_twg_json, run_twg, twg_ready
+from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, twg_ready
 from issue_registry import set_issue_status
 from projects_registry import find_by_slug, load_registry
 from scan_launchd import install as install_scan_schedule
@@ -712,6 +712,9 @@ class DashboardServer(ThreadingHTTPServer):
             ((delivery_config.get("automation") or {}).get("scheduled_delivery") or {}).get("required_jira_status") or "Ready for Dev"
         ).strip()
         if jira_enabled and context.metadata.get("jiraKey") and reset_status:
+            refreshed, reason = refresh_twg_auth(force=True)
+            if not refreshed:
+                raise RuntimeError(reason)
             transition_issue(str(context.metadata["jiraKey"]), reset_status, jira_config)
             add_delivery_comment(str(context.metadata["jiraKey"]), "Lumen Delivery · Reset\n\n- Failed run reset; a new delivery run will start.", jira_config)
         cleaned = cleanup_delivery_worktrees(docs_dir, story_ref)

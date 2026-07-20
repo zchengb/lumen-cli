@@ -254,6 +254,15 @@ refresh_scan_worktrees() {
   }
 }
 
+refresh_twg_auth() {
+  local refresh_py="${LUMEN_LIB_DIR}/jira_sync.py"
+  [[ -f "${refresh_py}" ]] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  if ! python3 "${refresh_py}" refresh --scan-workspace "${WORKSPACE_ROOT}" 2>&1 | tee -a "${LOG_FILE}"; then
+    printf 'Warning: TWG auth refresh failed. JIRA sync may fail after this scan.\n' >&2
+  fi
+}
+
 run_real_scan() {
   command -v agent >/dev/null 2>&1 || fail "Cursor CLI 'agent' was not found in PATH. Install it from https://cursor.com/cli before running a scan."
   if [[ -z "${CURSOR_API_KEY:-}" ]] && ! agent status >/dev/null 2>&1; then
@@ -264,6 +273,8 @@ run_real_scan() {
   fi
   local scan_prompt
   scan_prompt="$(load_scan_prompt)" || fail "Scan prompt not found. Run 'lumen init' or 'lumen upgrade --project <slug>' in this workspace first."
+
+  refresh_twg_auth
 
   refresh_scan_worktrees refresh || true
 

@@ -7,11 +7,15 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from delivery_workspace import delivery_config_path, load_story_context, read_json, write_json
+
+PUBLISH_RETRY_ATTEMPTS = 3
+PUBLISH_RETRY_DELAYS_SECONDS = (2, 5)
 
 
 def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -37,6 +41,11 @@ def failure_text(result: subprocess.CompletedProcess[str], fallback: str) -> str
     return (result.stderr or result.stdout or fallback).strip()
 
 
+def command_failure(repo_name: str, stage: str, command: str, result: subprocess.CompletedProcess[str], fallback: str) -> str:
+    output = failure_text(result, fallback)
+    return f"{repo_name}: {stage} failed ({command}): {output}"
+
+
 def changed_files(repo: Path) -> list[str]:
     completed = run_git(repo, "status", "--porcelain")
     if completed.returncode != 0:
@@ -48,10 +57,18 @@ def changed_files(repo: Path) -> list[str]:
     return files
 
 
-def branch_has_commits(repo: Path, base: str) -> bool:
+def branch_has_commits(repo: Path, base: str, repo_name: str) -> bool:
     completed = run_git(repo, "rev-list", "--count", f"origin/{base}..HEAD")
     if completed.returncode != 0:
-        raise RuntimeError(failure_text(completed, "Unable to compare feature branch with base"))
+        raise RuntimeError(
+            command_failure(
+                repo_name,
+                "compare branch",
+                f"git rev-list --count origin/{base}..HEAD",
+                completed,
+                f"Unable to compare feature branch with origin/{base}",
+            )
+        )
     return int(completed.stdout.strip() or "0") > 0
 
 
@@ -62,40 +79,63 @@ def commit_subject(result: dict[str, Any], repo_name: str) -> str:
             if subject:
                 return subject
     raise RuntimeError(
-        f"Agent did not provide commit_subject for {repo_name}. "
-        "It must inspect repository history and record a matching subject."
+        f"{repo_name}: Agent did not provide commit_subject in delivery-result.json. "
+        "Remediation must preserve commit_subject entries for every repository with changes."
     )
 
 
-def ensure_branch(repo: Path, branch: str) -> None:
+def ensure_branch(repo: Path, branch: str, repo_name: str) -> None:
     completed = run_git(repo, "branch", "--show-current")
     current = completed.stdout.strip()
     if completed.returncode != 0 or current != branch:
-        raise RuntimeError(f"Expected feature branch {branch}, found {current or 'detached HEAD'}")
+        raise RuntimeError(f"{repo_name}: expected feature branch {branch}, found {current or 'detached HEAD'}")
 
 
-def commit_changes(repo: Path, subject: str) -> str:
+def commit_changes(repo: Path, subject: str, repo_name: str) -> str:
     added = run_git(repo, "add", "-A")
     if added.returncode != 0:
-        raise RuntimeError(failure_text(added, "git add failed"))
+        raise RuntimeError(command_failure(repo_name, "git add", "git add -A", added, "git add failed"))
     committed = run_git(repo, "commit", "-m", subject)
     if committed.returncode != 0:
-        raise RuntimeError(failure_text(committed, "git commit failed"))
+        raise RuntimeError(command_failure(repo_name, "git commit", f"git commit -m {subject!r}", committed, "git commit failed"))
     sha = run_git(repo, "rev-parse", "HEAD")
     if sha.returncode != 0:
-        raise RuntimeError(failure_text(sha, "Unable to read commit SHA"))
+        raise RuntimeError(command_failure(repo_name, "read commit", "git rev-parse HEAD", sha, "Unable to read commit SHA"))
     return sha.stdout.strip()
 
 
 def existing_pr_url(repo: Path, branch: str) -> str:
-    completed = run_gh(repo, "pr", "view", "--head", branch, "--json", "url", "--jq", ".url")
-    return completed.stdout.strip() if completed.returncode == 0 else ""
+    completed = run_gh(repo, "pr", "list", "--head", branch, "--json", "url", "--jq", ".[0].url")
+    if completed.returncode != 0:
+        return ""
+    return completed.stdout.strip()
 
 
-def open_pr(repo: Path, branch: str, base: str, title: str, body: str) -> str:
+def publish_retriable(message: str) -> bool:
+    lowered = message.casefold()
+    markers = (
+        "timeout",
+        "timed out",
+        "connection reset",
+        "connection refused",
+        "temporarily unavailable",
+        "503",
+        "502",
+        "504",
+        "429",
+        "rate limit",
+        "eof",
+        "broken pipe",
+        "network",
+        "internal server error",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def open_pr(repo: Path, branch: str, base: str, title: str, body: str, repo_name: str) -> str:
     pushed = run_git(repo, "push", "--no-verify", "-u", "origin", branch)
     if pushed.returncode != 0:
-        raise RuntimeError(failure_text(pushed, "git push failed"))
+        raise RuntimeError(command_failure(repo_name, "git push", f"git push -u origin {branch}", pushed, "git push failed"))
     existing = existing_pr_url(repo, branch)
     if existing:
         return existing
@@ -113,17 +153,41 @@ def open_pr(repo: Path, branch: str, base: str, title: str, body: str) -> str:
         body,
     )
     if created.returncode != 0:
-        raise RuntimeError(failure_text(created, "gh pr create failed"))
+        output = failure_text(created, "gh pr create failed")
+        if "already exists" in output.casefold():
+            existing = existing_pr_url(repo, branch)
+            if existing:
+                return existing
+        raise RuntimeError(command_failure(repo_name, "gh pr create", f"gh pr create --base {base} --head {branch}", created, "gh pr create failed"))
     url = created.stdout.strip()
     if not url:
-        raise RuntimeError("gh pr create completed without returning a URL")
+        raise RuntimeError(f"{repo_name}: gh pr create completed without returning a URL")
     return url
 
 
-def merge_pr(repo: Path, url: str) -> None:
+def open_pr_with_retry(repo: Path, branch: str, base: str, title: str, body: str, repo_name: str) -> str:
+    last_error = ""
+    for attempt in range(1, PUBLISH_RETRY_ATTEMPTS + 1):
+        try:
+            return open_pr(repo, branch, base, title, body, repo_name)
+        except RuntimeError as exc:
+            last_error = str(exc)
+            if attempt >= PUBLISH_RETRY_ATTEMPTS or not publish_retriable(last_error):
+                break
+            delay = PUBLISH_RETRY_DELAYS_SECONDS[min(attempt - 1, len(PUBLISH_RETRY_DELAYS_SECONDS) - 1)]
+            print(
+                f"Warning: {repo_name}: publish attempt {attempt}/{PUBLISH_RETRY_ATTEMPTS} failed; retrying in {delay}s",
+                file=sys.stderr,
+            )
+            print(last_error, file=sys.stderr)
+            time.sleep(delay)
+    raise RuntimeError(f"{repo_name}: publish failed after {PUBLISH_RETRY_ATTEMPTS} attempt(s): {last_error}")
+
+
+def merge_pr(repo: Path, url: str, repo_name: str) -> None:
     merged = run_gh(repo, "pr", "merge", url, "--merge", "--delete-branch")
     if merged.returncode != 0:
-        raise RuntimeError(failure_text(merged, "gh pr merge failed"))
+        raise RuntimeError(command_failure(repo_name, "gh pr merge", f"gh pr merge {url}", merged, "gh pr merge failed"))
 
 
 def update_result(path: Path, payload: dict[str, Any]) -> None:
@@ -147,6 +211,13 @@ def visual_pr_summary(result: dict[str, Any]) -> str:
         )
     lines.append("\nReference, implementation, and diff images are retained in Lumen delivery history.")
     return "\n".join(lines)
+
+
+def record_failure(result: dict[str, Any], detail: str) -> None:
+    failures = result.get("failures") if isinstance(result.get("failures"), list) else []
+    failures.append({"stage": "finalize", "detail": detail})
+    result["failures"] = failures
+    result["delivery_status"] = "blocked"
 
 
 def main() -> int:
@@ -182,7 +253,7 @@ def main() -> int:
         ) + visual_pr_summary(result)
 
         for repo in context.repos:
-            ensure_branch(repo.worktree_path, context.branch_name)
+            ensure_branch(repo.worktree_path, context.branch_name, repo.name)
             files = changed_files(repo.worktree_path)
             item: dict[str, Any] = {
                 "name": repo.name,
@@ -192,7 +263,7 @@ def main() -> int:
             }
             subject = commit_subject(result, repo.name) if files else ""
             if files:
-                sha = commit_changes(repo.worktree_path, subject)
+                sha = commit_changes(repo.worktree_path, subject, repo.name)
                 commits.append({"repository": repo.name, "sha": sha, "subject": subject})
                 item["commit_subject"] = subject
             else:
@@ -200,7 +271,7 @@ def main() -> int:
                 if head.returncode == 0:
                     item["existing_head"] = head.stdout.strip()
 
-            if not branch_has_commits(repo.worktree_path, repo.default_branch):
+            if not branch_has_commits(repo.worktree_path, repo.default_branch, repo.name):
                 item["publish_status"] = "skipped"
                 item["publish_reason"] = "No commits differ from the base branch"
                 touched.append(item)
@@ -211,12 +282,19 @@ def main() -> int:
                 item["publish_status"] = "dry_run"
             else:
                 pr_title = subject or f"{context.metadata.get('jiraKey') or context.story_dir.name}: delivery"
-                url = open_pr(repo.worktree_path, context.branch_name, repo.default_branch, pr_title, body)
+                url = open_pr_with_retry(
+                    repo.worktree_path,
+                    context.branch_name,
+                    repo.default_branch,
+                    pr_title,
+                    body,
+                    repo.name,
+                )
                 item["pr_url"] = url
                 item["publish_status"] = "pr_open"
                 pr_urls.append(url)
                 if publish_mode == "merge":
-                    merge_pr(repo.worktree_path, url)
+                    merge_pr(repo.worktree_path, url, repo.name)
                     item["merged"] = True
                     item["publish_status"] = "merged"
             touched.append(item)
@@ -230,12 +308,10 @@ def main() -> int:
         print(json.dumps({"commits": commits, "pr_urls": pr_urls}, indent=2, ensure_ascii=False))
         return 0
     except Exception as exc:
-        failures = result.get("failures") if isinstance(result.get("failures"), list) else []
-        failures.append({"stage": "finalize", "detail": str(exc)})
-        result["failures"] = failures
-        result["delivery_status"] = "blocked"
+        detail = str(exc).strip() or exc.__class__.__name__
+        record_failure(result, detail)
         update_result(result_path, result)
-        print(f"Error: {exc}", file=sys.stderr)
+        print(f"Error: {detail}", file=sys.stderr)
         return 1
 
 

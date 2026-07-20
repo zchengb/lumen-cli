@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,14 +43,64 @@ def twg_binary() -> Optional[str]:
     return shutil.which("twg")
 
 
-def twg_ready() -> Tuple[bool, str]:
+def twg_ready(*, refresh: bool = False) -> Tuple[bool, str]:
     binary = twg_binary()
     if not binary:
         return False, "twg CLI not found in PATH. Install from https://developer.atlassian.com/cloud/twg-cli/"
     auth_conf = Path.home() / ".config" / "twg" / "auth.conf"
     if not auth_conf.is_file():
         return False, "twg is not authenticated. Run: twg login"
+    if refresh:
+        return refresh_twg_auth(force=True)
     return True, ""
+
+
+def refresh_twg_auth(*, force: bool = True) -> Tuple[bool, str]:
+    ready, reason = twg_ready()
+    if not ready:
+        return False, reason
+    args = ["auth", "refresh"]
+    if force:
+        args.append("--force")
+    returncode, output = run_twg(args)
+    if returncode != 0:
+        return False, truncate_error(output or "twg auth refresh failed")
+    return True, ""
+
+
+def delivery_jira_config_enabled(delivery_config: dict) -> bool:
+    jira = delivery_config.get("jira", {})
+    if not isinstance(jira, dict):
+        return False
+    if jira.get("enabled") is False:
+        return False
+    return jira.get("enabled") is True or bool(jira.get("auto_enable_when_twg_ready", True))
+
+
+def refresh_twg_for_scan_workspace(workspace_root: Path) -> Tuple[bool, str]:
+    common_path = workspace_root / "config" / "common.json"
+    if not common_path.is_file():
+        return True, ""
+    try:
+        common = json.loads(common_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True, ""
+    if not is_enabled(common):
+        return True, ""
+    return refresh_twg_auth(force=True)
+
+
+def refresh_twg_for_delivery_workspace(workspace_root: Path) -> Tuple[bool, str]:
+    delivery_path = workspace_root / "config" / "delivery.json"
+    if not delivery_path.is_file():
+        return True, ""
+    try:
+        delivery_config = json.loads(delivery_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True, ""
+    if not delivery_jira_config_enabled(delivery_config):
+        return True, ""
+    return refresh_twg_auth(force=True)
 
 
 def run_twg(args: List[str]) -> Tuple[int, str]:
@@ -530,6 +582,12 @@ def sync_jira_issues(
         summary["status"] = "dry_run_skipped"
         return summary
 
+    refreshed, reason = refresh_twg_auth(force=True)
+    if not refreshed:
+        summary["status"] = "not_configured"
+        summary["errors"].append(reason)
+        return summary
+
     allowed = set(allowed_severities(config))
     indexed = index_registry_issues(registry)
 
@@ -605,3 +663,31 @@ def sync_jira_issues(
             handle.write("\n")
 
     return summary
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description="Refresh TWG OAuth credentials before automated Lumen runs.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    refresh_parser = subparsers.add_parser("refresh", help="Refresh TWG OAuth when Jira sync is enabled for a workspace")
+    refresh_parser.add_argument("--scan-workspace", type=Path, help="Scan workspace root (config/common.json)")
+    refresh_parser.add_argument("--delivery-workspace", type=Path, help="Delivery workspace root (config/delivery.json)")
+    args = parser.parse_args(argv)
+
+    if args.command != "refresh":
+        parser.error(f"unsupported command: {args.command}")
+
+    if args.scan_workspace:
+        ok, reason = refresh_twg_for_scan_workspace(args.scan_workspace.expanduser().resolve())
+    elif args.delivery_workspace:
+        ok, reason = refresh_twg_for_delivery_workspace(args.delivery_workspace.expanduser().resolve())
+    else:
+        refresh_parser.error("pass --scan-workspace or --delivery-workspace")
+
+    if not ok:
+        print(reason, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

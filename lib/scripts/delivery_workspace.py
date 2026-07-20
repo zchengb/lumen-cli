@@ -318,6 +318,24 @@ def branch_name_for_story(metadata: dict[str, Any], story_dir: Path) -> str:
     return f"feature/{slugify(slug) or 'delivery'}"
 
 
+def repos_registry(workspace_root: Path) -> dict[str, dict[str, Any]]:
+    config = read_json(delivery_config_dir(workspace_root) / "repos.json")
+    registry: dict[str, dict[str, Any]] = {}
+    for item in config.get("repositories") or []:
+        if isinstance(item, dict):
+            name = str(item.get("name", "")).strip()
+            if name:
+                registry[name] = item
+    return registry
+
+
+def resolve_repo_default_branch(repo_name: str, repo_path: Path, workspace_root: Path) -> str:
+    configured = str(repos_registry(workspace_root).get(repo_name, {}).get("default_branch", "")).strip()
+    if configured:
+        return configured
+    return default_branch_for_repo(repo_path)
+
+
 def default_branch_for_repo(repo_path: Path) -> str:
     completed = subprocess.run(
         ["git", "-C", str(repo_path), "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -376,6 +394,7 @@ def ensure_feature_worktree(
                 )
             return False, f"Existing worktree is on {current_branch}; expected {branch_name}"
         repo.worktree_path = worktrees_root.resolve()
+        repo.default_branch = resolve_repo_default_branch(repo.name, repo.path, workspace_root)
         return True, "reused story worktree"
 
     if worktrees_root.exists():
@@ -483,6 +502,7 @@ def load_story_context(docs_dir: Path, story_ref: str = "", validate_gates: bool
                 name=repo_name,
                 path=repo_path,
                 worktree_path=story_worktrees_dir(workspace_root, metadata, story_dir) / repo_name,
+                default_branch=resolve_repo_default_branch(repo_name, repo_path, workspace_root),
             )
         )
 

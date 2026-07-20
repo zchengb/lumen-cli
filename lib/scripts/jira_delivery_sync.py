@@ -6,7 +6,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
-from jira_sync import add_pr_link_to_jira, parse_twg_json, run_twg, site_args, truncate_error, twg_ready
+from jira_sync import add_pr_link_to_jira, parse_twg_json, refresh_twg_auth, run_twg, site_args, truncate_error, twg_ready
 
 
 def jira_delivery_config(delivery_config: dict) -> dict:
@@ -197,6 +197,12 @@ def sync_delivery_jira(
     if dry_run:
         result["status"] = "dry_run"
         result["detail"] = f"Would sync JIRA issue {jira_key}"
+        return result
+
+    refreshed, reason = refresh_twg_auth(force=True)
+    if not refreshed:
+        result["status"] = "failed"
+        result["detail"] = reason
         return result
 
     try:

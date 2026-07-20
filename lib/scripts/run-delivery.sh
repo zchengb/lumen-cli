@@ -440,6 +440,13 @@ run_real_delivery() {
     fail "Cursor agent is not authenticated. Add CURSOR_API_KEY to ${DOCS_DIR}/.env.local."
   fi
 
+  local refresh_py="${LUMEN_LIB_DIR}/jira_sync.py"
+  if [[ -f "${refresh_py}" ]] && command -v python3 >/dev/null 2>&1; then
+    if ! python3 "${refresh_py}" refresh --delivery-workspace "${WORKSPACE_DIR}" 2>&1 | tee -a "${LOG_FILE}"; then
+      printf 'Warning: TWG auth refresh failed. JIRA sync may fail during this delivery.\n' >&2
+    fi
+  fi
+
   init_delivery_progress
 
   progress_phase preflight in_progress "Validate story gates and metadata"
@@ -510,12 +517,29 @@ run_real_delivery() {
     fail "Delivery finalization runner not found: ${finalize_py}"
   fi
   set +e
-  python3 "${finalize_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" | tee -a "${LOG_FILE}"
+  python3 "${finalize_py}" "${DOCS_DIR}" --story "${STORY_REF}" --result "${RESULT_FILE}" 2>&1 | tee -a "${LOG_FILE}"
   local finalize_exit=${PIPESTATUS[0]}
   set -e
   if [[ "${finalize_exit}" -ne 0 ]]; then
-    progress_phase finalize failed "Commit, push, or PR creation failed"
-    fail "Delivery finalization failed. See log: ${LOG_FILE}"
+    local failure_detail
+    failure_detail="$(
+      python3 -c 'import json,sys
+path=sys.argv[1]
+try:
+    data=json.load(open(path, encoding="utf-8"))
+except Exception:
+    print(sys.argv[2])
+    raise SystemExit(0)
+for item in reversed(data.get("failures") or []):
+    if isinstance(item, dict):
+        detail=str(item.get("detail") or "").strip()
+        if detail:
+            print(detail)
+            raise SystemExit(0)
+print(sys.argv[2])' "${RESULT_FILE}" "Delivery finalization failed. See log: ${LOG_FILE}"
+    )"
+    progress_phase finalize failed "${failure_detail}"
+    fail "${failure_detail}"
   fi
   progress_phase finalize completed "Feature branches pushed and PRs opened"
 
