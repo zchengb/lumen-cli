@@ -178,6 +178,26 @@ Delivery result file: {delivery_result_path(context.workspace_root)}
 """
 
 
+def repository_delivery_policies_block(context: StoryContext) -> str:
+    config = read_json(repos_config(context.workspace_root), {"repositories": []})
+    lines: list[str] = []
+    for repo in context.repos:
+        entry = repo_config_entry(config, repo.name)
+        if not entry or entry.get("generate_tests") is not False:
+            continue
+        lines.append(
+            f"- `{repo.name}`: do not create or update unit tests or integration tests. "
+            "Implement production code only for this repository."
+        )
+    if not lines:
+        return ""
+    return (
+        "# Repository Delivery Policies\n\n"
+        "These workspace rules override the generic testing guidance for the listed repositories.\n\n"
+        + "\n".join(lines)
+    )
+
+
 def agent_quick_login_block(context: StoryContext) -> str:
     config = read_json(repos_config(context.workspace_root), {"repositories": []})
     sections: list[str] = []
@@ -346,22 +366,18 @@ The previous implementation already exists in the feature worktrees. Do not rest
 
 
 def compose_delivery_prompt(context: StoryContext, remediation: bool = False) -> str:
-    prompt = (
-        compose_snippets(context)
-        + "\n\n"
-        + render_context_block(context)
-        + "\n\n"
-        + agent_quick_login_block(context)
-        + "\n\n"
-        + visual_state_matrix_block(context)
-        + "\n\n"
-        + visual_iteration_block(context)
-        + "\n\n"
-        + figma_mcp_block(context)
-    )
+    parts = [
+        compose_snippets(context),
+        render_context_block(context),
+        repository_delivery_policies_block(context),
+        agent_quick_login_block(context),
+        visual_state_matrix_block(context),
+        visual_iteration_block(context),
+        figma_mcp_block(context),
+    ]
     if remediation:
-        prompt += "\n\n" + remediation_context_block(context)
-    return prompt + "\n"
+        parts.append(remediation_context_block(context))
+    return "\n\n".join(part for part in parts if part) + "\n"
 
 
 def main() -> int:

@@ -11,7 +11,7 @@ Agents must follow it when implementing an approved `technical-plan.md`.
 3. **Minimal diff** — prefer the smallest correct change. Avoid drive-by refactors, renames, or formatting-only edits outside the touched behavior.
 4. **Evidence over assumption** — inspect imports, callers, tests, migrations, and configuration before changing behavior.
 5. **Safe by default** — preserve auth, validation, idempotency, transactions, and backward compatibility unless the plan explicitly changes them.
-6. **Test what you change** — add or update focused tests when the repository already has a test pattern for the affected layer.
+6. **Test what you change** — add or update focused tests when the repository already has a test pattern for the affected layer. Exception: when `repos.json` sets `generate_tests: false` for a repository, do not create or update unit or integration tests in that repository.
 
 ## Before Writing Code
 

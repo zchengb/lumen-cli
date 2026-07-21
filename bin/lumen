@@ -1763,7 +1763,7 @@ EOF
   workspace_root="${target}/repos"
   printf 'Code repositories: %s\n' "${workspace_root}"
   scan_window="$(prompt "Scan window in days" "7")"
-  model="$(prompt_menu "Cursor model to use for scans" "composer-2.5" "sonnet-4.5" "gpt-5.1-codex" "custom")"
+  model="$(prompt_menu "Cursor model to use for scans" "composer-2.5" "cursor-grok-4.5-medium" "sonnet-4.5" "gpt-5.1-codex" "custom")"
   if [[ "${model}" == "custom" ]]; then
     model="$(prompt "Enter the exact Cursor model name" "composer-2.5")"
   fi

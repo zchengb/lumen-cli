@@ -279,6 +279,8 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
             "allow_auto_fix": bool(repository.get("allow_auto_fix", True)),
             "allow_pr": bool(repository.get("allow_pr", True)),
         })
+        if "generate_tests" in repository:
+            cleaned[-1]["generate_tests"] = bool(repository.get("generate_tests"))
         if "delivery_commands" in repository:
             commands = repository["delivery_commands"]
             lines = commands.splitlines() if isinstance(commands, str) else commands
