@@ -75,6 +75,9 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 @media(max-width:1180px){.workflow-canvas{overflow-x:auto}.workflow-columns{padding-bottom:4px}.history-story{min-width:260px}}
 @media(max-width:900px){.page-content{padding:25px 17px 50px}.story-reference{align-items:flex-start;flex-direction:column;gap:3px;white-space:normal}.story-reference span{white-space:normal}.flow-track-wrap{min-width:720px;overflow:visible}.delivery-flow{overflow-x:auto}.flow-steps{grid-template-columns:repeat(var(--flow-count),minmax(140px,1fr));overflow:visible}.flow-stage-button{min-width:0}.flow-track{left:88px;right:88px}.history-story-line{align-items:flex-start;flex-direction:column;gap:3px;white-space:normal}.history-story-line .history-story-title{white-space:normal}}
 
+@media(min-width:901px){.history-panel .history-story{min-width:220px}}
+.history-panel .text-button{display:inline-flex;align-items:center;margin-top:0;line-height:1.2}
+
 /* Final alignment corrections after viewport verification. */
 .flow-stage-button{grid-template-rows:32px auto;gap:11px;min-height:78px}
 .workflow-columns{grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;min-width:920px}
