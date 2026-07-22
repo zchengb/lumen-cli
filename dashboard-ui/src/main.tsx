@@ -112,8 +112,8 @@ function Badge({ value }: { value: unknown }) {
   return <span className={`badge ${statusTone(value)}`}>{titleStatus(value)}</span>;
 }
 
-function IconButton({ label, children, onClick, danger = false, className = "" }: { label: string; children: React.ReactNode; onClick: () => void; danger?: boolean; className?: string }) {
-  return <button className={`icon-button ${danger ? "danger" : ""} ${className}`} title={label} aria-label={label} onClick={onClick}>{children}</button>;
+function IconButton({ label, children, onClick, danger = false, disabled = false, className = "" }: { label: string; children: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean; className?: string }) {
+  return <button className={`icon-button ${danger ? "danger" : ""} ${className}`} title={label} aria-label={label} disabled={disabled} onClick={onClick}>{children}</button>;
 }
 
 function Panel({ title, action, children, className = "" }: { title: string; action?: React.ReactNode; children: React.ReactNode; className?: string }) {
@@ -200,7 +200,7 @@ function App() {
         {error && <div className="status-note"><Activity size={15} />{error}</div>}
         {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
         {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
-        {data && activeTab === "delivery" && <DeliveryView data={data} project={project} />}
+        {data && activeTab === "delivery" && <DeliveryView data={data} project={project} notify={setNotice} reload={load} />}
         {data && activeTab === "repositories" && <RepositoryView data={data} interact={interact} />}
         {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={setNotice} />}
         {data && activeTab === "settings" && <SettingsView data={data} project={project} notify={setNotice} onDirtyChange={setSettingsDirty} reload={load} />}
@@ -256,7 +256,7 @@ function IgnoreDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: 
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Ignore finding" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Mark this finding as ignored?</strong><Field label="Reason (optional)"><textarea className="ignore-reason" rows={2} autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this safe to ignore?" /></Field></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onConfirm(reason)}>Mark ignored</button></footer></section></div>;
 }
 
-function DeliveryView({ data, project }: { data: DashboardData; project: string }) {
+function DeliveryView({ data, project, notify, reload }: { data: DashboardData; project: string; notify: (message: string) => void; reload: () => Promise<void> }) {
   const delivery = data.delivery || {};
   const current = delivery.current || {};
   const runs = delivery.runs || [];
@@ -273,6 +273,8 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
   const [retryError, setRetryError] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [deleteCandidate, setDeleteCandidate] = useState<RecordValue | null>(null);
+  const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [now, setNow] = useState(Date.now());
   const running = /in_progress|running/i.test(String(current.delivery_status || ""));
   const loadDeliveryLog = useCallback(async (runId = current.run_id || "", refresh = false) => {
@@ -316,26 +318,39 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
     try { const response = await request(`/api/delivery/trace?run_id=${encodeURIComponent(runId)}`, project); setSelectedStage({ label: "Trace", duration: "Agent evidence", detail: "Redacted local execution evidence", run_id: runId }); setLogContent(JSON.stringify(response, null, 2)); setLogError(""); }
     catch (err) { setActionError(err instanceof Error ? err.message : "Unable to load trace"); }
   };
-  const removeHistory = async (runId: string) => {
-    if (!window.confirm("Delete this delivery record, log, and trace files?")) return;
-    try { await request("/api/delivery/history/delete", project, { method: "POST", json: { run_id: runId } }); }
-    catch (err) { setActionError(err instanceof Error ? err.message : "Unable to delete delivery history"); }
+  const removeHistory = async () => {
+    const runId = String(deleteCandidate?.run_id || "").trim();
+    if (!runId) return;
+    setDeletingHistoryId(runId); setActionError("");
+    try {
+      await request("/api/delivery/history/delete", project, { method: "POST", json: { run_id: runId } });
+      setDeleteCandidate(null);
+      notify("Delivery history deleted");
+      await reload().catch(() => undefined);
+    } catch (err) { setActionError(err instanceof Error ? err.message : "Unable to delete delivery history"); }
+    finally { setDeletingHistoryId(""); }
   };
   const canRetry = /failed|blocked/i.test(String(current.delivery_status || ""));
   const canStart = !running && Boolean(current.story_id || current.jira_key || (delivery.available_stories || []).length);
   return <>
     <Panel title="Current Progress" className="delivery-summary" action={<span className="panel-actions">{canStart && <button className="button secondary" disabled={actionBusy} onClick={() => void start()}><Play size={14} />Start</button>}{running && <button className="button danger secondary" disabled={actionBusy} onClick={() => void stop()}>Stop</button>}{canRetry && <button className="button secondary" onClick={() => setRetryOpen(true)}><RotateCcw size={14} />Retry</button>}</span>}><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at || (running ? new Date(now).toISOString() : undefined))} /><Fact label="Finished" value={running ? "Running" : when(current.finished_at)} /></div>{actionError && <div className="status-note">{actionError}</div>}<DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} startedAt={current.started_at} finishedAt={current.finished_at} remediation={current.remediation} now={now} onStageClick={openStage} /></Panel>
-    <Panel title="Delivery History" className="history-panel" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Checks</th><th>Duration</th><th>Trace</th><th>Operation</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; const failed = runChecks.filter((item: RecordValue) => item.status === "failed"); const canInspectStatus = failed.length || /failed|blocked/i.test(String(run.status)); return <tr key={run.run_id}><td><div className="history-story"><span className="history-story-line"><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</span><small>{text(run.branch, "")}</small></div></td><td>{when(run.finished_at || run.started_at)}</td><td>{canInspectStatus ? <button className="status-badge-button" title="Open failure log" onClick={() => void openStage({ label: "Delivery failure", duration: elapsed(run.started_at, run.finished_at), detail: failed.map((item: RecordValue) => item.summary || item.label).filter(Boolean).join(" · ") || "Open the delivery log for details." }, run.run_id)}><Badge value={run.status} /></button> : <Badge value={run.status} />}</td><td><PrLinks items={run.pull_requests || []} /></td><td><VerificationSummary checks={runChecks} onClick={() => setSelectedChecks(runChecks)} /></td><td>{elapsed(run.started_at, run.finished_at)}</td><td>{run.agent_trace && <button className="text-button" onClick={() => void openTrace(run.run_id)}>View trace</button>}</td><td><IconButton label="Delete delivery record" danger onClick={() => void removeHistory(run.run_id)}><Trash2 size={15} /></IconButton></td></tr>; }) : <tr><td colSpan={8}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
+    <Panel title="Delivery History" className="history-panel" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Checks</th><th>Duration</th><th>Trace</th><th>Operation</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; const failed = runChecks.filter((item: RecordValue) => item.status === "failed"); const canInspectStatus = failed.length || /failed|blocked/i.test(String(run.status)); return <tr key={run.run_id}><td><div className="history-story"><span className="history-story-line"><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</span><small>{text(run.branch, "")}</small></div></td><td>{when(run.finished_at || run.started_at)}</td><td>{canInspectStatus ? <button className="status-badge-button" title="Open failure log" onClick={() => void openStage({ label: "Delivery failure", duration: elapsed(run.started_at, run.finished_at), detail: failed.map((item: RecordValue) => item.summary || item.label).filter(Boolean).join(" · ") || "Open the delivery log for details." }, run.run_id)}><Badge value={run.status} /></button> : <Badge value={run.status} />}</td><td><PrLinks items={run.pull_requests || []} /></td><td><VerificationSummary checks={runChecks} onClick={() => setSelectedChecks(runChecks)} /></td><td>{elapsed(run.started_at, run.finished_at)}</td><td>{run.agent_trace && <button className="text-button" onClick={() => void openTrace(run.run_id)}>View trace</button>}</td><td><IconButton label="Delete delivery record" danger disabled={deletingHistoryId === run.run_id} onClick={() => setDeleteCandidate(run)}><Trash2 size={15} /></IconButton></td></tr>; }) : <tr><td colSpan={8}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
     <Panel title="Scheduler Activity" action={<span className="panel-actions"><span className="muted">{schedulerActivity.length} recent events</span>{delivery.scheduler_log_available && <button className="button secondary" onClick={() => void openSchedulerLog()}><Terminal size={14} />View raw log</button>}</span>}><div className="scheduler-activity">{schedulerActivity.length ? schedulerActivity.map((event: RecordValue, index: number) => <article className="scheduler-event" key={`${event.at}-${index}`}><Badge value={event.outcome} /><div><strong>{text(event.story_id || event.jira_key, "Workspace")}</strong><p>{text(event.message)}</p></div><time>{when(event.at)}</time></article>) : <Empty label="No scheduled delivery activity recorded yet." />}</div></Panel>
     {selectedStage && <DeliveryLogDialog stage={selectedStage} content={logContent} error={logError} loading={loadingLog} live={selectedLogIsLive} onClose={() => setSelectedStage(null)} />}
     {schedulerLogOpen && <DeliveryLogDialog stage={{ label: "Scheduler log", duration: "Recent raw output", detail: "Launchd output is capped at 256 KiB; structured activity retains the latest 200 events." }} content={logContent} error={logError} loading={loadingLog} onClose={() => setSchedulerLogOpen(false)} />}
     {selectedChecks && <VerificationDialog checks={selectedChecks} onClose={() => setSelectedChecks(null)} />}
     {retryOpen && <RetryDeliveryDialog story={text(current.jira_key || current.story_id)} busy={retrying} error={retryError} onClose={() => setRetryOpen(false)} onConfirm={() => void retry()} />}
+    {deleteCandidate && <DeleteHistoryDialog run={deleteCandidate} busy={Boolean(deletingHistoryId)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void removeHistory()} />}
   </>;
 }
 
 function RetryDeliveryDialog({ story, busy, error, onClose, onConfirm }: { story: string; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Reset and retry delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Reset and retry {story}?</strong><p>This removes the Story worktrees, resets its Delivery and JIRA status, then starts a new run. The failed run and logs stay in history.</p>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy} onClick={onConfirm}><RotateCcw size={14} />{busy ? "Starting…" : "Retry"}</button></footer></section></div>;
+}
+
+function DeleteHistoryDialog({ run, busy, onClose, onConfirm }: { run: RecordValue; busy: boolean; onClose: () => void; onConfirm: () => void }) {
+  const story = text(run.jira_key || run.story || run.run_id);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal delete-history-modal" role="dialog" aria-modal="true" aria-label="Delete delivery history" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Delete delivery history?</strong><p className="modal-copy">This removes the {story} record, log, and trace files. This action cannot be undone.</p></div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button danger delete-confirm" disabled={busy} onClick={onConfirm}><Trash2 size={14} />{busy ? "Deleting…" : "Delete record"}</button></footer></section></div>;
 }
 
 function StoryReference({ jiraKey, title }: { jiraKey: string; title?: string }) { return <span className="story-reference"><code>{text(jiraKey, "No active delivery")}</code>{title && <span>{title}</span>}</span>; }
