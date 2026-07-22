@@ -318,7 +318,13 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             results = workspace / "results"
             results.mkdir()
             (results / "delivery-progress.json").write_text(
-                json.dumps({"delivery_status": "in_progress", "current_phase": "notify", "story_id": "NOVA-42"}),
+                json.dumps({
+                    "run_id": "run-42",
+                    "delivery_status": "in_progress",
+                    "current_phase": "notify",
+                    "story_id": "NOVA-42",
+                    "started_at": "2026-07-14T05:50:00Z",
+                }),
                 encoding="utf-8",
             )
             (results / "delivery-result.json").write_text(
@@ -326,6 +332,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                     {
                         "delivery_status": "completed",
                         "story_id": "NOVA-42",
+                        "started_at": "2026-07-14T05:50:00Z",
                         "finished_at": "2026-07-14T06:00:00Z",
                         "verification_results": [{"status": "passed"}],
                     }

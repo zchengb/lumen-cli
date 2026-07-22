@@ -583,8 +583,15 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
     result = read_delivery_json(workspace / "results" / "delivery-result.json", {})
     terminal_states = {"completed", "failed", "blocked", "dev_done", "pr_open"}
+    progress_run_id = str(progress.get("run_id") or "").strip()
+    result_run_id = str(result.get("run_id") or "").strip()
+    result_matches_progress = not progress_run_id or result_run_id == progress_run_id
+    if progress_run_id and not result_run_id:
+        result_matches_progress = bool(
+            result.get("started_at") and result.get("started_at") == progress.get("started_at")
+        )
     if str(result.get("delivery_status") or "") in terminal_states and (
-        not progress.get("run_id") or progress.get("run_id") == result.get("run_id")
+        result_matches_progress
     ):
         current = {**progress, **result}
         current["started_at"] = progress.get("started_at") or result.get("started_at") or ""

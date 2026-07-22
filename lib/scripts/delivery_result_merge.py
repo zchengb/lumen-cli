@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from delivery_workspace import StoryContext, load_story_context, read_json, write_json
+from delivery_workspace import StoryContext, load_story_context, read_json, workspace_lumen_dir, write_json
 
 
 def remediation_state_path(result_path: Path) -> Path:
@@ -106,6 +106,11 @@ def stabilize_delivery_result(
     context: StoryContext | None,
     result_path: Path,
 ) -> dict[str, Any]:
+    if not str(result.get("run_id") or "").strip() and context is not None:
+        progress = read_json(workspace_lumen_dir(context.workspace_root) / "results" / "delivery-progress.json", {})
+        run_id = str(progress.get("run_id") or "").strip()
+        if run_id:
+            result["run_id"] = run_id
     remediation = read_json(remediation_state_path(result_path), {})
     snapshot = remediation.get("repos_touched_snapshot")
     baseline = snapshot if isinstance(snapshot, list) and snapshot else result.get("repos_touched") or []
