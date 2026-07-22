@@ -10,7 +10,8 @@
     "auto_enable_when_twg_ready": true,
     "site": "",
     "in_dev_status": "IN DEV",
-    "dev_done_status": "DEV DONE"
+    "dev_done_status": "DEV DONE",
+    "blocked_status": "Block"
   },
   "notifications": {
     "feishu": {

@@ -43,6 +43,8 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
   printf 'Error: another Lumen delivery run is already active for this docs workspace. Check `lumen delivery status %s`.\n' "${DOCS_DIR}" >&2
   exit 1
 fi
+printf '%s\n' "$$" > "${LOCK_DIR}/pid"
+date -u '+%Y-%m-%dT%H:%M:%SZ' > "${LOCK_DIR}/started_at"
 trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
 
 # Scan and delivery share the workspace-local environment. Root-level files are
@@ -452,6 +454,10 @@ run_real_delivery() {
   progress_phase preflight in_progress "Validate story gates and metadata"
   printf '\n[delivery] Phase 1/8 — Sync references and preflight\n'
   run_sync_delivery
+  local preflight_py="${LUMEN_LIB_DIR}/delivery_preflight.py"
+  if [[ -f "${preflight_py}" ]] && ! python3 "${preflight_py}" "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}"; then
+    fail "Delivery preflight failed. Fix the listed integrations before retrying."
+  fi
   progress_phase worktrees in_progress "Create or refresh feature worktrees"
   printf '[delivery] Phase 2/8 — Feature worktrees\n'
   run_prepare_delivery

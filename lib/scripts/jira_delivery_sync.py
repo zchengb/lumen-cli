@@ -152,7 +152,7 @@ def attention_comment(delivery: dict) -> str:
             f"- Scope: {repositories}",
             f"- Duration: {delivery_duration(delivery)}",
             f"- Reason: {detail}",
-            "- JIRA status remains unchanged for follow-up.",
+            "- JIRA status moved to Block for follow-up.",
         ]
     )
 
@@ -208,6 +208,7 @@ def sync_delivery_jira(
     try:
         in_dev_status = str(config.get("in_dev_status", "IN DEV")).strip()
         dev_done_status = str(config.get("dev_done_status", "DEV DONE")).strip()
+        blocked_status = str(config.get("blocked_status", "Block")).strip()
         delivery_status = str(delivery.get("delivery_status", "")).strip()
         registry_issue: dict[str, Any] = {"jira_pr_url": story_metadata.get("jira_pr_url", "")}
         transitions: list[str] = []
@@ -232,6 +233,9 @@ def sync_delivery_jira(
             add_delivery_comment(jira_key, completion_comment(delivery), config)
 
         if event in {"delivery.failed", "delivery.blocked"} or delivery_status in {"failed", "blocked"}:
+            if blocked_status:
+                transition_issue(jira_key, blocked_status, config)
+                transitions.append(blocked_status)
             add_delivery_comment(jira_key, attention_comment(delivery), config)
 
         result["status"] = "synced"

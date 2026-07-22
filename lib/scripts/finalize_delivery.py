@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create delivery commits, push feature branches, and open one PR per repository."""
+"""Create delivery commits and publish them by PR, merge, or direct push."""
 
 from __future__ import annotations
 
@@ -58,7 +58,8 @@ def changed_files(repo: Path) -> list[str]:
     return files
 
 
-def branch_has_commits(repo: Path, base: str, repo_name: str) -> bool:
+def branch_has_commits(repo: Path, base: str, repo_name: str = "") -> bool:
+    repo_name = repo_name or repo.name
     completed = run_git(repo, "rev-list", "--count", f"origin/{base}..HEAD")
     if completed.returncode != 0:
         raise RuntimeError(
@@ -191,6 +192,12 @@ def merge_pr(repo: Path, url: str, repo_name: str) -> None:
         raise RuntimeError(command_failure(repo_name, "gh pr merge", f"gh pr merge {url}", merged, "gh pr merge failed"))
 
 
+def push_default_branch(repo: Path, base: str, repo_name: str) -> None:
+    pushed = run_git(repo, "push", "--no-verify", "origin", f"HEAD:{base}")
+    if pushed.returncode != 0:
+        raise RuntimeError(command_failure(repo_name, "git push default branch", f"git push origin HEAD:{base}", pushed, "git push failed"))
+
+
 def update_result(path: Path, payload: dict[str, Any]) -> None:
     payload["finished_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     write_json(path, payload)
@@ -240,8 +247,8 @@ def main() -> int:
         config = read_json(delivery_config_path(context.workspace_root), {})
         publish = config.get("publish") if isinstance(config.get("publish"), dict) else {}
         publish_mode = str(publish.get("mode", "pr")).strip().lower() or "pr"
-        if publish_mode not in {"pr", "merge"}:
-            raise RuntimeError("Delivery publish mode must be 'pr' or 'merge'")
+        if publish_mode not in {"pr", "merge", "direct"}:
+            raise RuntimeError("Delivery publish mode must be 'pr', 'merge', or 'direct'")
         if str(result.get("delivery_status", "")).strip() not in {"completed", "ready_for_finalize"}:
             raise RuntimeError("Agent result must be completed or ready_for_finalize before finalization")
         result = stabilize_delivery_result(result, context, result_path)
@@ -283,22 +290,26 @@ def main() -> int:
                 item["pr_url"] = "(dry-run)"
                 item["publish_status"] = "dry_run"
             else:
-                pr_title = subject or f"{context.metadata.get('jiraKey') or context.story_dir.name}: delivery"
-                url = open_pr_with_retry(
-                    repo.worktree_path,
-                    context.branch_name,
-                    repo.default_branch,
-                    pr_title,
-                    body,
-                    repo.name,
-                )
-                item["pr_url"] = url
-                item["publish_status"] = "pr_open"
-                pr_urls.append(url)
-                if publish_mode == "merge":
-                    merge_pr(repo.worktree_path, url, repo.name)
-                    item["merged"] = True
-                    item["publish_status"] = "merged"
+                if publish_mode == "direct":
+                    push_default_branch(repo.worktree_path, repo.default_branch, repo.name)
+                    item["publish_status"] = "direct"
+                else:
+                    pr_title = subject or f"{context.metadata.get('jiraKey') or context.story_dir.name}: delivery"
+                    url = open_pr_with_retry(
+                        repo.worktree_path,
+                        context.branch_name,
+                        repo.default_branch,
+                        pr_title,
+                        body,
+                        repo.name,
+                    )
+                    item["pr_url"] = url
+                    item["publish_status"] = "pr_open"
+                    pr_urls.append(url)
+                    if publish_mode == "merge":
+                        merge_pr(repo.worktree_path, url, repo.name)
+                        item["merged"] = True
+                        item["publish_status"] = "merged"
             touched.append(item)
 
         result["repos_touched"] = touched

@@ -68,6 +68,8 @@ def render(workspace_root: Path) -> tuple[Path, Path]:
     data_path = lumen_dir / "delivery-dashboard-data.js"
     data_path.write_text("window.LUMEN_DELIVERY_DATA = " + json.dumps(payload, ensure_ascii=False) + ";\n", encoding="utf-8")
     template = Path(__file__).resolve().parents[1] / "templates" / "delivery-dashboard.html"
+    if not template.is_file():
+        template = Path(__file__).resolve().parents[1] / "templates" / "dashboard.html"
     html_path = lumen_dir / "delivery-dashboard.html"
     shutil.copy2(template, html_path)
     return html_path, data_path

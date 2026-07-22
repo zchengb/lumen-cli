@@ -6,7 +6,7 @@ import { version as lumenVersion } from "../package.json";
 import {
   Activity, ChevronDown, CircleAlert, CircleCheck, CircleDot, Code2, Copy,
   Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, LoaderCircle, Menu,
-  RotateCcw, Save, ScanSearch, Settings2, Terminal,
+  Play, RotateCcw, Save, ScanSearch, Settings2, Terminal, Trash2,
   Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow
 } from "lucide-react";
 import "./styles.css";
@@ -27,7 +27,7 @@ interface DashboardData extends RecordValue {
     schedules?: { scan?: RecordValue | null; delivery?: RecordValue | null };
     workspace?: RecordValue;
   };
-  delivery?: { current?: RecordValue; runs?: RecordValue[]; scheduler_activity?: RecordValue[]; scheduler_log_available?: boolean; config?: RecordValue };
+  delivery?: { current?: RecordValue; runs?: RecordValue[]; available_stories?: RecordValue[]; scheduler_activity?: RecordValue[]; scheduler_log_available?: boolean; config?: RecordValue };
 }
 
 const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
@@ -116,7 +116,8 @@ function App() {
   const initialProject = new URLSearchParams(window.location.search).get("project") || window.DASHBOARD_DATA?.interactive?.project || "";
   const [project, setProject] = useState(initialProject);
   const [data, setData] = useState<DashboardData | null>(null);
-  const [activeTab, setActiveTab] = useState<Tab>("scan");
+  const pathTab = (tabItems.find((item) => `/${item.id}` === window.location.pathname)?.id || "scan") as Tab;
+  const [activeTab, setActiveTab] = useState<Tab>(pathTab);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -142,15 +143,24 @@ function App() {
   useEffect(() => { void load(); const id = window.setInterval(load, 5_000); return () => window.clearInterval(id); }, [project]);
   useEffect(() => { if (!notice) return; const id = window.setTimeout(() => setNotice(""), 3000); return () => window.clearTimeout(id); }, [notice]);
   useEffect(() => { window.localStorage.setItem("lumen-sidebar-collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
+  useEffect(() => { const onPopState = () => setActiveTab((tabItems.find((item) => `/${item.id}` === window.location.pathname)?.id || "scan") as Tab); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []);
 
   const confirmLeaveSettings = () => !settingsDirty || window.confirm("You have unsaved Settings changes. Leave without saving?");
   const changeProject = (slug: string) => {
     if (slug !== project && !confirmLeaveSettings()) return;
     const url = new URL(window.location.href);
     url.searchParams.set("project", slug);
-    window.history.replaceState({}, "", url);
+    window.history.replaceState({}, "", `${window.location.pathname}${url.search}`);
     setProject(slug);
     setSettingsDirty(false);
+  };
+  const changeTab = (tab: Tab) => {
+    if (tab !== activeTab && !confirmLeaveSettings()) return;
+    const url = new URL(window.location.href);
+    url.pathname = `/${tab}`;
+    window.history.pushState({}, "", url);
+    setActiveTab(tab);
+    if (tab !== "settings") setSettingsDirty(false);
   };
   const interact = async (path: string, json: RecordValue, message: string) => {
     try { await request(path, project, { method: "POST", json }); setNotice(message); await load(); }
@@ -166,7 +176,7 @@ function App() {
         <img src="assets/lumen-mark.png" className="brand-mark" alt="Lumen" />
         <div className="sidebar-brand-copy"><strong>Lumen</strong><span>{tagline}</span></div>
       </div>
-      <nav className="side-nav" aria-label="Dashboard sections">{tabItems.map((item) => { const Icon = item.icon; return <button title={item.label} className={activeTab === item.id ? "active" : ""} onClick={() => { if (item.id !== activeTab && !confirmLeaveSettings()) return; setActiveTab(item.id); if (item.id !== "settings") setSettingsDirty(false); }} key={item.id}><Icon size={17} /><span>{item.label}</span></button>; })}</nav>
+      <nav className="side-nav" aria-label="Dashboard sections">{tabItems.map((item) => { const Icon = item.icon; return <button title={item.label} className={activeTab === item.id ? "active" : ""} onClick={() => changeTab(item.id)} key={item.id}><Icon size={17} /><span>{item.label}</span></button>; })}</nav>
       <div className="sidebar-foot">
         {!sidebarCollapsed && <img src="assets/inspire-group-logo.png" className="company-mark" alt="INSPIRE GROUP" />}
         <small>{sidebarCollapsed ? `V${lumenVersion}` : `Version ${lumenVersion}`}</small>
@@ -253,6 +263,8 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
   const [retryOpen, setRetryOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+  const [actionError, setActionError] = useState("");
   const [now, setNow] = useState(Date.now());
   const running = /in_progress|running/i.test(String(current.delivery_status || ""));
   const loadDeliveryLog = useCallback(async (runId = current.run_id || "", refresh = false) => {
@@ -262,8 +274,8 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
     finally { setLoadingLog(false); }
   }, [current.run_id, project]);
   useEffect(() => { if (!running) return; const id = window.setInterval(() => setNow(Date.now()), 1_000); return () => window.clearInterval(id); }, [running]);
-  const selectedLogIsLive = Boolean(selectedStage && running && selectedStage.run_id === current.run_id);
-  useEffect(() => { if (!selectedLogIsLive || !selectedStage) return; const id = window.setInterval(() => void loadDeliveryLog(selectedStage.run_id, true), 1_000); return () => window.clearInterval(id); }, [selectedStage, selectedLogIsLive, loadDeliveryLog]);
+  const selectedLogIsLive = Boolean(selectedStage && running && selectedStage.run_id === current.run_id && /in_progress|running/i.test(String(selectedStage.status || "")));
+  useEffect(() => { if (!selectedLogIsLive || !selectedStage) return; const id = window.setInterval(() => void loadDeliveryLog(selectedStage.run_id, true), 2_000); return () => window.clearInterval(id); }, [selectedStage, selectedLogIsLive, loadDeliveryLog]);
   const openStage = async (stage: RecordValue, runId = current.run_id || "") => {
     setSelectedStage({ ...stage, run_id: runId }); setLogContent(""); setLogError(""); await loadDeliveryLog(runId);
   };
@@ -279,10 +291,33 @@ function DeliveryView({ data, project }: { data: DashboardData; project: string 
     catch (err) { const message = err instanceof Error ? err.message : "Unable to retry delivery"; setRetryError(message === "Not found" ? "Dashboard is still running an older version. Run `lumen dashboard stop --project …`, then open the dashboard again." : message); }
     finally { setRetrying(false); }
   };
+  const start = async () => {
+    setActionBusy(true); setActionError("");
+    try { await request("/api/delivery/start", project, { method: "POST", json: { story: current.story_id || current.jira_key || "" } }); }
+    catch (err) { setActionError(err instanceof Error ? err.message : "Unable to start delivery"); }
+    finally { setActionBusy(false); }
+  };
+  const stop = async () => {
+    if (!window.confirm("Stop this delivery and remove its worktrees?")) return;
+    setActionBusy(true); setActionError("");
+    try { await request("/api/delivery/stop", project, { method: "POST", json: {} }); }
+    catch (err) { setActionError(err instanceof Error ? err.message : "Unable to stop delivery"); }
+    finally { setActionBusy(false); }
+  };
+  const openTrace = async (runId: string) => {
+    try { const response = await request(`/api/delivery/trace?run_id=${encodeURIComponent(runId)}`, project); setSelectedStage({ label: "Trace", duration: "Agent evidence", detail: "Redacted local execution evidence", run_id: runId }); setLogContent(JSON.stringify(response, null, 2)); setLogError(""); }
+    catch (err) { setActionError(err instanceof Error ? err.message : "Unable to load trace"); }
+  };
+  const removeHistory = async (runId: string) => {
+    if (!window.confirm("Delete this delivery record, log, and trace files?")) return;
+    try { await request("/api/delivery/history/delete", project, { method: "POST", json: { run_id: runId } }); }
+    catch (err) { setActionError(err instanceof Error ? err.message : "Unable to delete delivery history"); }
+  };
   const canRetry = /failed|blocked/i.test(String(current.delivery_status || ""));
+  const canStart = !running && Boolean(current.story_id || current.jira_key || (delivery.available_stories || []).length);
   return <>
-    <Panel title="Current Progress" className="delivery-summary" action={canRetry ? <button className="button secondary" onClick={() => setRetryOpen(true)}><RotateCcw size={14} />Retry</button> : undefined}><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at || (running ? new Date(now).toISOString() : undefined))} /><Fact label="Finished" value={running ? "Running" : when(current.finished_at)} /></div><DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} startedAt={current.started_at} finishedAt={current.finished_at} remediation={current.remediation} now={now} onStageClick={openStage} /></Panel>
-    <Panel title="Delivery History" className="history-panel" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Checks</th><th>Duration</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; const failed = runChecks.filter((item: RecordValue) => item.status === "failed"); const canInspectStatus = failed.length || /failed|blocked/i.test(String(run.status)); return <tr key={run.run_id}><td><div className="history-story"><span className="history-story-line"><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</span><small>{text(run.branch, "")}</small></div></td><td>{when(run.finished_at || run.started_at)}</td><td>{canInspectStatus ? <button className="status-badge-button" title="Open failure log" onClick={() => void openStage({ label: "Delivery failure", duration: elapsed(run.started_at, run.finished_at), detail: failed.map((item: RecordValue) => item.summary || item.label).filter(Boolean).join(" · ") || "Open the delivery log for details." }, run.run_id)}><Badge value={run.status} /></button> : <Badge value={run.status} />}</td><td><PrLinks items={run.pull_requests || []} /></td><td><VerificationSummary checks={runChecks} onClick={() => setSelectedChecks(runChecks)} /></td><td>{elapsed(run.started_at, run.finished_at)}</td></tr>; }) : <tr><td colSpan={6}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
+    <Panel title="Current Progress" className="delivery-summary" action={<span className="panel-actions">{canStart && <button className="button secondary" disabled={actionBusy} onClick={() => void start()}><Play size={14} />Start</button>}{running && <button className="button danger secondary" disabled={actionBusy} onClick={() => void stop()}>Stop</button>}{canRetry && <button className="button secondary" onClick={() => setRetryOpen(true)}><RotateCcw size={14} />Retry</button>}</span>}><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at || (running ? new Date(now).toISOString() : undefined))} /><Fact label="Finished" value={running ? "Running" : when(current.finished_at)} /></div>{actionError && <div className="status-note">{actionError}</div>}<DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} startedAt={current.started_at} finishedAt={current.finished_at} remediation={current.remediation} now={now} onStageClick={openStage} /></Panel>
+    <Panel title="Delivery History" className="history-panel" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Checks</th><th>Duration</th><th>Trace</th><th>Operation</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; const failed = runChecks.filter((item: RecordValue) => item.status === "failed"); const canInspectStatus = failed.length || /failed|blocked/i.test(String(run.status)); return <tr key={run.run_id}><td><div className="history-story"><span className="history-story-line"><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</span><small>{text(run.branch, "")}</small></div></td><td>{when(run.finished_at || run.started_at)}</td><td>{canInspectStatus ? <button className="status-badge-button" title="Open failure log" onClick={() => void openStage({ label: "Delivery failure", duration: elapsed(run.started_at, run.finished_at), detail: failed.map((item: RecordValue) => item.summary || item.label).filter(Boolean).join(" · ") || "Open the delivery log for details." }, run.run_id)}><Badge value={run.status} /></button> : <Badge value={run.status} />}</td><td><PrLinks items={run.pull_requests || []} /></td><td><VerificationSummary checks={runChecks} onClick={() => setSelectedChecks(runChecks)} /></td><td>{elapsed(run.started_at, run.finished_at)}</td><td>{run.agent_trace && <button className="text-button" onClick={() => void openTrace(run.run_id)}>View trace</button>}</td><td><IconButton label="Delete delivery record" danger onClick={() => void removeHistory(run.run_id)}><Trash2 size={15} /></IconButton></td></tr>; }) : <tr><td colSpan={8}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
     <Panel title="Scheduler Activity" action={<span className="panel-actions"><span className="muted">{schedulerActivity.length} recent events</span>{delivery.scheduler_log_available && <button className="button secondary" onClick={() => void openSchedulerLog()}><Terminal size={14} />View raw log</button>}</span>}><div className="scheduler-activity">{schedulerActivity.length ? schedulerActivity.map((event: RecordValue, index: number) => <article className="scheduler-event" key={`${event.at}-${index}`}><Badge value={event.outcome} /><div><strong>{text(event.story_id || event.jira_key, "Workspace")}</strong><p>{text(event.message)}</p></div><time>{when(event.at)}</time></article>) : <Empty label="No scheduled delivery activity recorded yet." />}</div></Panel>
     {selectedStage && <DeliveryLogDialog stage={selectedStage} content={logContent} error={logError} loading={loadingLog} live={selectedLogIsLive} onClose={() => setSelectedStage(null)} />}
     {schedulerLogOpen && <DeliveryLogDialog stage={{ label: "Scheduler log", duration: "Recent raw output", detail: "Launchd output is capped at 256 KiB; structured activity retains the latest 200 events." }} content={logContent} error={logError} loading={loadingLog} onClose={() => setSchedulerLogOpen(false)} />}
@@ -306,13 +341,14 @@ function DeliveryFlow({ stages, deliveryStatus, startedAt, finishedAt, remediati
   return <div className="delivery-flow"><div className="flow-heading"><div><span className="flow-title">Delivery Flow</span>{retrying && <strong className="remediation-alert"><RotateCcw size={13} />Verification failed · Remediation retry {retry}</strong>}</div><p>{startedAt ? `Started ${when(startedAt)}` : "Awaiting delivery trigger"}{finishedAt ? ` · Finished ${when(finishedAt)}` : ""}</p></div><div className="flow-track-wrap"><span className="flow-track"><i style={{ width: `${progress}%` }} /></span><ol className="flow-steps" style={{ "--flow-count": stages.length } as React.CSSProperties}>{stages.map((stage, index) => {
     const rawStatus = String(stage.status || "pending").toLowerCase();
     const state = terminalSuccess || rawStatus === "completed" ? "completed" : /running|progress/.test(rawStatus) ? "running" : /fail|block/.test(rawStatus) ? "failed" : "pending";
-    const duration = state === "running" ? elapsed(stage.started_at, new Date(now).toISOString()) : stage.duration || "Pending";
-    const caption = retrying && state === "running" && ["implement", "verification"].includes(stage.id) ? `Retry ${retry} · ${duration}` : retrying && stage.id === "verification" && state === "failed" ? `Failed · remediation ${retry}` : state === "failed" ? "Needs attention" : duration;
+    const duration = state === "running" ? elapsed(stage.active_started_at || stage.started_at, new Date(now).toISOString()) : stage.duration || "Pending";
+    const attemptCount = Array.isArray(stage.attempts) && stage.attempts.length > 1 ? ` · ${stage.attempts.length} attempts` : "";
+    const caption = retrying && state === "running" && ["implement", "verification"].includes(stage.id) ? `Retry ${retry} · ${duration}` : retrying && stage.id === "verification" && state === "failed" ? `Failed · remediation ${retry}` : state === "failed" ? "Needs attention" : `${duration}${attemptCount}`;
     return <li className={`flow-step ${state}`} key={`${stage.label}-${index}`}><button className="flow-stage-button" onClick={() => onStageClick(stage)}><span className="flow-marker">{state === "completed" ? "✓" : state === "running" ? <span className="pulse-dot" /> : index + 1}</span><span className="flow-copy"><strong>{text(stage.label)}</strong><span>{caption}</span></span></button></li>;
   })}</ol></div></div>;
 }
 
-function DeliveryLogDialog({ stage, content, error, loading, live = false, onClose }: { stage: RecordValue; content: string; error: string; loading: boolean; live?: boolean; onClose: () => void }) { const logRef = useRef<HTMLPreElement>(null); useEffect(() => { if (live && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [content, live]); return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal delivery-log-modal" role="dialog" aria-modal="true" aria-label={`${stage.label} log`} onMouseDown={(event) => event.stopPropagation()}><div className="delivery-log-header"><div><span>{stage.label}</span><strong>{stage.duration || "—"}{live && <em className="live-log"><i />Live · 1s</em>}</strong><p>{stage.detail || "Delivery log excerpt"}</p></div><button className="button secondary" onClick={onClose}>Close</button></div><pre ref={logRef} className="delivery-log-content"><code>{loading && !content ? "Loading log…" : error || content}</code></pre></section></div>; }
+function DeliveryLogDialog({ stage, content, error, loading, live = false, onClose }: { stage: RecordValue; content: string; error: string; loading: boolean; live?: boolean; onClose: () => void }) { const logRef = useRef<HTMLPreElement>(null); useEffect(() => { if (live && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [content, live]); return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal delivery-log-modal" role="dialog" aria-modal="true" aria-label={`${stage.label} log`} onMouseDown={(event) => event.stopPropagation()}><div className="delivery-log-header"><div><span>{stage.label}</span><strong>{stage.duration || "—"}{live && <em className="live-log"><i />Live</em>}</strong><p>{stage.detail || "Delivery log excerpt"}</p>{Array.isArray(stage.attempts) && stage.attempts.length > 0 && <small className="stage-attempts">{stage.attempts.map((attempt: RecordValue) => `Attempt ${attempt.number}: ${attempt.duration}`).join(" · ")}</small>}</div><button className="button secondary" onClick={onClose}>Close</button></div><pre ref={logRef} className="delivery-log-content"><code>{loading && !content ? "Loading log…" : error || content}</code></pre></section></div>; }
 
 function Fact({ label, value }: { label: string; value: React.ReactNode }) { return <div className="fact"><span>{label}</span><strong>{value}</strong></div>; }
 function PrLinks({ items }: { items: RecordValue[] }) { return items.length ? <span className="pr-links">{items.map((item, index) => <a href={item.url} target="_blank" rel="noreferrer" key={`${item.url}-${index}`}>{text(item.repository, "Pull request")}{String(item.url || "").match(/\/(\d+)\/?$/) ? ` #${String(item.url).match(/\/(\d+)\/?$/)?.[1]}` : ""}<ExternalLink size={12} /></a>)}</span> : <>—</>; }
@@ -490,21 +526,20 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [deliveryStatus, setDeliveryStatus] = useState(String(schedules.delivery?.jira_status || ""));
   const [inDevStatus, setInDevStatus] = useState(String(schedules.delivery?.in_dev_status || ""));
   const [devDoneStatus, setDevDoneStatus] = useState(String(schedules.delivery?.dev_done_status || ""));
+  const [blockedStatus, setBlockedStatus] = useState(String(schedules.delivery?.blocked_status || "Block"));
   const [deliveryEnabled, setDeliveryEnabled] = useState(Boolean(schedules.delivery?.enabled));
+  const [scanModel, setScanModel] = useState(String(workspace.models?.scan || "composer-2.5"));
+  const [deliveryModel, setDeliveryModel] = useState(String(workspace.models?.delivery || "composer-2.5"));
   const [workflowStatuses, setWorkflowStatuses] = useState<string[]>([]);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [changedSecrets, setChangedSecrets] = useState<Record<string, string>>({});
   const [scanPublishMode, setScanPublishMode] = useState(String(workspace.publish?.scan || "pr"));
   const [deliveryPublishMode, setDeliveryPublishMode] = useState(String(workspace.publish?.delivery || "pr"));
-  const traceConfig = data.delivery?.config?.observability?.agent_trace || {};
-  const [traceMode, setTraceMode] = useState(String(traceConfig.capture_mode || "metadata"));
-  const [traceRetention, setTraceRetention] = useState(String(traceConfig.retention_days || 14));
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
   useEffect(() => { void request("/api/delivery/status-options", project).then((response) => setWorkflowStatuses(Array.isArray(response.options) ? response.options.map(String) : [])).catch(() => setWorkflowStatuses([])); }, [project]);
-  useEffect(() => { setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setDeliveryStatus(String(schedules.delivery?.jira_status || "")); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setSecrets({}); setChangedSecrets({}); setDirty(false); onDirtyChange(false); }, [project]);
+  useEffect(() => { setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setDeliveryStatus(String(schedules.delivery?.jira_status || "")); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setScanModel(String(workspace.models?.scan || "composer-2.5")); setDeliveryModel(String(workspace.models?.delivery || "composer-2.5")); setSecrets({}); setChangedSecrets({}); setDirty(false); onDirtyChange(false); }, [project]);
   useEffect(() => { setScanPublishMode(String(workspace.publish?.scan || "pr")); setDeliveryPublishMode(String(workspace.publish?.delivery || "pr")); }, [workspace.publish?.scan, workspace.publish?.delivery]);
-  useEffect(() => { setTraceMode(String(traceConfig.capture_mode || "metadata")); setTraceRetention(String(traceConfig.retention_days || 14)); }, [traceConfig.capture_mode, traceConfig.retention_days]);
   useEffect(() => { const warn = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [dirty]);
   const getSecret = async (name: string) => { const response = await request(`/api/integration?key=${encodeURIComponent(name)}`, project); return String(response.value); };
   const reveal = async (name: string) => { try { const result = await getSecret(name); setSecrets((current) => ({ ...current, [name]: result })); notify("Integration value revealed"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to reveal value"); } };
@@ -514,11 +549,10 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const saveAll = async () => {
     try {
       await Promise.all([
-        request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow) } }),
+        request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel, delivery_model: deliveryModel } }),
         request("/api/schedule", project, { method: "POST", json: scanEnabled ? { kind: "scan", action: "save", cron: scanCron } : { kind: "scan", action: "remove" } }),
-        request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_status: deliveryStatus, in_dev_status: inDevStatus, dev_done_status: devDoneStatus } : { kind: "delivery", action: "remove" } }),
+        request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_status: deliveryStatus, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }),
         request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode } }),
-        request("/api/observability", project, { method: "POST", json: { capture_mode: traceMode, retention_days: Number(traceRetention) } }),
         ...Object.entries(changedSecrets).map(([key, value]) => request("/api/integration", project, { method: "POST", json: { key, value } }))
       ]);
       setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved"); await reload();
@@ -527,10 +561,10 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   return <div className="settings-stack">
     <Panel title="Automation Schedules">
       <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Scan</h4></div></div><p>{text(schedules.scan?.description, "No recurring scan is configured.")}</p></div><div className="settings-control wide"><div className="form-grid compact scan-settings-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 0, width: "100%" }}><Field label="Lookback, days"><input type="number" min="1" max="365" value={scanWindow} onChange={(event) => { setScanWindow(event.target.value); markDirty(); }} /></Field><Field label="Five-field cron"><input value={scanCron} onChange={(event) => { setScanCron(event.target.value); markDirty(); }} /></Field></div></div><div className="settings-toggle"><ScheduleToggle enabled={scanEnabled} onChange={(enabled) => { setScanEnabled(enabled); markDirty(); }} /></div></div>
-      <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Delivery</h4></div></div><p>{deliveryEnabled ? `Polling every ${deliveryInterval} minute(s).` : "Delivery polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => { setDeliveryInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA status"><select value={deliveryStatus} onChange={(event) => { setDeliveryStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when started"><select value={inDevStatus} onChange={(event) => { setInDevStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={devDoneStatus} onChange={(event) => { setDevDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">On failure, Lumen leaves the JIRA status unchanged and adds a Needs attention comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={deliveryEnabled} onChange={(enabled) => { setDeliveryEnabled(enabled); markDirty(); }} /></div></div>
+      <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Delivery</h4></div></div><p>{deliveryEnabled ? `Polling every ${deliveryInterval} minute(s).` : "Delivery polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => { setDeliveryInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA status"><select value={deliveryStatus} onChange={(event) => { setDeliveryStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when started"><select value={inDevStatus} onChange={(event) => { setInDevStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={devDoneStatus} onChange={(event) => { setDevDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when failed"><select value={blockedStatus} onChange={(event) => { setBlockedStatus(event.target.value); markDirty(); }}>{Array.from(new Set([...statusOptions, "Block"])).map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">On failure, Lumen moves the Jira card to the selected Block status and adds a Needs attention comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={deliveryEnabled} onChange={(enabled) => { setDeliveryEnabled(enabled); markDirty(); }} /></div></div>
     </Panel>
-    <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>PR keeps a review gate. Merge creates a PR first, then merges it into the configured default branch.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field></div></div></div></Panel>
-    <Panel title="Agent Trace"><div className="settings-section"><div className="settings-copy"><h4>Local Delivery evidence</h4><p>Metadata is the safe default. Full mode stores redacted prompts, provider events, stdout, and stderr for local debugging.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Capture mode"><select value={traceMode} onChange={(event) => { setTraceMode(event.target.value); markDirty(); }}><option value="off">Off</option><option value="metadata">Metadata</option><option value="full">Full</option></select></Field><Field label="Retention, days"><input type="number" min="1" max="3650" value={traceRetention} onChange={(event) => { setTraceRetention(event.target.value); markDirty(); }} /></Field></div></div></div></Panel>
+    <Panel title="Execution Models"><div className="settings-section"><div className="settings-copy"><h4>Cursor model</h4><p>Each workflow reads its selected model on the next run.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan model"><input value={scanModel} onChange={(event) => { setScanModel(event.target.value); markDirty(); }} placeholder="composer-2.5" /></Field><Field label="Auto Delivery model"><input value={deliveryModel} onChange={(event) => { setDeliveryModel(event.target.value); markDirty(); }} placeholder="composer-2.5" /></Field></div></div></div></Panel>
+    <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>Direct push uses the repository credentials already configured for Git; PR and Merge use GitHub CLI.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option><option value="direct">Push directly to main branch</option></select></Field></div></div></div></Panel>
     <Panel title="Variable Keys" action={<span className="muted">Stored only in this workspace</span>}><div className="settings-section"><div className="settings-copy"><h4>Available keys</h4><p>Reveal a value to inspect it, or enter a replacement directly. Values are saved without display quotes.</p></div><div className="settings-control wide"><div className="secret-list">{configured.length ? configured.map((name: string) => { const value = changedSecrets[name] ?? secrets[name] ?? ""; return <div className="secret-row" key={name}><code>{name}</code><input type={secrets[name] || changedSecrets[name] !== undefined ? "text" : "password"} value={value} placeholder="Reveal or enter a replacement value" aria-label={`Value for ${name}`} onChange={(event) => { const next = event.target.value; setChangedSecrets((current) => ({ ...current, [name]: next })); markDirty(); }} /><div><IconButton label="Reveal value" onClick={() => void reveal(name)}>{secrets[name] ? <EyeOff size={15} /> : <Eye size={15} />}</IconButton><IconButton label="Copy value" onClick={() => void copy(name)}><Copy size={15} /></IconButton></div></div>; }) : <Empty label="No local integration keys configured." />}</div></div></div></Panel>
     <footer className="settings-save-bar"><span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "You have unsaved changes" : "All changes saved"}</span><button className="button primary" disabled={!dirty} onClick={() => void saveAll()}><Save size={15} />Save changes</button></footer>
   </div>;

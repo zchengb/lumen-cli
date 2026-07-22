@@ -2114,7 +2114,8 @@ cmd_dashboard() {
 
   local dashboard_server="${LUMEN_LIB_DIR}/dashboard_server.py"
   [[ -f "${dashboard_server}" ]] || { err "Interactive dashboard server not found: ${dashboard_server}"; exit 1; }
-  local project_json project_slug server_state server_url server_pid dashboard_version server_version
+  local project_json project_slug server_state server_url server_pid dashboard_version server_version dashboard_port
+  dashboard_port="${LUMEN_DASHBOARD_PORT:-4173}"
   project_json="$(registry_cmd resolve-workspace "${workspace}")" || { err "Workspace is not registered. Run: lumen register ${workspace}"; exit 1; }
   project_slug="$(json_get "${project_json}" slug)"
   server_state="${workspace}/state/dashboard-server.json"
@@ -2129,7 +2130,8 @@ cmd_dashboard() {
         rm -f "${server_state}"
       else
       server_url="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('url',''), end='')" "${server_state}" 2>/dev/null || true)"
-      if [[ -z "${server_url}" ]] || ! curl -fsS --max-time 1 "${server_url%/}/api/state" >/dev/null 2>&1; then
+      if [[ "${server_url}" != *":${dashboard_port}/" ]] || ! curl -fsS --max-time 1 "${server_url%/}/api/state" >/dev/null 2>&1; then
+        kill "${server_pid}" 2>/dev/null || true
         server_url=""
         rm -f "${server_state}"
       fi
@@ -2142,6 +2144,7 @@ cmd_dashboard() {
     mkdir -p "${workspace}/logs"
     nohup python3 "${dashboard_server}" --workspace "${workspace}" --project "${project_slug}" --version "${dashboard_version}" \
       --lumen-bin "${LUMEN_CLI_BIN}" --lumen-home "${LUMEN_HOME}" \
+      --port "${dashboard_port}" \
       > "${workspace}/logs/dashboard-server.log" 2>&1 < /dev/null &
     local attempt
     for attempt in {1..30}; do

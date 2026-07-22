@@ -9,6 +9,8 @@ import json
 import mimetypes
 import os
 import re
+import shutil
+import signal
 import shlex
 import subprocess
 import sys
@@ -52,6 +54,22 @@ RENDERER = load_dashboard_renderer()
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def terminate_process_tree(pid: int) -> None:
+    try:
+        children = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True, check=False).stdout.split()
+    except OSError:
+        children = []
+    for child in children:
+        try:
+            terminate_process_tree(int(child))
+        except ValueError:
+            continue
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        pass
 
 
 def load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
@@ -115,6 +133,7 @@ def schedule_payload(workspace: Path, project: str) -> dict[str, Any]:
     delivery_raw["jira_status"] = delivery_raw.get("jira_status") or scheduled.get("required_jira_status", "")
     delivery_raw["in_dev_status"] = jira.get("in_dev_status", "")
     delivery_raw["dev_done_status"] = jira.get("dev_done_status", "")
+    delivery_raw["blocked_status"] = jira.get("blocked_status", "Block")
     return {
         "scan": scan_raw,
         "delivery": delivery_raw,
@@ -217,6 +236,10 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         "publish": {
             "scan": str(((common.get("auto_fix") or {}).get("publish_mode") or "pr")),
             "delivery": str(((delivery_config.get("publish") or {}).get("mode") or "pr")),
+        },
+        "models": {
+            "scan": str((common.get("execution") or {}).get("model") or "composer-2.5"),
+            "delivery": str((delivery_config.get("execution") or {}).get("model") or "composer-2.5"),
         },
     }
 
@@ -344,9 +367,9 @@ def save_delivery_steps(workspace: Path, repository: str, commands: object) -> d
 
 
 def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object) -> dict[str, Any]:
-    modes = {"pr", "merge"}
+    modes = {"pr", "merge", "direct"}
     if scan_mode not in modes or delivery_mode not in modes:
-        raise ValueError("Publish mode must be PR or Merge")
+        raise ValueError("Publish mode must be PR, Merge, or Direct push")
     common_path = workspace / "config" / "common.json"
     common = load_json(common_path, {})
     common.setdefault("auto_fix", {})["publish_mode"] = scan_mode
@@ -429,6 +452,21 @@ def phase_intervals(phase: dict[str, Any]) -> tuple[list[tuple[datetime, datetim
     return ([(start, finish)] if start and finish and finish >= start else []), False
 
 
+def phase_attempt_records(phase: dict[str, Any]) -> list[tuple[datetime, datetime | None]]:
+    raw_attempts = phase.get("attempts")
+    if not isinstance(raw_attempts, list):
+        raw_attempts = [{"started_at": phase.get("started_at"), "finished_at": phase.get("finished_at")}]
+    records: list[tuple[datetime, datetime | None]] = []
+    for item in raw_attempts:
+        if not isinstance(item, dict):
+            continue
+        start = parse_delivery_timestamp(item.get("started_at"))
+        finish = parse_delivery_timestamp(item.get("finished_at"))
+        if start and (finish is None or finish >= start):
+            records.append((start, finish))
+    return records
+
+
 def intervals_duration(intervals: list[tuple[datetime, datetime]]) -> str:
     seconds = sum(int((finish - start).total_seconds()) for start, finish in intervals)
     if seconds < 60:
@@ -477,9 +515,20 @@ def delivery_stages(phases: object) -> list[dict[str, Any]]:
         intervals = [interval for values, _ in interval_sets for interval in values]
         starts = [start for start, _ in intervals]
         finishes = [finish for _, finish in intervals]
-        started_at = min(starts).isoformat().replace("+00:00", "Z") if starts else ""
+        all_attempts = [attempt for phase in matched for attempt in phase_attempt_records(phase)]
+        started_at = min((start for start, _ in all_attempts), default=min(starts) if starts else None)
+        started_at = started_at.isoformat().replace("+00:00", "Z") if started_at else ""
         finished_at = max(finishes).isoformat().replace("+00:00", "Z") if finishes else ""
         detail = " · ".join(dict.fromkeys(str(phase.get("detail") or "").strip() for phase in matched if phase.get("detail")))
+        attempts = [
+            {
+                "number": index + 1,
+                "started_at": start.isoformat().replace("+00:00", "Z"),
+                "finished_at": finish.isoformat().replace("+00:00", "Z") if finish else "",
+                "duration": delivery_duration(start, finish) if finish else "Running",
+            }
+            for index, (start, finish) in enumerate(all_attempts)
+        ]
         stages.append({
             "id": stage_id,
             "label": label,
@@ -488,6 +537,8 @@ def delivery_stages(phases: object) -> list[dict[str, Any]]:
             "finished_at": finished_at,
             "duration": intervals_duration(intervals) if intervals else "—",
             "duration_kind": "active" if matched and all(has_attempts for _, has_attempts in interval_sets) else "span",
+            "active_started_at": next((start.isoformat().replace("+00:00", "Z") for start, finish in reversed(all_attempts) if finish is None), ""),
+            "attempts": attempts,
             "detail": detail,
         })
     return stages
@@ -537,11 +588,25 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     ):
         current = {**progress, **result}
         current["started_at"] = progress.get("started_at") or result.get("started_at") or ""
-        current["finished_at"] = progress.get("finished_at") or result.get("finished_at") or ""
+        current["finished_at"] = result.get("finished_at") or progress.get("finished_at") or ""
         current["current_phase"] = "completed" if result.get("delivery_status") == "completed" else result.get("delivery_status")
         current["verification"] = result.get("verification_results") or progress.get("verification") or []
     else:
         current = progress
+    lock = workspace / "locks" / "delivery-run"
+    pid_path = lock / "pid"
+    active = False
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        active = True
+    except (OSError, ValueError):
+        pass
+    if str(current.get("delivery_status") or "").lower() in {"in_progress", "running"} and not active:
+        current = dict(current)
+        current["delivery_status"] = "failed"
+        current["finished_at"] = current.get("updated_at") or current.get("started_at") or ""
+        current["current_step"] = "Delivery process is no longer running"
     remediation = read_delivery_json(workspace / "results" / "delivery-remediation.json", {})
     if not remediation and isinstance(result.get("remediation"), dict):
         remediation = result["remediation"]
@@ -564,10 +629,34 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     return {
         "current": current,
         "runs": runs,
+        "available_stories": available_delivery_stories(workspace, current),
         "scheduler_activity": list(reversed(activity)),
         "scheduler_log_available": (workspace / "logs" / "delivery-schedule.log").is_file(),
         "config": read_delivery_json(workspace / "config" / "delivery.json", {}),
     }
+
+
+def available_delivery_stories(workspace: Path, current: dict[str, Any]) -> list[dict[str, str]]:
+    docs_value = str(current.get("docs_dir") or "").strip()
+    if docs_value:
+        docs_dir = Path(docs_value).expanduser()
+    else:
+        workspace_config = load_json(workspace / "config" / "workspace.json", {})
+        docs_dir = Path(str(workspace_config.get("docs_repo") or workspace.parent)).expanduser()
+    stories = docs_dir / "stories"
+    if not stories.is_dir():
+        return []
+    result: list[dict[str, str]] = []
+    for story_dir in sorted(item for item in stories.iterdir() if item.is_dir()):
+        metadata = read_delivery_json(story_dir / "metadata.json", {})
+        if str(metadata.get("businessStatus") or "").casefold() != "ready":
+            continue
+        if str(metadata.get("technicalStatus") or "").casefold() != "approved":
+            continue
+        if str(metadata.get("deliveryStatus") or "not_started").casefold() not in {"", "not_started", "blocked"}:
+            continue
+        result.append({"story": story_dir.name, "jira_key": str(metadata.get("jiraKey") or ""), "title": str(metadata.get("title") or "")})
+    return result
 
 
 def trace_directory(workspace: Path, run_id: str) -> Path:
@@ -696,14 +785,19 @@ class DashboardServer(ThreadingHTTPServer):
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
         return {"path": str(log_file.relative_to(workspace)), "content": "\n".join(lines[-220:])}
 
-    def retry_delivery(self, workspace: Path) -> dict[str, Any]:
+    def retry_delivery(self, workspace: Path, story_override: str = "") -> dict[str, Any]:
         progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
-        if str(progress.get("delivery_status") or "").lower() not in {"failed", "blocked"}:
-            raise ValueError("Only a failed or blocked delivery can be retried")
+        if not story_override and str(progress.get("delivery_status") or "").lower() not in {"failed", "blocked", "not_started", ""}:
+            raise ValueError("Only a stopped, failed, blocked, or not-started delivery can be started")
         if (workspace / "locks" / "delivery-run").exists():
             raise RuntimeError("A delivery run is already active")
-        docs_dir = Path(str(progress.get("docs_dir") or "")).expanduser().resolve()
-        story_ref = str(progress.get("story_id") or progress.get("jira_key") or "").strip()
+        docs_value = str(progress.get("docs_dir") or "").strip()
+        if docs_value:
+            docs_dir = Path(docs_value).expanduser().resolve()
+        else:
+            workspace_config = load_json(workspace / "config" / "workspace.json", {})
+            docs_dir = Path(str(workspace_config.get("docs_repo") or workspace.parent)).expanduser().resolve()
+        story_ref = str(story_override or progress.get("story_id") or progress.get("jira_key") or "").strip()
         if not story_ref or workspace_lumen_dir(docs_dir).resolve() != workspace.resolve():
             raise ValueError("The failed delivery does not have a retryable workspace and story")
         context = load_story_context(docs_dir, story_ref, validate_gates=False)
@@ -734,6 +828,83 @@ class DashboardServer(ThreadingHTTPServer):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         return {"story": story_ref, "started_at": utc_now(), "worktrees": cleaned, "jira_status": reset_status if jira_enabled else "unchanged"}
+
+    def stop_delivery(self, workspace: Path) -> dict[str, Any]:
+        lock = workspace / "locks" / "delivery-run"
+        pid_path = lock / "pid"
+        if not pid_path.is_file():
+            raise ValueError("No active delivery run was found")
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+        except ValueError as exc:
+            raise ValueError("Delivery process id is invalid") from exc
+        terminate_process_tree(pid)
+
+        progress_path = workspace / "results" / "delivery-progress.json"
+        progress = read_delivery_json(progress_path, {})
+        progress["delivery_status"] = "blocked"
+        progress["current_step"] = "Stopped from Dashboard"
+        progress["finished_at"] = utc_now()
+        progress["updated_at"] = progress["finished_at"]
+        write_json(progress_path, progress)
+        try:
+            delivery_config = load_json(workspace / "config" / "delivery.json", {})
+            jira_enabled, _ = should_sync_jira(delivery_config)
+            jira_key = str(progress.get("jira_key") or "").strip()
+            blocked_status = str(jira_delivery_config(delivery_config).get("blocked_status") or "Block").strip()
+            if jira_enabled and jira_key and blocked_status:
+                refreshed, _ = refresh_twg_auth(force=True)
+                if refreshed:
+                    transition_issue(jira_key, blocked_status, jira_delivery_config(delivery_config))
+        except Exception:
+            pass
+
+        docs_value = str(progress.get("docs_dir") or "").strip()
+        if docs_value:
+            docs_dir = Path(docs_value).expanduser().resolve()
+        else:
+            workspace_config = load_json(workspace / "config" / "workspace.json", {})
+            docs_dir = Path(str(workspace_config.get("docs_repo") or workspace.parent)).expanduser().resolve()
+        story_ref = str(progress.get("story_id") or progress.get("jira_key") or "").strip()
+        cleaned: list[str] = []
+        if story_ref and workspace_lumen_dir(docs_dir).resolve() == workspace.resolve():
+            cleaned = cleanup_delivery_worktrees(docs_dir, story_ref)
+        shutil.rmtree(lock, ignore_errors=True)
+        return {"pid": pid, "story": story_ref, "worktrees": cleaned}
+
+    def delete_delivery_history(self, workspace: Path, run_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+            raise ValueError("Invalid delivery run id")
+        current = delivery_payload(workspace).get("current") or {}
+        if run_id == str(current.get("run_id") or "") and (workspace / "locks" / "delivery-run").exists():
+            raise ValueError("The active delivery cannot be deleted")
+        history_json = workspace / "history" / "delivery" / f"{run_id}.json"
+        if not history_json.is_file():
+            raise ValueError("Delivery history record was not found")
+        item = read_delivery_json(history_json, {})
+        removed: list[str] = []
+        log_value = str(item.get("log_file") or "").strip()
+        if log_value:
+            log_path = Path(log_value).expanduser()
+            try:
+                log_path.resolve().relative_to(workspace.resolve())
+                if log_path.is_file():
+                    log_path.unlink()
+                    removed.append(str(log_path))
+            except ValueError:
+                pass
+        for path in (
+            history_json,
+            workspace / "history" / "delivery" / run_id,
+            workspace / "results" / "agent-traces" / run_id,
+        ):
+            if path.is_dir():
+                shutil.rmtree(path)
+                removed.append(str(path))
+            elif path.is_file():
+                path.unlink()
+                removed.append(str(path))
+        return {"run_id": run_id, "removed": removed}
 
     def update_observability(self, workspace: Path, body: dict[str, Any]) -> dict[str, Any]:
         mode = str(body.get("capture_mode") or "").strip().lower()
@@ -790,6 +961,7 @@ class DashboardServer(ThreadingHTTPServer):
             jira_status = str(body.get("jira_status", "Ready for Dev")).strip() or "Ready for Dev"
             in_dev_status = str(body.get("in_dev_status", "")).strip()
             dev_done_status = str(body.get("dev_done_status", "")).strip()
+            blocked_status = str(body.get("blocked_status", "Block")).strip() or "Block"
             args = argparse.Namespace(
                 project=project,
                 cron=f"*/{interval} * * * *",
@@ -811,6 +983,7 @@ class DashboardServer(ThreadingHTTPServer):
                 jira["in_dev_status"] = in_dev_status
             if dev_done_status:
                 jira["dev_done_status"] = dev_done_status
+            jira["blocked_status"] = blocked_status
             write_json(config_path, config)
         return schedule_payload(workspace, project)
 
@@ -856,7 +1029,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/delivery/status-options":
             return self.respond_json(HTTPStatus.OK, jira_status_options(workspace))
-        if parsed.path in {"/", "/dashboard.html"}:
+        if parsed.path in {"/", "/dashboard.html", "/scan", "/delivery", "/repositories", "/prompts", "/settings"}:
             return self.serve_file(self.server.workspace / "dashboard.html", "text/html; charset=utf-8")
         if parsed.path == "/dashboard-data.js":
             return self.serve_file(self.server.workspace / "dashboard-data.js", "application/javascript; charset=utf-8")
@@ -898,7 +1071,15 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if not isinstance(execution, dict):
                     raise ValueError("Invalid workspace execution configuration")
                 execution["scan_window_days"] = days
+                if str(body.get("scan_model") or "").strip():
+                    execution["model"] = str(body["scan_model"]).strip()
                 write_json(path, config)
+                delivery_model = str(body.get("delivery_model") or "").strip()
+                if delivery_model:
+                    delivery_path = workspace / "config" / "delivery.json"
+                    delivery = load_json(delivery_path, {})
+                    delivery.setdefault("execution", {})["model"] = delivery_model
+                    write_json(delivery_path, delivery)
                 return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
             if parsed.path == "/api/integration":
                 update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))
@@ -921,6 +1102,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_json(HTTPStatus.OK, {"agent_trace": self.server.update_observability(workspace, body)})
             if parsed.path == "/api/delivery/retry":
                 return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace)})
+            if parsed.path == "/api/delivery/start":
+                story = str(body.get("story") or "").strip()
+                if not story:
+                    current = delivery_payload(workspace).get("current") or {}
+                    story = str(current.get("story_id") or current.get("jira_key") or "").strip()
+                if not story:
+                    candidates = delivery_payload(workspace).get("available_stories") or []
+                    story = str(candidates[0].get("story") or "") if candidates else ""
+                return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace, story)})
+            if parsed.path == "/api/delivery/stop":
+                return self.respond_json(HTTPStatus.OK, {"delivery": self.server.stop_delivery(workspace)})
+            if parsed.path == "/api/delivery/history/delete":
+                return self.respond_json(HTTPStatus.OK, {"delivery": self.server.delete_delivery_history(workspace, str(body.get("run_id") or ""))})
             return self.respond_error(HTTPStatus.NOT_FOUND, "Not found")
         except (OSError, ValueError, RuntimeError) as exc:
             return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
@@ -961,7 +1155,7 @@ def main() -> int:
     parser.add_argument("--project", required=True)
     parser.add_argument("--lumen-bin", required=True)
     parser.add_argument("--lumen-home", required=True)
-    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--port", type=int, default=4173)
     parser.add_argument("--version", default="")
     args = parser.parse_args()
 
