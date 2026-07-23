@@ -729,6 +729,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("REQUIRED", prompt)
             self.assertIn("# Visual State Matrix (verify every row)", prompt)
             self.assertIn("Dealer | Disabled", prompt)
+            self.assertIn("# Hard visual completion gate", prompt)
             self.assertNotIn("# Implementation Rules", prompt.split("# Delivery Context")[0])
 
     def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:

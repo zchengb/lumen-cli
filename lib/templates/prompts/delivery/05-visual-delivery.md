@@ -24,4 +24,38 @@ Do not claim visual completion from source inspection alone. Before `ready_for_f
 9. Fix visual defects with the smallest safe change. Re-check the affected state after each fix.
 10. Record visual QA notes in `delivery-result.json` under `visual_qa` when any state required correction or could not be fully verified.
 
+For multi-select controls, verify at least empty, one-selected, four-selected with long names,
+all-selected, loading, delayed-response, and API-error states. Confirm computed geometry and
+interaction behavior in addition to visual appearance: shared left edges, title baseline,
+font metrics, trigger dimensions, tag wrapping, no overlap with neighboring sections, toggle
+off clearing, remove-chip behavior, and save/edit payload round-trip.
+
+## Rendered UI acceptance gate
+
+Treat the approved reference and the nearest existing sibling controls as measurement anchors,
+not as general inspiration. Before changing CSS, inspect the sibling checkbox rows and selector
+components already used on the same screen. Record their bounding boxes and computed styles, then
+compare the new section at the same viewport and scroll position.
+
+- Compare the section checkbox, label, nested controls, and trigger against the sibling rows by
+  left edge, vertical baseline, indentation, and gap. A `width: 100%` child with a left margin
+  that pushes it outside the parent is a failure.
+- Check computed `font-family`, `font-size`, `font-weight`, `line-height`, `color`, border,
+  radius, padding, and icon dimensions for the title, placeholder, tags, and chevron. Reuse the
+  existing page token/component when the values differ.
+- For selected states, close the menu before taking the evidence screenshot. The trigger must be
+  a real visible container whose height grows with wrapped tags; every tag's bounding box must be
+  inside the trigger, and the chevron must remain centered in the full trigger height. Never pass
+  a fixed-height trigger whose tags overflow, overlap the checkbox/title row, or cover the next
+  section.
+- Explicitly test 0, 1, 4, long-name/multi-line, and all selections. For 4+ selections, assert
+  `tag.bottom <= trigger.bottom`, `tag.right <= trigger.right - chevronArea`, no overlap with
+  the title or following section, and a stable gap after the expanded trigger.
+- Re-run the full matrix after every visual correction. A component existing, lint passing, or a
+  screenshot with the menu open is not evidence of a selected-state pass.
+
+Record the measured anchors, state screenshots, and any failed geometry assertion in
+`delivery-result.json`. If the geometry gate fails, keep Delivery in implementation/verification
+and fix the UI; do not finalize on a subjective “close enough” comparison.
+
 If you cannot run the app, authenticate, or reach a matrix state, set `delivery_status` to `blocked` and explain what blocked rendered inspection.

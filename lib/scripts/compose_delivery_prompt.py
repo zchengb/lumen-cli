@@ -317,6 +317,18 @@ def visual_iteration_block(context: StoryContext) -> str:
     return """# Visual Iteration
 
 Visual QA is agent-owned. Use the prepared `# Authenticated Web Session` when present, inspect each Visual State Matrix row in a real browser or device, and fix visual defects before handoff. Lumen does not run automated screenshot comparison during delivery verification.
+
+## Hard visual completion gate
+
+Do not finalize because the component exists or lint passes. First inspect the nearest existing sibling controls and record bounding boxes plus computed styles as alignment anchors. Then verify the new section at the same viewport and scroll position:
+
+- checkbox, label, nested controls, and trigger share the expected left edges, baseline, indentation, and gaps;
+- title, placeholder, tags, and chevron use the expected font metrics, colors, borders, padding, and icon sizes;
+- selected-state screenshots are taken with the menu closed, after 0/1/4/long-name/all selections;
+- the selected trigger expands with its tags; every tag is inside its border, the chevron is centered in the full height, and nothing overlaps the title, checkbox, or following section;
+- a fixed-height trigger with overflowing tags, a screenshot with the menu open, or an unmeasured “close enough” result is a failure.
+
+If any geometry or interaction assertion fails, fix it and rerun the affected matrix states before `ready_for_finalize`. Record the measured rectangles, screenshots, and any failed assertion in `delivery-result.json`.
 """
 
 
