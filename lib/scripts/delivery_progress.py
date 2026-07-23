@@ -239,6 +239,9 @@ def finish_progress(workspace_root: Path, delivery_status: str, detail: str = ""
         payload["messages"] = messages[-50:]
     payload["delivery_status"] = delivery_status
     payload["finished_at"] = utc_now()
+    if delivery_status in TERMINAL_DELIVERY_STATUSES:
+        payload["current_phase"] = ""
+        payload["current_step"] = ""
     save_progress(workspace_root, payload)
 
 

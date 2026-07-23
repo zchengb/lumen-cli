@@ -399,6 +399,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
             self.assertEqual("completed", progress["delivery_status"])
             self.assertTrue(progress["finished_at"])
+            self.assertEqual("", progress["current_phase"])
+            self.assertEqual("", progress["current_step"])
             self.assertEqual("Delivery run finished", progress["messages"][-1]["message"])
 
     def test_dashboard_exposes_active_remediation_and_restarts_phase_timer(self) -> None:
