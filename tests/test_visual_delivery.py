@@ -235,7 +235,7 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertEqual("FILE-WIW", resolve_visual_auth_credential(runtime, {}))
             self.assertTrue(web_auth_auto_login_configured(runtime, {}))
 
-    def test_set_visual_auth_writes_runtime_credential_to_repos_json(self) -> None:
+    def test_set_visual_auth_writes_secret_to_env_and_only_reference_to_repos_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             lumen = root / "lumen"
@@ -246,10 +246,9 @@ class VisualDeliveryTests(unittest.TestCase):
             )
             set_visual_auth_credential(lumen, "digital-platform-admin", "STORED-WIW")
             payload = json.loads((lumen / "config" / "repos.json").read_text(encoding="utf-8"))
-            self.assertEqual(
-                "STORED-WIW",
-                payload["repositories"][0]["runtime"]["visual_auth_credential"],
-            )
+            self.assertNotIn("visual_auth_credential", payload["repositories"][0]["runtime"])
+            self.assertEqual("LUMEN_VISUAL_AUTH_DIGITAL_PLATFORM_ADMIN", payload["repositories"][0]["runtime"]["auth_credential_env"])
+            self.assertIn("LUMEN_VISUAL_AUTH_DIGITAL_PLATFORM_ADMIN=STORED-WIW", (lumen / ".env.local").read_text())
 
     def test_web_auth_requires_storage_file_without_auto_login(self) -> None:
         runtime = {"auth_strategy": "playwright-storage-state"}

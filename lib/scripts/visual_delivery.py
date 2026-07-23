@@ -28,12 +28,19 @@ from delivery_workspace import StoryContext, read_json, workspace_lumen_dir, wri
 
 FAILURE_CATEGORIES = {
     "environment_failed",
+    "dependency_failed",
     "runtime_failed",
+    "readiness_failed",
     "authentication_failed",
+    "browser_start_failed",
+    "browser_connection_failed",
     "fixture_failed",
     "navigation_failed",
+    "observation_failed",
+    "interaction_failed",
     "stability_failed",
     "capture_failed",
+    "session_unhealthy",
     "visual_difference",
     "cleanup_failed",
 }
@@ -215,9 +222,15 @@ def detect_runtime(repo: Path) -> tuple[str, dict[str, Any]] | None:
         "base_url": f"http://127.0.0.1:{port}",
         "ready_url": f"http://127.0.0.1:{port}",
         "ready_timeout_seconds": 60,
+        "browser_mode": "managed",
         "browser": "chromium",
-        "auth_strategy": "playwright-storage-state",
-        "auth_storage_state_env": "LUMEN_VISUAL_STORAGE_STATE",
+        "browser_cdp_url": "",
+        "viewport": {"width": 1440, "height": 900},
+        "test_id_attribute": "data-testid",
+        "auth_strategy": "login-endpoint",
+        "auth_identity": "configured identity",
+        "auth_credential_env": "LUMEN_VISUAL_AUTH_REPOSITORY",
+        "auth_storage_state_env": "LUMEN_WEB_STORAGE_STATE",
         "fixture_strategy": "",
     }
     return "web-visual", {"runtime_status": "incomplete", "runtime": runtime}
@@ -225,6 +238,14 @@ def detect_runtime(repo: Path) -> tuple[str, dict[str, Any]] | None:
 
 def repos_config(workspace_root: Path) -> Path:
     return workspace_lumen_dir(workspace_root) / "config" / "repos.json"
+
+
+def visual_auth_env_name(repository: str, runtime: dict[str, Any]) -> str:
+    configured = str(runtime.get("auth_credential_env", "")).strip()
+    if configured:
+        return configured
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", repository).strip("_").upper()
+    return f"LUMEN_VISUAL_AUTH_{slug}"
 
 
 def workspace_root_from(path: Path) -> Path:
@@ -242,7 +263,15 @@ def repo_config_entry(config: dict[str, Any], repository: str) -> dict[str, Any]
 
 
 def list_visual_auth_credentials(path: Path) -> dict[str, str]:
-    config = read_json(repos_config(workspace_root_from(path)), {"repositories": []})
+    workspace_root = workspace_root_from(path)
+    config = read_json(repos_config(workspace_root), {"repositories": []})
+    env_values: dict[str, str] = {}
+    env_path = workspace_lumen_dir(workspace_root) / ".env.local"
+    if env_path.is_file():
+        for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "=" in line and not line.lstrip().startswith("#"):
+                key, value = line.split("=", 1)
+                env_values[key.strip()] = value.strip().strip("\"'")
     credentials: dict[str, str] = {}
     for item in config.get("repositories", []):
         if not isinstance(item, dict):
@@ -251,7 +280,7 @@ def list_visual_auth_credentials(path: Path) -> dict[str, str]:
         runtime = item.get("runtime")
         if not name or not isinstance(runtime, dict):
             continue
-        credential = str(runtime.get("visual_auth_credential", "")).strip()
+        credential = str(env_values.get(visual_auth_env_name(name, runtime), "") or runtime.get("visual_auth_credential", "")).strip()
         if credential:
             credentials[name] = credential
     return credentials
@@ -271,11 +300,35 @@ def set_visual_auth_credential(path: Path, repository: str, credential: str) -> 
     if not isinstance(runtime, dict):
         runtime = {}
         entry["runtime"] = runtime
-    runtime["visual_auth_credential"] = credential
+    env_name = visual_auth_env_name(repository, runtime)
+    runtime["auth_credential_env"] = env_name
+    runtime.pop("visual_auth_credential", None)
     write_json(config_path, config)
+    env_path = workspace_lumen_dir(workspace_root) / ".env.local"
+    env_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else [
+        "# Local secrets and machine-specific values.",
+        "# .env.local must never be committed.",
+        "",
+    ]
+    assignment = f"{env_name}={credential}"
+    replaced = False
+    for index, line in enumerate(lines):
+        if line.startswith(f"{env_name}="):
+            lines[index] = assignment
+            replaced = True
+            break
+    if not replaced:
+        lines.append(assignment)
+    env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def resolve_visual_auth_credential(runtime: dict[str, Any], env: dict[str, str]) -> str:
+    env_name = str(runtime.get("auth_credential_env", "")).strip()
+    if env_name and str(env.get(env_name, "")).strip():
+        return str(env[env_name]).strip()
+    # Backward compatibility for old local repos.json files. Never expose this
+    # value to prompts or evidence; migrate it on the next config write.
     return str(runtime.get("visual_auth_credential", "")).strip()
 
 
@@ -308,7 +361,7 @@ def redact(text: str, env: dict[str, str]) -> str:
 
 
 def web_auth_storage_path(runtime: dict[str, Any], env: dict[str, str]) -> str:
-    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
+    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_WEB_STORAGE_STATE"))
     return str(env.get(state_env, "")).strip()
 
 
@@ -320,12 +373,17 @@ def web_auth_auto_login_configured(runtime: dict[str, Any], env: dict[str, str])
 
 
 def web_auth_ready(runtime: dict[str, Any], env: dict[str, str]) -> bool:
-    if runtime.get("auth_strategy") != "playwright-storage-state":
-        return True
-    if web_auth_auto_login_configured(runtime, env):
-        return True
-    storage = web_auth_storage_path(runtime, env)
-    return bool(storage) and Path(storage).is_file()
+    strategy = str(runtime.get("auth_strategy", "existing-session")).strip().casefold()
+    if strategy in {"existing-session", "saved-session"}:
+        return str(runtime.get("browser_mode", "managed")).strip().casefold() == "cdp" and bool(runtime.get("browser_cdp_url"))
+    if strategy in {"login-endpoint", "fake-login"}:
+        return bool(str(runtime.get("auth_login_path", "")).strip()) and bool(resolve_visual_auth_credential(runtime, env))
+    if strategy in {"storage-state", "playwright-storage-state"}:
+        if web_auth_auto_login_configured(runtime, env) and str(runtime.get("auth_login_path", "")).strip():
+            return True
+        storage = web_auth_storage_path(runtime, env)
+        return bool(storage) and Path(storage).is_file()
+    return False
 
 
 def fixture_auth_ready(runtime: dict[str, Any], env: dict[str, str]) -> bool:
@@ -383,9 +441,10 @@ def prepare_web_auth_storage(
     env: dict[str, str],
     output: Path,
 ) -> str:
-    if runtime.get("auth_strategy") != "playwright-storage-state":
+    strategy = str(runtime.get("auth_strategy", "")).strip().casefold()
+    if strategy not in {"playwright-storage-state", "storage-state", "login-endpoint", "fake-login"}:
         return ""
-    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
+    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_WEB_STORAGE_STATE"))
     username = resolve_visual_auth_credential(runtime, env)
     login_path = str(runtime.get("auth_login_path", "")).strip()
     login_field = str(runtime.get("auth_login_field", "wiw")).strip() or "wiw"
@@ -454,29 +513,55 @@ def doctor(workspace_root: Path) -> int:
                 problems.append("start_command is missing")
             if not runtime.get("ready_url"):
                 problems.append("ready_url is missing")
+            for key in ("base_url", "ready_url"):
+                value = str(runtime.get(key, "")).strip()
+                parsed = urllib.parse.urlparse(value)
+                if value and parsed.scheme not in {"http", "https"}:
+                    problems.append(f"{key} must be an http(s) URL")
             if not shutil.which("node"):
                 problems.append("Node.js is not available")
             repo = Path(str(item.get("path", ""))).expanduser()
             if not repo.is_absolute():
                 repo = (workspace_root / repo).resolve()
-            if runtime.get("auth_strategy") == "playwright-storage-state":
-                env = dict(os.environ)
-                if not web_auth_ready(runtime, env):
-                    login_path = str(runtime.get("auth_login_path", "")).strip()
-                    if login_path:
-                        if not resolve_visual_auth_credential(runtime, env):
-                            problems.append(
-                                f"visual auth credential for '{name}' is not set; "
-                                f"run: lumen config set-visual-auth {name} <credential>"
-                            )
-                    else:
-                        storage_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
-                        problems.append("auth_login_path is missing for automatic fake login")
-                        storage = web_auth_storage_path(runtime, env)
-                        if not storage:
-                            problems.append(f"authentication state environment variable '{storage_env}' is not set")
-                        elif not Path(storage).is_file():
-                            problems.append(f"authentication storage state file '{storage}' does not exist")
+            mode = str(runtime.get("browser_mode", "managed")).strip().casefold()
+            if mode not in {"managed", "cdp"}:
+                problems.append("browser_mode must be managed or cdp")
+            if mode == "cdp":
+                cdp = str(runtime.get("browser_cdp_url", "")).strip()
+                if not cdp:
+                    problems.append("browser_cdp_url is missing for CDP mode")
+                else:
+                    try:
+                        with urllib.request.urlopen(f"{cdp.rstrip('/')}/json/version", timeout=2) as response:
+                            if response.status >= 500:
+                                raise urllib.error.URLError("CDP endpoint returned an error")
+                    except (OSError, urllib.error.URLError):
+                        problems.append(f"Chrome CDP URL is not reachable: {cdp}")
+            elif not (repo / "node_modules" / "playwright").is_dir():
+                problems.append("Playwright is not installed in the repository; run the configured install command")
+            if not web_auth_ready(runtime, dict(os.environ)):
+                strategy = str(runtime.get("auth_strategy", "existing-session")).strip()
+                if strategy in {"storage-state", "playwright-storage-state"}:
+                    storage_env = str(runtime.get("auth_storage_state_env", "LUMEN_WEB_STORAGE_STATE"))
+                    storage = web_auth_storage_path(runtime, dict(os.environ))
+                    if not storage:
+                        problems.append(f"authentication state environment variable '{storage_env}' is not set")
+                    elif not Path(storage).is_file():
+                        problems.append(f"authentication storage state file '{storage}' does not exist")
+                elif strategy in {"login-endpoint", "fake-login"}:
+                    problems.append(f"authentication variable {visual_auth_env_name(name, runtime)} is not set")
+                elif strategy in {"existing-session", "saved-session"}:
+                    problems.append("existing-session requires browser_mode=cdp and browser_cdp_url")
+                else:
+                    problems.append(f"unsupported authentication strategy: {strategy or 'missing'}")
+            evidence = workspace_lumen_dir(workspace_root) / "results" / "web-session"
+            try:
+                evidence.mkdir(parents=True, exist_ok=True)
+                probe = evidence / ".write-test"
+                probe.write_text("", encoding="utf-8")
+                probe.unlink()
+            except OSError:
+                problems.append(f"Web-session evidence directory is not writable: {evidence}")
         elif platform == "react-native":
             for tool in ("xcrun", "maestro"):
                 if not shutil.which(tool):
@@ -582,9 +667,9 @@ def web_capture(repo: Path, runtime: dict[str, Any], scenario: dict[str, Any], a
     navigation = str(scenario.get("navigation", ""))
     url = navigation if navigation.startswith(("http://", "https://")) else f"{base}/{navigation.lstrip('/')}"
     marker = str(scenario.get("stable_marker", ""))
-    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_VISUAL_STORAGE_STATE"))
-    storage = env.get(state_env, "") if runtime.get("auth_strategy") == "playwright-storage-state" else ""
-    if runtime.get("auth_strategy") == "playwright-storage-state" and (not storage or not Path(storage).is_file()):
+    state_env = str(runtime.get("auth_storage_state_env", "LUMEN_WEB_STORAGE_STATE"))
+    storage = env.get(state_env, "") if str(runtime.get("auth_strategy", "")).strip().casefold() in {"playwright-storage-state", "storage-state", "login-endpoint", "fake-login"} else ""
+    if str(runtime.get("auth_strategy", "")).strip().casefold() in {"playwright-storage-state", "storage-state", "login-endpoint", "fake-login"} and (not storage or not Path(storage).is_file()):
         raise PermissionError(
             f"storage state from {state_env} is unavailable; run visual verification after runtime startup prepares auth"
         )
@@ -734,7 +819,7 @@ def execute(
             if platform == "web":
                 server = run_owned(str(runtime.get("start_command", "")), repo_target.worktree_path, env, processes, runtime)
                 wait_ready(str(runtime.get("ready_url", "")), int(runtime.get("ready_timeout_seconds", 60)), server)
-                if runtime.get("auth_strategy") == "playwright-storage-state":
+                if str(runtime.get("auth_strategy", "")).strip().casefold() in {"playwright-storage-state", "storage-state", "login-endpoint", "fake-login"}:
                     prepare_web_auth_storage(repo_target.worktree_path, runtime, env, evidence / "web-auth-storage.json")
             elif platform == "react-native":
                 ensure_ios_app(repo_target.worktree_path, runtime, env)

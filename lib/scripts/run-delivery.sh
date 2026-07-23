@@ -31,6 +31,10 @@ STARTED_FILE="${WORKSPACE_DIR}/results/delivery-started.json"
 PROGRESS_PY="${LUMEN_LIB_DIR}/delivery_progress.py"
 ARCHIVE_PY="${LUMEN_LIB_DIR}/archive_delivery_run.py"
 AGENT_TRACE_PY="${LUMEN_LIB_DIR}/agent_trace.py"
+WEB_SESSION_PY="${LUMEN_LIB_DIR}/web_session.py"
+WEB_SESSION_ROOT=""
+WEB_SESSION_STATUS="completed"
+WEB_SESSION_STOPPED="0"
 
 mkdir -p "${LOG_DIR}" "${WORKSPACE_DIR}/results" "${WORKSPACE_DIR}/config" "${WORKSPACE_DIR}/worktrees"
 
@@ -45,7 +49,16 @@ if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
 fi
 printf '%s\n' "$$" > "${LOCK_DIR}/pid"
 date -u '+%Y-%m-%dT%H:%M:%SZ' > "${LOCK_DIR}/started_at"
-trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
+cleanup_web_sessions() {
+  [[ "${WEB_SESSION_STOPPED}" == "0" ]] || return 0
+  [[ -n "${WEB_SESSION_ROOT}" && -f "${WEB_SESSION_PY}" ]] || return 0
+  WEB_SESSION_STOPPED="1"
+  set +e
+  python3 "${WEB_SESSION_PY}" stop --session-root "${WEB_SESSION_ROOT}" --result "${RESULT_FILE}" --status "${WEB_SESSION_STATUS}" 2>&1 | tee -a "${LOG_FILE}"
+  set -e
+}
+
+trap 'cleanup_web_sessions; rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
 
 # Scan and delivery share the workspace-local environment. Root-level files are
 # read only as a compatibility fallback for docs projects created before init
@@ -57,6 +70,8 @@ load_env_file "${DOCS_DIR}/.env.local"
 
 fail() {
   local message="$1"
+  WEB_SESSION_STATUS="failed"
+  cleanup_web_sessions
   if [[ -f "${PROGRESS_PY}" ]]; then
     python3 "${PROGRESS_PY}" phase --workspace-root "${WORKSPACE_ROOT}" "${CURRENT_PHASE:-notify}" failed --detail "${message}" || true
     python3 "${PROGRESS_PY}" finish --workspace-root "${WORKSPACE_ROOT}" failed --detail "${message}" || true
@@ -235,6 +250,24 @@ run_prepare_delivery() {
     fail "${prepare_json##*$'\n'}"
   fi
   enrich_delivery_progress "${prepare_json}"
+}
+
+start_web_sessions() {
+  [[ -f "${WEB_SESSION_PY}" ]] || return 0
+  set +e
+  python3 "${WEB_SESSION_PY}" start --docs-dir "${DOCS_DIR}" --story "${STORY_REF}" --run-id "${RUN_ID}" 2>&1 | tee -a "${LOG_FILE}"
+  local session_exit=${PIPESTATUS[0]}
+  set -e
+  if [[ "${session_exit}" -ne 0 ]]; then
+    fail "Authenticated Web session preparation failed. See log: ${LOG_FILE}"
+  fi
+  WEB_SESSION_ROOT="${WORKSPACE_DIR}/results/web-session/${RUN_ID}"
+  if [[ ! -f "${WEB_SESSION_ROOT}/session-context.json" ]] || rg -q '"sessions": \[\]' "${WEB_SESSION_ROOT}/session-context.json" 2>/dev/null; then
+    WEB_SESSION_ROOT=""
+    progress_message "No configured Web runtime; authenticated Web session skipped"
+  else
+    progress_message "Authenticated Web session is ready for the implementation Agent"
+  fi
 }
 
 send_started_notification() {
@@ -461,6 +494,7 @@ run_real_delivery() {
   progress_phase worktrees in_progress "Create or refresh feature worktrees"
   printf '[delivery] Phase 2/8 — Feature worktrees\n'
   run_prepare_delivery
+  start_web_sessions
   progress_phase preflight completed "Gates passed"
   progress_phase worktrees completed "Worktrees ready"
 
@@ -514,6 +548,8 @@ run_real_delivery() {
   else
     progress_phase verification completed "All verification checks passed"
   fi
+
+  cleanup_web_sessions
 
   progress_phase finalize in_progress "Commit verified changes, push feature branches, and create PRs"
   printf '\n[delivery] Phase 6/8 — Commit, push, and PR\n'

@@ -141,6 +141,10 @@ For a UI Story with a Figma Design Source, the Technical Loop stores the node ID
 
 This only approves MCP use for a delivery with a Figma contract; it does not install or configure Figma MCP. If the server is unavailable, Delivery continues from the committed snapshot and reference.
 
+### Authenticated Web Development Sessions
+
+For a configured Web repository, Delivery can start one persistent local Playwright session before the implementation Agent runs. Configure `runtime` in `lumen/config/repos.json` with `browser_mode` (`managed` or `cdp`), `base_url`, `ready_url`, and one authentication strategy: `existing-session`, `storage-state`, or `login-endpoint`. Store login credentials in `lumen/.env.local` with `lumen config set-visual-auth`; the credential value is never included in the Agent prompt or session evidence. The Agent receives one internal session helper and discovers routes from repository code.
+
 ### Delivery Scheduling
 
 ```bash

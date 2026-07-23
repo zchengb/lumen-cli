@@ -906,7 +906,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             prompt = compose_delivery_prompt(context)
             self.assertIn("# Quick Login", prompt)
             self.assertIn("POST http://127.0.0.1:3000/oauth-proxy-api/auth/admin/fake", prompt)
-            self.assertIn("TEST-WIW", prompt)
+            self.assertNotIn("TEST-WIW", prompt)
+            self.assertIn("LUMEN_VISUAL_AUTH_DIGITAL_PLATFORM_ADMIN", prompt)
 
     def test_remediation_attempt_archives_previous_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

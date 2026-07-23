@@ -378,7 +378,7 @@ Usage:
   lumen config set-scan-window <days> [--project <slug>]
                                  Set how many days of git history each scan inspects
   lumen config set-visual-auth <repository> <credential> [--project <slug>]
-                                 Save a Visual Delivery login credential in config/repos.json
+                                 Save a Web Delivery login credential in lumen/.env.local
   lumen config set-jira [--enable|--disable] [--project-key <key>]
                                  [--board-id <id>] [--no-active-sprint] [--project <slug>]
                                  Enable or update Jira sync (TWG CLI) for this workspace

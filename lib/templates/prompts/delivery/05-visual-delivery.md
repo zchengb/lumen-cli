@@ -6,7 +6,7 @@
 4. Preserve responsive layout, safe areas, focus, keyboard, accessibility, and platform conventions.
 5. Add the approved stable `data-testid` or React Native `testID` markers when they help future diagnostics, but do not rely on Lumen to run automated screenshot comparison during delivery verification.
 6. Visual correctness is guaranteed by the delivery agent, not by automated Playwright pixel diff in Lumen verification.
-7. When a `# Quick Login` section is present in the composed delivery prompt, authenticate with those workspace instructions before inspecting rendered UI.
+7. When an `# Authenticated Web Session` section is present, use the provided local session helper before inspecting rendered UI. Never handle raw credentials yourself.
 8. When an `# Approved Figma Design Context` section is present, use the approved MCP design context before coding. If it is unavailable, use the committed design-context snapshot and approved reference instead.
 
 ## Agent Visual QA (mandatory)
@@ -14,7 +14,7 @@
 Do not claim visual completion from source inspection alone. Before `ready_for_finalize`, complete every item below for each state in the Visual State Matrix.
 
 1. Start the app locally using the worktree and runtime commands from the delivery context.
-2. Authenticate with the `# Quick Login` instructions when present.
+2. Use the prepared `# Authenticated Web Session` when present; if it is unavailable, classify the issue as an environment block.
 3. Navigate to the target screen and reproduce the fixture or route named in the matrix.
 4. Inspect the rendered UI in the browser or device. Compare against the approved Figma reference, design-context snapshot, and committed reference image.
 5. Verify layout structure: spacing, alignment, typography scale, font weight, line height, border radius, shadows, icon size, and color tokens.

@@ -14,7 +14,7 @@ from delivery_workspace import (
     read_json,
     workspace_lumen_dir,
 )
-from visual_delivery import repo_config_entry, repos_config, resolve_visual_auth_credential, visual_contract
+from visual_delivery import repo_config_entry, repos_config, visual_auth_env_name, visual_contract
 
 
 def lumen_home() -> Path:
@@ -216,20 +216,12 @@ def agent_quick_login_block(context: StoryContext) -> str:
             lines.append(f"- Base URL: `{runtime['base_url']}`")
         login_path = str(runtime.get("auth_login_path", "")).strip()
         login_field = str(runtime.get("auth_login_field", "wiw")).strip() or "wiw"
-        credential = resolve_visual_auth_credential(runtime, {})
         if platform == "web" and login_path:
             base = str(runtime.get("base_url", "")).rstrip("/")
             lines.append(
-                f"- Quick login: `POST {base}{login_path}` with JSON body `{{\"{login_field}\": \"<credential>\"}}`"
+                f"- Quick login: Lumen performs `POST {base}{login_path}` inside the managed browser context"
             )
-            if credential:
-                lines.append(f"- Credential (`{login_field}`): `{credential}`")
-            else:
-                lines.append(
-                    f"- Credential: not set; run `lumen config set-visual-auth {repo.name} <value>` before delivery"
-                )
-        elif credential:
-            lines.append(f"- Auth credential: `{credential}`")
+            lines.append(f"- Credential source: environment variable `{visual_auth_env_name(repo.name, runtime)}` (value is never exposed to the Agent)")
         notes = str(runtime.get("agent_auth_notes", "")).strip()
         if notes:
             lines.append(f"- Notes: {notes}")
@@ -237,7 +229,57 @@ def agent_quick_login_block(context: StoryContext) -> str:
             sections.append("\n".join(lines))
     if not sections:
         return ""
-    return "# Quick Login\n\nUse these workspace auth instructions before inspecting rendered UI. Automated Playwright login is disabled; authenticate yourself with the steps below.\n\n" + "\n\n".join(sections)
+    return "# Quick Login\n\nLumen prepares authentication before the implementation Agent starts. Do not request, print, or copy credentials, cookies, storage-state contents, or tokens.\n\n" + "\n\n".join(sections)
+
+
+def authenticated_web_session_block(context: StoryContext) -> str:
+    current = workspace_lumen_dir(context.workspace_root) / "results" / "web-session" / "current.json"
+    context_path = ""
+    if current.is_file():
+        try:
+            pointer = json.loads(current.read_text(encoding="utf-8"))
+            context_path = str(pointer.get("context", ""))
+        except (OSError, json.JSONDecodeError):
+            context_path = ""
+    payload: dict = {}
+    if context_path and Path(context_path).is_file():
+        try:
+            loaded = json.loads(Path(context_path).read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    sessions = payload.get("sessions") if isinstance(payload.get("sessions"), list) else []
+    if not sessions:
+        config = read_json(repos_config(context.workspace_root), {"repositories": []})
+        if not any(
+            isinstance(item, dict) and isinstance(item.get("runtime"), dict) and item["runtime"].get("platform") == "web"
+            for item in config.get("repositories", [])
+        ):
+            return ""
+        return "# Authenticated Web Session\n\nLumen has detected a Web runtime but the current delivery session is not available. Treat this as an environment problem and set Delivery to `blocked`; do not claim visual completion from source inspection alone."
+    lines = [
+        "# Authenticated Web Session",
+        "",
+        "Lumen has prepared the Story worktree, started the Web runtime, and authenticated the browser. You are responsible for discovering the target route and UI state from the Story and repository code.",
+        "",
+        "Use the single local session helper below for browser operations; it keeps one browser session alive across navigation, observation, edits and reloads:",
+    ]
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        lines.extend([
+            f"- Repository `{session.get('repository', '')}`: base URL `{session.get('base_url', '')}`, identity `{(session.get('authentication') or {}).get('identity', 'configured identity')}`",
+            f"  - Session operations: `{session.get('operation_command', '')}`",
+            f"  - Evidence directory: `{session.get('session_dir', '')}`",
+        ])
+    lines.extend([
+        "",
+        "Supported operations: `navigate`, `observe`, `inspect`, `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `focus`, `scroll_into_view`, `reload`, `go_back`, `screenshot`.",
+        "Read router/navigation/tests/fixtures first. Prefer a route discovered from code or semantic application navigation. Do not ask Lumen to map a business screen name to a route.",
+        "Do not expose or request raw credentials, tokens, cookies, storage-state files, or sensitive network payloads. If the session cannot be established, distinguish the environment failure from a UI implementation failure and set Delivery to `blocked`.",
+    ])
+    return "\n".join(lines)
 
 
 def visual_state_matrix_block(context: StoryContext) -> str:
@@ -271,7 +313,7 @@ def visual_iteration_block(context: StoryContext) -> str:
         return ""
     return """# Visual Iteration
 
-Visual QA is agent-owned. Start the app, authenticate with `# Quick Login` when present, inspect each Visual State Matrix row in a real browser or device, and fix visual defects before handoff. Lumen does not run automated screenshot comparison during delivery verification.
+Visual QA is agent-owned. Use the prepared `# Authenticated Web Session` when present, inspect each Visual State Matrix row in a real browser or device, and fix visual defects before handoff. Lumen does not run automated screenshot comparison during delivery verification.
 """
 
 
@@ -371,6 +413,7 @@ def compose_delivery_prompt(context: StoryContext, remediation: bool = False) ->
         render_context_block(context),
         repository_delivery_policies_block(context),
         agent_quick_login_block(context),
+        authenticated_web_session_block(context),
         visual_state_matrix_block(context),
         visual_iteration_block(context),
         figma_mcp_block(context),
