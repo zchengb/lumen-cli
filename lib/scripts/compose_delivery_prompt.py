@@ -62,7 +62,24 @@ def catalog_when_applies(when: str, context: StoryContext | None) -> bool:
         return True
     if normalized == "visual_contract":
         return context is not None and visual_contract(context.technical_plan) is not None
+    if normalized == "ui_runtime":
+        return has_ui_runtime(context)
     return True
+
+
+def has_ui_runtime(context: StoryContext | None) -> bool:
+    if context is None:
+        return False
+    if visual_contract(context.technical_plan) is not None:
+        return True
+    config = read_json(repos_config(context.workspace_root), {"repositories": []})
+    for repo in context.repos:
+        entry = repo_config_entry(config, repo.name)
+        runtime = entry.get("runtime") if isinstance(entry, dict) else None
+        platform = str(runtime.get("platform", "")).strip().casefold() if isinstance(runtime, dict) else ""
+        if platform in {"web", "react-native", "ios", "android", "native"}:
+            return True
+    return False
 
 
 def render_prompt_catalog(prompts_dir: Path, manifest: dict, context: StoryContext | None) -> str:
@@ -90,7 +107,7 @@ def render_prompt_catalog(prompts_dir: Path, manifest: dict, context: StoryConte
             snippet_path = lumen_home() / "templates" / "prompts" / "delivery" / file_name
         if not snippet_path.is_file():
             raise FileNotFoundError(f"Delivery prompt snippet not found: {snippet_path}")
-        priority = "REQUIRED" if when in {"visual_contract", "required"} else "Read when needed"
+        priority = "REQUIRED" if when in {"visual_contract", "ui_runtime", "required"} else "Read when needed"
         rows.append(f"| `{snippet_path}` | {title} | {priority} | {description} |")
     if not rows:
         return ""
@@ -117,11 +134,11 @@ def compose_snippets(context: StoryContext | None = None) -> str:
         return "\n\n".join(parts)
 
     snippets = manifest.get("snippets", [])
-    if context is not None and visual_contract(context.technical_plan) is not None and "05-visual-delivery.md" not in snippets:
+    if context is not None and has_ui_runtime(context) and "05-visual-delivery.md" not in snippets:
         snippets = [*snippets, "05-visual-delivery.md"]
     parts = []
     for name in snippets:
-        if name == "05-visual-delivery.md" and (context is None or visual_contract(context.technical_plan) is None):
+        if name == "05-visual-delivery.md" and not has_ui_runtime(context):
             continue
         parts.append(read_snippet(prompts_dir, str(name), context))
     return "\n\n".join(parts)
@@ -312,7 +329,7 @@ def visual_state_matrix_block(context: StoryContext) -> str:
 
 
 def visual_iteration_block(context: StoryContext) -> str:
-    if visual_contract(context.technical_plan) is None:
+    if not has_ui_runtime(context):
         return ""
     return """# Visual Iteration
 
@@ -320,15 +337,16 @@ Visual QA is agent-owned. Use the prepared `# Authenticated Web Session` when pr
 
 ## Hard visual completion gate
 
-Do not finalize because the component exists or lint passes. First inspect the nearest existing sibling controls and record bounding boxes plus computed styles as alignment anchors. Then verify the new section at the same viewport and scroll position:
+Do not finalize because a component exists or lint passes. First inspect the page shell, content container, and at least two nearby existing sibling components. Record their bounding boxes and computed styles as alignment anchors. Then verify the full relevant screen at the same viewport, font-ready state, scroll position, and animation state:
 
-- checkbox, label, nested controls, and trigger share the expected left edges, baseline, indentation, and gaps;
-- title, placeholder, tags, and chevron use the expected font metrics, colors, borders, padding, and icon sizes;
-- selected-state screenshots are taken with the menu closed, after 0/1/4/long-name/all selections;
-- the selected trigger expands with its tags; every tag is inside its border, the chevron is centered in the full height, and nothing overlaps the title, checkbox, or following section;
-- a fixed-height trigger with overflowing tags, a screenshot with the menu open, or an unmeasured “close enough” result is a failure.
+- page shell, content width, section rhythm, control alignment, typography hierarchy, tokens, borders, icons, and viewport behavior agree with the existing page;
+- each new control aligns with same-page siblings by left/right edge, baseline, indentation, gap, height, and computed font metrics;
+- full-screen and focused screenshots cover the important settled states; overlays are captured separately and are closed for settled-state evidence;
+- dynamic content stays inside its container, expands or scrolls intentionally, and never overlaps titles, controls, sticky regions, footers, or the next section;
+- long text, empty/loading/error data, disabled/focus states, keyboard behavior, and viewport edges are tested when applicable;
+- a component-only screenshot, fixed-height overflow, unmeasured “close enough” result, or screenshot with an open overlay is a failure.
 
-If any geometry or interaction assertion fails, fix it and rerun the affected matrix states before `ready_for_finalize`. Record the measured rectangles, screenshots, and any failed assertion in `delivery-result.json`.
+If any whole-screen geometry or interaction assertion fails, fix it and rerun the affected states before `ready_for_finalize`. Record the measured page anchors, sibling comparisons, screenshots, and failed assertions in `delivery-result.json`.
 """
 
 

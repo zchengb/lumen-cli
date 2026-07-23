@@ -26,8 +26,8 @@
     {
       "file": "05-visual-delivery.md",
       "title": "Visual delivery QA",
-      "description": "Mandatory rendered UI inspection checklist when the plan has a Visual Delivery Contract.",
-      "when": "visual_contract"
+      "description": "Mandatory whole-screen rendered UI inspection checklist for Web and Native UI delivery.",
+      "when": "ui_runtime"
     }
   ]
 }

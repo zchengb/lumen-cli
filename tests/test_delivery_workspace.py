@@ -732,6 +732,38 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("# Hard visual completion gate", prompt)
             self.assertNotIn("# Implementation Rules", prompt.split("# Delivery Context")[0])
 
+    def test_generic_ui_delivery_prompt_applies_without_visual_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            story_dir = workspace / "stories" / "DEMO-ui"
+            story_dir.mkdir(parents=True)
+            (workspace / "lumen" / "config").mkdir(parents=True)
+            (workspace / "lumen" / "config" / "repos.json").write_text(
+                json.dumps({"repositories": [{"name": "portal", "runtime": {"platform": "web"}}]}),
+                encoding="utf-8",
+            )
+            plan = story_dir / "technical-plan.md"
+            plan.write_text("# Plan\n\nImplement the page.\n", encoding="utf-8")
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=story_dir,
+                story_md=story_dir / "story.md",
+                technical_plan=plan,
+                metadata_path=story_dir / "metadata.json",
+                metadata={},
+                repos=[RepoTarget("portal", workspace / "repo", workspace / "worktree")],
+                branch_name="feature/DEMO-ui",
+                delivery_config={},
+                workspace_config={},
+            )
+
+            prompt = compose_delivery_prompt(context)
+
+            self.assertIn("05-visual-delivery.md", prompt)
+            self.assertIn("Mandatory whole-screen rendered UI inspection checklist", prompt)
+            self.assertIn("# Hard visual completion gate", prompt)
+
     def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
