@@ -400,26 +400,29 @@ def ensure_feature_worktree(
     if worktrees_root.exists():
         return False, f"Worktree path exists but is not a git worktree: {worktrees_root}"
 
-    base_branch = default_branch_for_repo(repo.path)
+    base_branch = resolve_repo_default_branch(repo.name, repo.path, workspace_root)
     repo.default_branch = base_branch
-    fetch = subprocess.run(
-        ["git", "-C", str(repo.path), "fetch", "origin", base_branch],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if fetch.returncode != 0:
-        return False, fetch.stderr or fetch.stdout or "failed to fetch base branch"
-
-    base_ref = f"origin/{base_branch}"
+    requested_base = str(metadata.get("baseCommit") or metadata.get("base_commit") or "").strip()
+    if requested_base:
+        base_ref = requested_base
+    else:
+        fetch = subprocess.run(
+            ["git", "-C", str(repo.path), "fetch", "origin", base_branch],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            return False, fetch.stderr or fetch.stdout or "failed to fetch base branch"
+        base_ref = f"origin/{base_branch}"
     verify_base = subprocess.run(
-        ["git", "-C", str(repo.path), "rev-parse", "--verify", base_ref],
+        ["git", "-C", str(repo.path), "rev-parse", "--verify", f"{base_ref}^{{commit}}"],
         check=False,
         capture_output=True,
         text=True,
     )
     if verify_base.returncode != 0:
-        return False, verify_base.stderr or verify_base.stdout or f"missing {base_ref}"
+        return False, verify_base.stderr or verify_base.stdout or f"missing base commit {base_ref}"
 
     create = subprocess.run(
         [
@@ -439,7 +442,7 @@ def ensure_feature_worktree(
     )
     if create.returncode != 0:
         return False, create.stderr or create.stdout or "worktree add failed"
-    return True, "created worktree"
+    return True, f"created worktree from {base_ref}"
 
 
 def validate_story_gates(

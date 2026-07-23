@@ -193,6 +193,23 @@ emit({'type':'result','request_id':'r-1','duration_ms':12,'duration_api_ms':8,'r
             subprocess.run([sys.executable, str(SCRIPTS / "archive_delivery_run.py"), "--workspace-root", str(root), "--result", str(result)], check=True, capture_output=True, text=True)
             self.assertTrue((root / "lumen" / "history" / "delivery" / "run-1" / "agent-trace" / "trace.json").is_file())
 
+    def test_archive_ignores_missing_or_unsafe_trace_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lumen = root / "lumen"
+            (lumen / "results" / "agent-traces").mkdir(parents=True)
+            result = lumen / "results" / "delivery-result.json"
+            write_json(result, {"run_id": "run-unsafe", "delivery_status": "failed", "agent_trace": {}})
+            subprocess.run(
+                [sys.executable, str(SCRIPTS / "archive_delivery_run.py"), "--workspace-root", str(root), "--result", str(result)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            archive = lumen / "history" / "delivery" / "run-unsafe"
+            self.assertTrue((archive.with_suffix(".json")).is_file())
+            self.assertFalse((archive / "agent-trace").exists())
+
     def test_committed_agent_change_is_still_attributed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

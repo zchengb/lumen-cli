@@ -58,15 +58,16 @@ def changed_files(repo: Path) -> list[str]:
     return files
 
 
-def branch_has_commits(repo: Path, base: str, repo_name: str = "") -> bool:
+def branch_has_commits(repo: Path, base: str, repo_name: str = "", base_ref: str = "") -> bool:
     repo_name = repo_name or repo.name
-    completed = run_git(repo, "rev-list", "--count", f"origin/{base}..HEAD")
+    comparison = base_ref or f"origin/{base}"
+    completed = run_git(repo, "rev-list", "--count", f"{comparison}..HEAD")
     if completed.returncode != 0:
         raise RuntimeError(
             command_failure(
                 repo_name,
                 "compare branch",
-                f"git rev-list --count origin/{base}..HEAD",
+                f"git rev-list --count {comparison}..HEAD",
                 completed,
                 f"Unable to compare feature branch with origin/{base}",
             )
@@ -261,6 +262,7 @@ def main() -> int:
             "Verification is recorded by Lumen in the delivery result."
         ) + visual_pr_summary(result)
 
+        base_commit = str(context.metadata.get("baseCommit") or context.metadata.get("base_commit") or "").strip()
         for repo in context.repos:
             ensure_branch(repo.worktree_path, context.branch_name, repo.name)
             files = changed_files(repo.worktree_path)
@@ -280,7 +282,7 @@ def main() -> int:
                 if head.returncode == 0:
                     item["existing_head"] = head.stdout.strip()
 
-            if not branch_has_commits(repo.worktree_path, repo.default_branch, repo.name):
+            if not branch_has_commits(repo.worktree_path, repo.default_branch, repo.name, base_commit):
                 item["publish_status"] = "skipped"
                 item["publish_reason"] = "No commits differ from the base branch"
                 touched.append(item)

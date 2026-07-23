@@ -294,7 +294,10 @@ def main() -> int:
         if isinstance(feishu_cfg, dict) and "enabled" in feishu_cfg:
             feishu_enabled = bool(feishu_cfg.get("enabled"))
 
-    if webhook and feishu_enabled and not dry_run:
+    skip_feishu = os.environ.get("LUMEN_SKIP_FEISHU", "").strip().casefold() in {"1", "true", "yes"}
+    if skip_feishu:
+        feishu_result = {"status": "skipped", "detail": "LUMEN_SKIP_FEISHU enabled"}
+    elif webhook and feishu_enabled and not dry_run:
         try:
             card = build_delivery_feishu_card(event, delivery, story_metadata, docs_dir)
             send_feishu(card, webhook)

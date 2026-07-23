@@ -39,8 +39,16 @@ def main() -> int:
         "log_file": args.log_file,
     }
     trace = result.get("agent_trace") if isinstance(result.get("agent_trace"), dict) else {}
-    trace_source = workspace_lumen_dir(workspace_root) / str(trace.get("path") or "")
-    if trace_source.is_dir():
+    trace_path = str(trace.get("path") or "").strip()
+    lumen = workspace_lumen_dir(workspace_root).resolve()
+    trace_root = (lumen / "results" / "agent-traces").resolve()
+    trace_source: Path | None = Path(trace_path).expanduser() if Path(trace_path).is_absolute() else (lumen / trace_path)
+    try:
+        trace_source = trace_source.resolve()
+        trace_source.relative_to(trace_root)
+    except (OSError, ValueError):
+        trace_source = None
+    if trace_path and trace_source is not None and trace_source.is_dir():
         trace_target = delivery_history_dir(workspace_root) / run_id / "agent-trace"
         shutil.copytree(trace_source, trace_target, dirs_exist_ok=True)
         payload["agent_trace_path"] = str(trace_target)

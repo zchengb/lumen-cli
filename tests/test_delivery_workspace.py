@@ -1367,6 +1367,84 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertTrue(second_repo.worktree_path.is_dir())
             self.assertEqual("dirty local edit\n", (source / "README.md").read_text(encoding="utf-8"))
 
+    def test_story_worktree_uses_explicit_base_commit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "source"
+            workspace = root / "workspace"
+            subprocess.run(["git", "init", "-b", "main", str(source)], check=True, capture_output=True)
+            git(source, "config", "user.email", "lumen@example.test")
+            git(source, "config", "user.name", "Lumen Test")
+            (source / "README.md").write_text("baseline\n", encoding="utf-8")
+            git(source, "add", "README.md")
+            git(source, "commit", "-m", "baseline")
+            baseline = subprocess.run(
+                ["git", "-C", str(source), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            (source / "README.md").write_text("later\n", encoding="utf-8")
+            git(source, "commit", "-am", "later")
+
+            story_dir = root / "stories" / "DEMO-125"
+            story_dir.mkdir(parents=True)
+            target = RepoTarget("service", source, workspace / "lumen" / "worktrees" / "DEMO-125" / "service")
+            ok, detail = ensure_feature_worktree(
+                target,
+                "feature/DEMO-125-baseline",
+                workspace,
+                {"jiraKey": "DEMO-125", "baseCommit": baseline},
+                story_dir,
+            )
+
+            self.assertTrue(ok, detail)
+            self.assertIn(baseline, detail)
+            self.assertEqual(baseline, subprocess.run(
+                ["git", "-C", str(target.worktree_path), "rev-parse", "HEAD"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip())
+            self.assertEqual("baseline\n", (target.worktree_path / "README.md").read_text(encoding="utf-8"))
+
+    def test_delivery_notification_can_skip_feishu_for_one_run(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp) / "docs"
+            workspace = docs / "lumen"
+            story = docs / "stories" / "DEMO-126"
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "results").mkdir(parents=True)
+            story.mkdir(parents=True)
+            (workspace / "config" / "delivery.json").write_text(
+                json.dumps({"notifications": {"feishu": {"enabled": True}}}), encoding="utf-8"
+            )
+            (story / "metadata.json").write_text(
+                json.dumps({"jiraKey": "DEMO-126", "title": "Demo", "deliveryStatus": "in_progress"}),
+                encoding="utf-8",
+            )
+            result = workspace / "results" / "delivery-result.json"
+            result.write_text(json.dumps({
+                "workspace_root": str(docs),
+                "docs_dir": str(docs),
+                "story_path": "stories/DEMO-126",
+                "story_id": "DEMO-126",
+                "jira_key": "DEMO-126",
+                "delivery_status": "in_progress",
+            }), encoding="utf-8")
+
+            with patch.dict(os.environ, {"LUMEN_SKIP_FEISHU": "1", "FEISHU_WEBHOOK_URL": "https://example.test/hook"}), \
+                    patch.object(renderer, "sync_delivery_jira", return_value={"status": "skipped"}), \
+                    patch.object(renderer, "send_feishu") as send_feishu, \
+                    patch.object(sys, "argv", ["render-delivery-and-notify.py", str(result)]):
+                self.assertEqual(0, renderer.main())
+
+            payload = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual("skipped", payload["feishu"]["status"])
+            self.assertEqual("LUMEN_SKIP_FEISHU enabled", payload["feishu"]["detail"])
+            send_feishu.assert_not_called()
+
     def test_docs_repo_is_the_default_workspace_and_discovers_repos_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
