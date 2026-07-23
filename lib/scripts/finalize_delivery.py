@@ -248,8 +248,8 @@ def main() -> int:
         config = read_json(delivery_config_path(context.workspace_root), {})
         publish = config.get("publish") if isinstance(config.get("publish"), dict) else {}
         publish_mode = str(publish.get("mode", "pr")).strip().lower() or "pr"
-        if publish_mode not in {"pr", "merge", "direct"}:
-            raise RuntimeError("Delivery publish mode must be 'pr', 'merge', or 'direct'")
+        if publish_mode not in {"none", "pr", "merge", "direct"}:
+            raise RuntimeError("Delivery publish mode must be 'none', 'pr', 'merge', or 'direct'")
         if str(result.get("delivery_status", "")).strip() not in {"completed", "ready_for_finalize"}:
             raise RuntimeError("Agent result must be completed or ready_for_finalize before finalization")
         result = stabilize_delivery_result(result, context, result_path)
@@ -291,6 +291,9 @@ def main() -> int:
             if args.dry_run:
                 item["pr_url"] = "(dry-run)"
                 item["publish_status"] = "dry_run"
+            elif publish_mode == "none":
+                item["publish_status"] = "skipped"
+                item["publish_reason"] = "Publishing disabled for verification run"
             else:
                 if publish_mode == "direct":
                     push_default_branch(repo.worktree_path, repo.default_branch, repo.name)

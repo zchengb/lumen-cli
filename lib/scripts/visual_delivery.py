@@ -240,6 +240,25 @@ def repos_config(workspace_root: Path) -> Path:
     return workspace_lumen_dir(workspace_root) / "config" / "repos.json"
 
 
+def resolve_visual_fixture_file(
+    workspace_root: Path,
+    story_dir: Path,
+    repo_path: Path,
+    runtime: dict[str, Any],
+) -> Path | None:
+    configured = str(runtime.get("fixture_file", "")).strip()
+    if not configured:
+        return None
+    candidate = Path(configured).expanduser()
+    if candidate.is_absolute():
+        return candidate
+    for base in (story_dir, workspace_root, repo_path):
+        resolved = (base / candidate).resolve()
+        if resolved.is_file():
+            return resolved
+    return (workspace_root / candidate).resolve()
+
+
 def visual_auth_env_name(repository: str, runtime: dict[str, Any]) -> str:
     configured = str(runtime.get("auth_credential_env", "")).strip()
     if configured:
@@ -591,6 +610,10 @@ def doctor(workspace_root: Path) -> int:
             runtime.get("fixture_command") or runtime.get("fixture_start_command")
         ):
             problems.append("configured fixture strategy has no fixture command")
+        elif runtime.get("fixture_strategy") == "playwright-route":
+            fixture_file = resolve_visual_fixture_file(workspace_root, workspace_root, repo, runtime)
+            if not fixture_file or not fixture_file.is_file():
+                problems.append("configured Playwright fixture file is missing")
         if not fixture_auth_ready(runtime, dict(os.environ)):
             problems.append(
                 f"visual auth credential for '{name}' is not set; "
@@ -662,7 +685,7 @@ def wait_ready(url: str, timeout: int, process: subprocess.Popen[str] | None = N
     raise TimeoutError(f"readiness URL did not respond within {timeout}s: {url}")
 
 
-def web_capture(repo: Path, runtime: dict[str, Any], scenario: dict[str, Any], actual: Path, env: dict[str, str]) -> None:
+def web_capture(repo: Path, runtime: dict[str, Any], scenario: dict[str, Any], actual: Path, env: dict[str, str], fixture_file: Path | None = None) -> None:
     base = str(runtime.get("base_url", "")).rstrip("/")
     navigation = str(scenario.get("navigation", ""))
     url = navigation if navigation.startswith(("http://", "https://")) else f"{base}/{navigation.lstrip('/')}"
@@ -679,14 +702,16 @@ const { chromium } = require('playwright');
 (async () => { const [url,out,marker,storage,width,height,cdpUrl,testIdAttribute] = process.argv.slice(1);
  const browser = cdpUrl ? await chromium.connectOverCDP(cdpUrl) : await chromium.launch({headless:true});
  const context = cdpUrl ? browser.contexts()[0] : await browser.newContext({viewport:{width:+width,height:+height}, locale:'en-US', timezoneId:'UTC', ...(storage?{storageState:storage}:{})});
- const page = await context.newPage(); if(cdpUrl) { await page.setViewportSize({width:+width,height:+height}); await (await context.newCDPSession(page)).send('Security.setIgnoreCertificateErrors',{ignore:true}); } await page.goto(url,{waitUntil:'networkidle'});
+ const page = await context.newPage(); if(cdpUrl) { await page.setViewportSize({width:+width,height:+height}); await (await context.newCDPSession(page)).send('Security.setIgnoreCertificateErrors',{ignore:true}); }
+ const fixtureFile = process.argv[9] || ''; if(fixtureFile) { const { installPlaywrightFixtures } = require(process.argv[10]); await installPlaywrightFixtures(page, fixtureFile); }
+ await page.goto(url,{waitUntil:'networkidle'});
  if(marker) await (testIdAttribute === 'data-testid' ? page.getByTestId(marker) : page.locator(`[${testIdAttribute}="${marker}"]`)).waitFor({state:'visible'});
  await page.addStyleTag({content:'*,*::before,*::after{animation:none!important;transition:none!important;caret-color:transparent!important}'});
  await page.screenshot({path:out,fullPage:false}); await browser.close();
 })().catch(e=>{console.error(e.message);process.exit(1)});
 """
     completed = subprocess.run(
-        ["node", "-e", script, url, str(actual), marker, storage, str(viewport.get("width", 1280)), str(viewport.get("height", 720)), str(runtime.get("browser_cdp_url", "")), str(runtime.get("test_id_attribute", "data-testid"))],
+        ["node", "-e", script, url, str(actual), marker, storage, str(viewport.get("width", 1280)), str(viewport.get("height", 720)), str(runtime.get("browser_cdp_url", "")), str(runtime.get("test_id_attribute", "data-testid")), str(fixture_file or ""), str(Path(__file__).with_name("playwright_fixtures.js"))],
         cwd=repo, env=env, check=False, capture_output=True, text=True,
     )
     if completed.returncode != 0:
@@ -788,6 +813,7 @@ def execute(
         merge_visual_result(result_path, runtime_contract.get("runtime_profile", ""), results)
         return results
     runtime = repo_config["runtime"]
+    fixture_file = resolve_visual_fixture_file(context.workspace_root, context.story_dir, repo_target.worktree_path, runtime)
     env = runtime_env if runtime_env is not None else dict(os.environ)
     processes: list[subprocess.Popen[str]] = []
     def cleanup() -> None:
@@ -848,6 +874,8 @@ def execute(
             if not reference.is_file():
                 raise FileNotFoundError(f"approved reference not found: {reference}")
             fixture_command = str(runtime.get("fixture_command", ""))
+            if runtime.get("fixture_strategy") == "playwright-route" and (not fixture_file or not fixture_file.is_file()):
+                raise ChildProcessError("configured Playwright fixture file is missing")
             if fixture_command:
                 fixture_value = str(scenario.get("fixture", "")).strip()
                 if not fixture_value or fixture_value.upper() == "TBD":
@@ -858,7 +886,7 @@ def execute(
                     raise ChildProcessError(redact((prepared.stderr or prepared.stdout or "fixture command failed").strip(), env)[-500:])
             shutil.copy2(reference, expected)
             if runtime.get("platform") == "web":
-                web_capture(repo_target.worktree_path, runtime, scenario, actual, env)
+                web_capture(repo_target.worktree_path, runtime, scenario, actual, env, fixture_file)
             else:
                 device = str((runtime.get("ios") or {}).get("device", ""))
                 subprocess.run(["xcrun", "simctl", "boot", device], check=False, capture_output=True, text=True)

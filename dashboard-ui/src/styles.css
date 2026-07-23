@@ -147,3 +147,4 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .trace-inspect-link{display:inline-flex;align-items:center;gap:5px;padding:0;border:0;background:transparent;color:#0071e3;font-size:11px;font-weight:550}.trace-inspect-link:hover{text-decoration:underline}.trace-inspect-link:focus-visible{border-radius:3px;outline:2px solid #9acbff;outline-offset:3px}.artifact-links a{font-weight:400}
 
 .icon-button:disabled,.button:disabled{cursor:wait;opacity:.55}.delete-history-modal{width:min(430px,calc(100vw - 36px))}.modal-body.compact .modal-copy{margin:0;color:#73737b;font-size:12px;line-height:1.55}.delete-confirm{border-color:#d98b86;background:#fff7f6;color:#b42e29}.delete-confirm:hover{border-color:#c75d56;background:#fff0ef}
+.flow-step.stopped .flow-marker{border-color:#8a8a91;background:#f1f1f0;color:#5e5e66}.flow-step.stopped .flow-copy strong{color:#5e5e66}.flow-step.stopped .flow-copy span{color:#777780}

@@ -170,6 +170,43 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertNotIn("prUrl", metadata)
             self.assertFalse((workspace / "history").exists())
 
+    def test_stop_delivery_finalizes_blocked_progress_and_archives_history(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp) / "docs"
+            workspace = docs / "lumen"
+            story = docs / "stories" / "DEMO-STOP"
+            results = workspace / "results"
+            lock = workspace / "locks" / "delivery-run"
+            story.mkdir(parents=True)
+            results.mkdir(parents=True)
+            lock.mkdir(parents=True)
+            (story / "metadata.json").write_text(json.dumps({"storyId": "DEMO-STOP", "jiraKey": "DEMO-STOP", "deliveryStatus": "in_progress"}), encoding="utf-8")
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "delivery.json").write_text(json.dumps({"jira": {"enabled": False}}), encoding="utf-8")
+            (workspace / "logs" / "delivery").mkdir(parents=True)
+            log = workspace / "logs" / "delivery" / "run-stop.log"
+            log.write_text("stopped\n", encoding="utf-8")
+            (lock / "pid").write_text("999999\n", encoding="utf-8")
+            (results / "delivery-progress.json").write_text(json.dumps({
+                "run_id": "run-stop", "delivery_status": "in_progress", "story_id": "DEMO-STOP", "story_path": "stories/DEMO-STOP",
+                "jira_key": "DEMO-STOP", "docs_dir": str(docs), "workspace_root": str(workspace), "branch": "feature/DEMO-STOP",
+                "started_at": "2026-07-23T10:00:00Z", "log_file": str(log), "phases": [{"id": "agent", "status": "in_progress", "attempts": [{"started_at": "2026-07-23T10:00:00Z", "finished_at": ""}]}],
+                "repositories": [], "verification": [],
+            }), encoding="utf-8")
+            server = object.__new__(DashboardServer)
+            with patch.object(dashboard_server, "terminate_process_tree"), patch.object(dashboard_server, "should_sync_jira", return_value=(False, "disabled")), patch.object(dashboard_server, "cleanup_delivery_worktrees", return_value=[]):
+                server.stop_delivery(workspace)
+
+            progress = json.loads((results / "delivery-progress.json").read_text(encoding="utf-8"))
+            metadata = json.loads((story / "metadata.json").read_text(encoding="utf-8"))
+            result = json.loads((results / "delivery-result.json").read_text(encoding="utf-8"))
+            self.assertEqual("blocked", progress["delivery_status"])
+            self.assertEqual("blocked", progress["phases"][0]["status"])
+            self.assertEqual("blocked", result["delivery_status"])
+            self.assertTrue((workspace / "history" / "delivery" / "run-stop.json").is_file())
+            self.assertEqual("blocked", metadata["deliveryStatus"])
+            self.assertFalse(lock.exists())
+
     def test_delivery_runtime_parses_flags_and_resolves_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             docs = Path(temp)

@@ -551,8 +551,8 @@ run_real_delivery() {
 
   cleanup_web_sessions
 
-  progress_phase finalize in_progress "Commit verified changes, push feature branches, and create PRs"
-  printf '\n[delivery] Phase 6/8 — Commit, push, and PR\n'
+  progress_phase finalize in_progress "Finalize verified changes"
+  printf '\n[delivery] Phase 6/8 — Finalize verified changes\n'
   local merge_py="${LUMEN_LIB_DIR}/delivery_result_merge.py"
   if [[ -f "${merge_py}" ]]; then
     python3 "${merge_py}" --result "${RESULT_FILE}" --docs-dir "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}" || true
@@ -587,7 +587,7 @@ print(sys.argv[2])' "${RESULT_FILE}" "Delivery finalization failed. See log: ${L
     progress_phase finalize failed "${failure_detail}"
     fail "${failure_detail}"
   fi
-  progress_phase finalize completed "Feature branches pushed and PRs opened"
+  progress_phase finalize completed "Delivery finalization complete"
 
   progress_phase jira_done in_progress "Sync JIRA DEV DONE"
   progress_phase notify in_progress "Feishu and metadata updates"

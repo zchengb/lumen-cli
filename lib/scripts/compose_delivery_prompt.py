@@ -273,6 +273,9 @@ def authenticated_web_session_block(context: StoryContext) -> str:
             f"  - Session operations: `{session.get('operation_command', '')}`",
             f"  - Evidence directory: `{session.get('session_dir', '')}`",
         ])
+        fixture = session.get("fixtures") if isinstance(session.get("fixtures"), dict) else {}
+        if fixture.get("file"):
+            lines.append(f"  - Mock API fixture: `{fixture.get('file')}` is active for the browser session; use it for deterministic visual states.")
     lines.extend([
         "",
         "Supported operations: `navigate`, `observe`, `inspect`, `click`, `fill`, `press`, `select`, `check`, `uncheck`, `hover`, `focus`, `scroll_into_view`, `reload`, `go_back`, `screenshot`.",

@@ -126,7 +126,7 @@ For an eligible Story, Lumen performs the following sequence:
 4. Move the linked work item into development when Jira integration is enabled.
 5. Run the implementation agent with the Story, plan, repository context, and workspace coding guideline.
 6. Execute the configured verification profile and, when enabled, bounded remediation.
-7. Commit verified changes, push feature branches, create pull requests, update delivery metadata, and move the work item to the configured completion state.
+7. Commit verified changes, publish according to `publish.mode` (`none`, `pr`, `merge`, or `direct`), update delivery metadata, and move the work item to the configured completion state.
 8. Archive a delivery snapshot and remove completed worktrees.
 
 Delivery runs are serialized within one workspace because they share control-plane state and verification resources. Multiple completed or paused Story worktrees may coexist.

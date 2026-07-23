@@ -14,6 +14,7 @@ import signal
 import shlex
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -617,6 +618,8 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     remediation = read_delivery_json(workspace / "results" / "delivery-remediation.json", {})
     if not remediation and isinstance(result.get("remediation"), dict):
         remediation = result["remediation"]
+    if str(current.get("delivery_status") or "").lower() == "blocked" and str(current.get("current_step") or "").lower() == "stopped from dashboard":
+        remediation = {}
     if remediation:
         current["remediation"] = remediation
     if isinstance(result.get("agent_trace"), dict):
@@ -846,12 +849,29 @@ class DashboardServer(ThreadingHTTPServer):
         except ValueError as exc:
             raise ValueError("Delivery process id is invalid") from exc
         terminate_process_tree(pid)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                break
+            time.sleep(0.05)
 
         progress_path = workspace / "results" / "delivery-progress.json"
         progress = read_delivery_json(progress_path, {})
+        finished_at = utc_now()
+        for phase in progress.get("phases") or []:
+            if not isinstance(phase, dict) or str(phase.get("status") or "").lower() not in {"in_progress", "running"}:
+                continue
+            phase["status"] = "blocked"
+            phase["finished_at"] = finished_at
+            phase["detail"] = "Stopped from Dashboard"
+            attempts = phase.get("attempts")
+            if isinstance(attempts, list) and attempts and isinstance(attempts[-1], dict) and not attempts[-1].get("finished_at"):
+                attempts[-1]["finished_at"] = finished_at
         progress["delivery_status"] = "blocked"
         progress["current_step"] = "Stopped from Dashboard"
-        progress["finished_at"] = utc_now()
+        progress["finished_at"] = finished_at
         progress["updated_at"] = progress["finished_at"]
         write_json(progress_path, progress)
         try:
@@ -876,6 +896,46 @@ class DashboardServer(ThreadingHTTPServer):
         cleaned: list[str] = []
         if story_ref and workspace_lumen_dir(docs_dir).resolve() == workspace.resolve():
             cleaned = cleanup_delivery_worktrees(docs_dir, story_ref)
+        story_path = str(progress.get("story_path") or "").strip()
+        if story_path:
+            metadata_path = (docs_dir / story_path / "metadata.json").resolve()
+            metadata = read_delivery_json(metadata_path, {})
+            if metadata:
+                metadata["deliveryStatus"] = "blocked"
+                metadata["updatedAt"] = finished_at[:10]
+                logs = metadata.get("logs") if isinstance(metadata.get("logs"), list) else []
+                logs.append({"type": "delivery.run", "at": finished_at, "status": "blocked", "result": "stopped"})
+                metadata["logs"] = logs[-20:]
+                write_json(metadata_path, metadata)
+
+        result = {
+            "schema_version": "1.0",
+            "run_id": progress.get("run_id", ""),
+            "delivery_status": "blocked",
+            "current_step": "Stopped from Dashboard",
+            "story_id": progress.get("story_id", ""),
+            "story_path": progress.get("story_path", ""),
+            "jira_key": progress.get("jira_key", ""),
+            "docs_dir": progress.get("docs_dir", str(docs_dir)),
+            "workspace_root": progress.get("workspace_root", str(workspace)),
+            "branch": progress.get("branch", ""),
+            "started_at": progress.get("started_at", ""),
+            "finished_at": finished_at,
+            "verification_results": progress.get("verification", []),
+            "repos_touched": progress.get("repositories", []),
+            "pr_urls": [],
+            "publish_mode": "none",
+            "failures": [{"label": "Stopped from Dashboard", "summary": "Delivery was stopped by the user before completion."}],
+        }
+        result_path = workspace / "results" / "delivery-result.json"
+        write_json(result_path, result)
+        archive_script = SCRIPT_DIR / "archive_delivery_run.py"
+        if archive_script.is_file():
+            subprocess.run([
+                sys.executable, str(archive_script), "--workspace-root", str(docs_dir),
+                "--result", str(result_path), "--progress", str(progress_path),
+                "--log-file", str(progress.get("log_file") or ""),
+            ], capture_output=True, text=True, check=False)
         shutil.rmtree(lock, ignore_errors=True)
         return {"pid": pid, "story": story_ref, "worktrees": cleaned}
 

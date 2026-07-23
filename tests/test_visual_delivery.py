@@ -20,6 +20,7 @@ from visual_delivery import (  # noqa: E402
     redact,
     resolve_visual_auth_credential,
     runtime_command,
+    resolve_visual_fixture_file,
     set_visual_auth_credential,
     validate_contract,
     visual_contract,
@@ -76,6 +77,17 @@ PLAN = """# Technical Plan
 
 
 class VisualDeliveryTests(unittest.TestCase):
+    def test_playwright_fixture_file_resolves_from_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fixture = root / "stories" / "DEMO" / "assets" / "visual-fixtures.json"
+            fixture.parent.mkdir(parents=True)
+            fixture.write_text('{"routes": []}\n', encoding="utf-8")
+            self.assertEqual(
+                fixture.resolve(),
+                resolve_visual_fixture_file(root, root / "stories" / "DEMO", root / "repo", {"fixture_file": "stories/DEMO/assets/visual-fixtures.json"}),
+            )
+
     def test_local_https_readiness_accepts_development_certificates(self) -> None:
         import urllib.request
         from unittest.mock import patch

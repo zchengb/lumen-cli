@@ -21,6 +21,7 @@ from visual_delivery import (
     redact,
     repos_config,
     resolve_visual_auth_credential,
+    resolve_visual_fixture_file,
     runtime_command,
     visual_auth_env_name,
     wait_ready,
@@ -186,6 +187,7 @@ def start_one(workspace_root: Path, context: Any, repo: Any, config: dict[str, A
         "--login-path", str(runtime.get("auth_login_path", "")), "--login-method", str(runtime.get("auth_login_method", "POST")),
         "--login-field", str(runtime.get("auth_login_field", "wiw")), "--identity", str(runtime.get("auth_identity", "")),
         "--trace-id", run_id,
+        "--fixture-file", str(resolve_visual_fixture_file(workspace_root, context.story_dir, repo.path, runtime) or ""),
         "--viewport-width", str((runtime.get("viewport") or {}).get("width", 1440)),
         "--viewport-height", str((runtime.get("viewport") or {}).get("height", 900)),
     ]
@@ -223,6 +225,7 @@ def start_one(workspace_root: Path, context: Any, repo: Any, config: dict[str, A
         "viewport": runtime.get("viewport") or {"width": 1440, "height": 900},
         "test_id_attribute": str(runtime.get("test_id_attribute", "data-testid")),
         "capabilities": server.get("session", {}).get("capabilities", []),
+        "fixtures": server.get("session", {}).get("fixtures", {}),
         "session_dir": str(directory), "control_url": server.get("url", ""),
         "operation_command": f"python3 {Path(__file__)} request --session-dir {directory} --operation <operation> --json '<payload>'",
         "runtime_pid": runtime_process.pid, "browser_pid": browser_process.pid, "status": "ready",
