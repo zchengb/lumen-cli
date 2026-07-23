@@ -10,7 +10,7 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[1] / "lib" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from web_session import auth_env_name, auth_strategy, stop_sessions  # noqa: E402
+from web_session import auth_env_name, auth_strategy, credential_for, stop_sessions  # noqa: E402
 
 
 class WebSessionTests(unittest.TestCase):
@@ -22,6 +22,27 @@ class WebSessionTests(unittest.TestCase):
     def test_auth_env_name_is_stable_and_configurable(self) -> None:
         self.assertEqual("LUMEN_VISUAL_AUTH_DIGITAL_PLATFORM_ADMIN", auth_env_name("digital-platform-admin", {}))
         self.assertEqual("CUSTOM_AUTH", auth_env_name("repo", {"auth_credential_env": "CUSTOM_AUTH"}))
+
+    def test_credentials_prefer_project_env_over_workspace_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            project = root / "digital-platform-admin"
+            project.mkdir()
+            (project / ".env.local").write_text("LUMEN_VISUAL_USERNAME=PROJECT\n", encoding="utf-8")
+            workspace = root / "workspace"
+            (workspace / "lumen").mkdir(parents=True)
+            (workspace / "lumen" / ".env.local").write_text("LUMEN_VISUAL_USERNAME=WORKSPACE\n", encoding="utf-8")
+
+            self.assertEqual(
+                "PROJECT",
+                credential_for(
+                    workspace,
+                    project,
+                    "digital-platform-admin",
+                    {"auth_credential_env": "LUMEN_VISUAL_USERNAME"},
+                    {},
+                ),
+            )
 
     def test_stop_writes_secret_free_summary_and_does_not_need_live_server(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

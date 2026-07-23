@@ -27,8 +27,7 @@ from visual_delivery import (
 )
 
 
-def env_local(workspace_root: Path) -> dict[str, str]:
-    path = workspace_lumen_dir(workspace_root) / ".env.local"
+def read_env_file(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.is_file():
         return values
@@ -38,6 +37,10 @@ def env_local(workspace_root: Path) -> dict[str, str]:
         if match:
             values[match.group(1)] = next((item for item in match.groups()[1:] if item is not None), "").strip()
     return values
+
+
+def env_local(workspace_root: Path) -> dict[str, str]:
+    return read_env_file(workspace_lumen_dir(workspace_root) / ".env.local")
 
 
 auth_env_name = visual_auth_env_name
@@ -52,9 +55,10 @@ def auth_strategy(runtime: dict[str, Any]) -> str:
     }.get(value, value)
 
 
-def credential_for(workspace_root: Path, repository: str, runtime: dict[str, Any], env: dict[str, str]) -> str:
+def credential_for(workspace_root: Path, repo_path: Path, repository: str, runtime: dict[str, Any], env: dict[str, str]) -> str:
     name = auth_env_name(repository, runtime)
-    return str(env.get(name) or env_local(workspace_root).get(name) or resolve_visual_auth_credential(runtime, env) or "").strip()
+    project_env = read_env_file(repo_path / ".env.local")
+    return str(env.get(name) or project_env.get(name) or env_local(workspace_root).get(name) or resolve_visual_auth_credential(runtime, env) or "").strip()
 
 
 def json_request(url: str, token: str, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -148,7 +152,7 @@ def start_one(workspace_root: Path, context: Any, repo: Any, config: dict[str, A
             os.killpg(runtime_process.pid, signal.SIGTERM)
         handle.close()
         raise PermissionError("existing-session authentication requires browser_mode=cdp")
-    credential = credential_for(workspace_root, repo.name, runtime, inherited_env)
+    credential = credential_for(workspace_root, repo.path, repo.name, runtime, inherited_env)
     storage = str(inherited_env.get(str(runtime.get("auth_storage_state_env", "LUMEN_WEB_STORAGE_STATE")), "")).strip()
     if strategy == "storage-state" and not storage and credential and str(runtime.get("auth_login_path", "")).strip():
         strategy = "login-endpoint"
