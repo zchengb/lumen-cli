@@ -233,11 +233,12 @@ def append_verification(workspace_root: Path, item: dict[str, Any]) -> None:
 
 def finish_progress(workspace_root: Path, delivery_status: str, detail: str = "") -> None:
     payload = load_progress(workspace_root)
+    if detail:
+        messages = list(payload.get("messages") or [])
+        messages.append({"at": utc_now(), "message": detail})
+        payload["messages"] = messages[-50:]
     payload["delivery_status"] = delivery_status
     payload["finished_at"] = utc_now()
-    if detail:
-        append_message(workspace_root, detail)
-        payload = load_progress(workspace_root)
     save_progress(workspace_root, payload)
 
 

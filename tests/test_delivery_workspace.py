@@ -40,7 +40,7 @@ from delivery_launchd import interval_minutes_from_cron  # noqa: E402
 from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
 from compose_delivery_prompt import compose_delivery_prompt, compose_snippets  # noqa: E402
-from delivery_progress import print_progress_report, set_phase  # noqa: E402
+from delivery_progress import finish_progress, print_progress_report, set_phase  # noqa: E402
 from compose_scan_prompt import compose_prompt  # noqa: E402
 from dashboard_server import (  # noqa: E402
     DashboardServer,
@@ -383,6 +383,23 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("completed", current["current_phase"])
             self.assertEqual("2026-07-14T06:00:00Z", current["finished_at"])
             self.assertEqual("passed", current["verification"][0]["status"])
+
+    def test_finish_progress_keeps_terminal_status_when_detail_is_recorded(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp)
+            results = docs / "lumen" / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(
+                json.dumps({"run_id": "run-43", "delivery_status": "in_progress", "messages": []}),
+                encoding="utf-8",
+            )
+
+            finish_progress(docs, "completed", "Delivery run finished")
+            progress = json.loads((results / "delivery-progress.json").read_text(encoding="utf-8"))
+
+            self.assertEqual("completed", progress["delivery_status"])
+            self.assertTrue(progress["finished_at"])
+            self.assertEqual("Delivery run finished", progress["messages"][-1]["message"])
 
     def test_dashboard_exposes_active_remediation_and_restarts_phase_timer(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
