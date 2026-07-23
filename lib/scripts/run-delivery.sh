@@ -58,7 +58,12 @@ cleanup_web_sessions() {
   set -e
 }
 
-trap 'cleanup_web_sessions; rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT
+cleanup_delivery_lock() {
+  rm -f "${LOCK_DIR}/pid" "${LOCK_DIR}/started_at"
+  rmdir "${LOCK_DIR}" 2>/dev/null || true
+}
+
+trap 'cleanup_web_sessions; cleanup_delivery_lock' EXIT
 
 # Scan and delivery share the workspace-local environment. Root-level files are
 # read only as a compatibility fallback for docs projects created before init
