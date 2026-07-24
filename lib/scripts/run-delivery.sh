@@ -73,6 +73,10 @@ load_env_file "${DOCS_DIR}/${WORKSPACE_DIR_NAME}/.env.local"
 load_env_file "${DOCS_DIR}/.env.common"
 load_env_file "${DOCS_DIR}/.env.local"
 
+if [[ -n "${CURSOR_API_KEY:-}" ]] || [[ ! -t 0 ]]; then
+  export AGENT_CLI_CREDENTIAL_STORE=file
+fi
+
 fail() {
   local message="$1"
   WEB_SESSION_STATUS="failed"
