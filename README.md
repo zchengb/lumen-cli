@@ -143,7 +143,7 @@ This only approves MCP use for a delivery with a Figma contract; it does not ins
 
 ### Authenticated Web Development Sessions
 
-For a configured Web repository, Delivery can start one persistent local Playwright session before the implementation Agent runs. Configure `runtime` in `lumen/config/repos.json` with `browser_mode` (`managed` or `cdp`), `base_url`, `ready_url`, and one authentication strategy: `existing-session`, `storage-state`, or `login-endpoint`. Repository login credentials are stored directly in that repository's workspace runtime configuration with `lumen config set-visual-auth`; the credential is never included in the Agent prompt, Dashboard API response, or session evidence. The Agent receives one internal session helper and discovers routes from repository code.
+For a configured Web repository, Delivery can start one persistent local Playwright session before the implementation Agent runs. Configure `runtime` in `lumen/config/repos.json` with `browser_mode` (`managed` or `cdp`), `base_url`, `ready_url`, and one authentication strategy: `existing-session`, `storage-state`, or `login-endpoint`. Repository login credentials are stored directly in that repository's workspace runtime configuration with `lumen config set-visual-auth`; the credential is visible only in the local loopback Dashboard editor and is never included in the Agent prompt or session evidence. The Agent receives one internal session helper and discovers routes from repository code.
 
 Quick setup and checks:
 
@@ -213,7 +213,7 @@ lumen dashboard --project <project-slug> --static
 
 ## Configuration and Credentials
 
-Workspace configuration is stored under `lumen/config/`. Integration secrets use the workspace-local `lumen/.env.local`, except Web visual-auth credentials, which are stored in the repository runtime config and never returned by the Dashboard API.
+Workspace configuration is stored under `lumen/config/`. Integration secrets use the workspace-local `lumen/.env.local`, except Web visual-auth credentials, which are stored in the repository runtime config and shown in the local Repository editor for debugging.
 
 ```bash
 lumen config set-webhook <feishu-webhook-url> --project <project-slug>

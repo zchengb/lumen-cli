@@ -228,9 +228,6 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         runtime = entry.get("runtime")
         if isinstance(runtime, dict):
             runtime_view = dict(runtime)
-            configured = bool(str(runtime_view.pop("visual_auth_credential", "")).strip())
-            if configured:
-                runtime_view["visual_auth_configured"] = True
             entry["runtime"] = runtime_view
         entry["delivery_steps"] = steps.get(str(entry.get("name", "")), [])
         entry["branches"] = repository_branches(Path(str(entry.get("path", ""))), str(entry.get("default_branch", "main")))
