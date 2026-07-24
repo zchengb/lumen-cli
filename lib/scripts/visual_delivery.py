@@ -299,7 +299,7 @@ def list_visual_auth_credentials(path: Path) -> dict[str, str]:
         runtime = item.get("runtime")
         if not name or not isinstance(runtime, dict):
             continue
-        credential = str(env_values.get(visual_auth_env_name(name, runtime), "") or runtime.get("visual_auth_credential", "")).strip()
+        credential = str(runtime.get("visual_auth_credential", "") or env_values.get(visual_auth_env_name(name, runtime), "")).strip()
         if credential:
             credentials[name] = credential
     return credentials
@@ -320,35 +320,23 @@ def set_visual_auth_credential(path: Path, repository: str, credential: str) -> 
         runtime = {}
         entry["runtime"] = runtime
     env_name = visual_auth_env_name(repository, runtime)
-    runtime["auth_credential_env"] = env_name
-    runtime.pop("visual_auth_credential", None)
+    runtime["visual_auth_credential"] = credential
+    runtime.pop("auth_credential_env", None)
     write_json(config_path, config)
     env_path = workspace_lumen_dir(workspace_root) / ".env.local"
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.is_file() else [
-        "# Local secrets and machine-specific values.",
-        "# .env.local must never be committed.",
-        "",
-    ]
-    assignment = f"{env_name}={credential}"
-    replaced = False
-    for index, line in enumerate(lines):
-        if line.startswith(f"{env_name}="):
-            lines[index] = assignment
-            replaced = True
-            break
-    if not replaced:
-        lines.append(assignment)
-    env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    if env_path.is_file():
+        lines = [line for line in env_path.read_text(encoding="utf-8").splitlines() if not line.startswith(f"{env_name}=")]
+        env_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def resolve_visual_auth_credential(runtime: dict[str, Any], env: dict[str, str]) -> str:
+    direct = str(runtime.get("visual_auth_credential", "")).strip()
+    if direct:
+        return direct
     env_name = str(runtime.get("auth_credential_env", "")).strip()
     if env_name and str(env.get(env_name, "")).strip():
         return str(env[env_name]).strip()
-    # Backward compatibility for old local repos.json files. Never expose this
-    # value to prompts or evidence; migrate it on the next config write.
-    return str(runtime.get("visual_auth_credential", "")).strip()
+    return ""
 
 
 def enrich_repositories(workspace_root: Path) -> list[dict[str, Any]]:
@@ -374,7 +362,7 @@ def enrich_repositories(workspace_root: Path) -> list[dict[str, Any]]:
 def redact(text: str, env: dict[str, str]) -> str:
     redacted = text
     for key, value in env.items():
-        if value and len(value) >= 4 and (key.startswith("LUMEN_VISUAL_") or any(word in key.upper() for word in ("PASSWORD", "SECRET", "TOKEN"))):
+        if value and len(value) >= 4 and (key.startswith("LUMEN_VISUAL_") or key == "LUMEN_WEB_AUTH_CREDENTIAL" or any(word in key.upper() for word in ("PASSWORD", "SECRET", "TOKEN"))):
             redacted = redacted.replace(value, "[REDACTED]")
     return redacted
 

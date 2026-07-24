@@ -225,6 +225,13 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         if not isinstance(repository, dict):
             continue
         entry = dict(repository)
+        runtime = entry.get("runtime")
+        if isinstance(runtime, dict):
+            runtime_view = dict(runtime)
+            configured = bool(str(runtime_view.pop("visual_auth_credential", "")).strip())
+            if configured:
+                runtime_view["visual_auth_configured"] = True
+            entry["runtime"] = runtime_view
         entry["delivery_steps"] = steps.get(str(entry.get("name", "")), [])
         entry["branches"] = repository_branches(Path(str(entry.get("path", ""))), str(entry.get("default_branch", "main")))
         enriched_repositories.append(entry)
@@ -276,6 +283,8 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
     profiles = load_json(workspace / "config" / "runtime-profiles.json", {})
     cleaned = []
     delivery = load_json(workspace / "config" / "delivery.json", {})
+    existing_config = load_json(workspace / "config" / "repos.json", {"repositories": []})
+    existing_repositories = existing_config.get("repositories") if isinstance(existing_config.get("repositories"), list) else []
     verification = delivery.setdefault("verification", {})
     steps = verification.setdefault("steps", {})
     seen = set()
@@ -306,14 +315,19 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
         if "generate_tests" in repository:
             cleaned[-1]["generate_tests"] = bool(repository.get("generate_tests"))
         runtime = repository.get("runtime")
-        if runtime is not None:
-            if not isinstance(runtime, dict):
+        existing = next((item for item in existing_repositories if isinstance(item, dict) and str(item.get("name", "")).strip() == name), {})
+        existing_runtime = existing.get("runtime") if isinstance(existing, dict) and isinstance(existing.get("runtime"), dict) else {}
+        if runtime is not None or existing_runtime:
+            if runtime is not None and not isinstance(runtime, dict):
                 raise ValueError(f"Runtime configuration for {name} must be an object")
+            stored_runtime = dict(existing_runtime)
+            if isinstance(runtime, dict):
+                stored_runtime.update({key: value for key, value in runtime.items() if key != "visual_auth_configured"})
             try:
-                json.dumps(runtime)
+                json.dumps(stored_runtime)
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Runtime configuration for {name} must contain JSON values") from exc
-            cleaned[-1]["runtime"] = runtime
+            cleaned[-1]["runtime"] = stored_runtime
         if "runtime_status" in repository:
             runtime_status = str(repository.get("runtime_status") or "").strip()
             if runtime_status not in {"ready", "incomplete"}:

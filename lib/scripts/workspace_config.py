@@ -201,7 +201,7 @@ def cmd_show(workspace: Path) -> int:
     visual_auth = list_visual_auth_credentials(workspace)
     repos_path = repos_config(workspace_root_from(workspace))
     print()
-    print(f"visual auth credentials: {workspace / '.env.local'}")
+    print(f"visual auth credentials: {repos_path}")
     if visual_auth:
         for repository, credential in sorted(visual_auth.items()):
             print(f"web auth credential ({repository}): {mask_secret(credential)}")
@@ -216,7 +216,7 @@ def cmd_set_visual_auth(workspace: Path, repository: str, credential: str) -> in
     except ValueError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
-    print(f"Saved Web auth credential for {repository} to {workspace_root_from(workspace) / '.env.local'}")
+    print(f"Saved Web auth credential for {repository} to {repos_config(workspace_root_from(workspace))}")
     return 0
 
 

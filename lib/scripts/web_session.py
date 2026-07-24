@@ -58,8 +58,11 @@ def auth_strategy(runtime: dict[str, Any]) -> str:
 
 def credential_for(workspace_root: Path, repo_path: Path, repository: str, runtime: dict[str, Any], env: dict[str, str]) -> str:
     name = auth_env_name(repository, runtime)
+    direct = str(runtime.get("visual_auth_credential", "")).strip()
+    if direct:
+        return direct
     project_env = read_env_file(repo_path / ".env.local")
-    return str(env.get(name) or project_env.get(name) or env_local(workspace_root).get(name) or resolve_visual_auth_credential(runtime, env) or "").strip()
+    return str(env.get(name) or project_env.get(name) or env_local(workspace_root).get(name) or "").strip()
 
 
 def json_request(url: str, token: str, method: str = "GET", payload: dict[str, Any] | None = None) -> dict[str, Any]:

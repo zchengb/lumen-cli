@@ -143,7 +143,7 @@ This only approves MCP use for a delivery with a Figma contract; it does not ins
 
 ### Authenticated Web Development Sessions
 
-For a configured Web repository, Delivery can start one persistent local Playwright session before the implementation Agent runs. Configure `runtime` in `lumen/config/repos.json` with `browser_mode` (`managed` or `cdp`), `base_url`, `ready_url`, and one authentication strategy: `existing-session`, `storage-state`, or `login-endpoint`. Store login credentials in `lumen/.env.local` with `lumen config set-visual-auth`; the credential value is never included in the Agent prompt or session evidence. The Agent receives one internal session helper and discovers routes from repository code.
+For a configured Web repository, Delivery can start one persistent local Playwright session before the implementation Agent runs. Configure `runtime` in `lumen/config/repos.json` with `browser_mode` (`managed` or `cdp`), `base_url`, `ready_url`, and one authentication strategy: `existing-session`, `storage-state`, or `login-endpoint`. Repository login credentials are stored directly in that repository's workspace runtime configuration with `lumen config set-visual-auth`; the credential is never included in the Agent prompt, Dashboard API response, or session evidence. The Agent receives one internal session helper and discovers routes from repository code.
 
 Quick setup and checks:
 
@@ -153,7 +153,7 @@ lumen doctor                                # Validate Node, Playwright, auth, f
 lumen config set-visual-auth <repository> <credential> --project <project-slug>
 ```
 
-The Dashboard's Repository → Visual runtime editor stores the generic per-repository runtime contract in `lumen/config/repos.json`: package/install/start commands, base and ready URLs, timeout, browser mode, authentication, and fixture strategy. Platform-specific fields remain in the same runtime object so Web and React Native repositories share one configuration boundary.
+The Dashboard's Repository → Visual runtime editor stores the generic per-repository runtime contract in `lumen/config/repos.json`: package/install/start commands, base and ready URLs, timeout, browser mode, authentication, credential, and fixture strategy. Platform-specific fields remain in the same runtime object so Web and React Native repositories share one configuration boundary.
 
 ### Delivery Scheduling
 
@@ -213,12 +213,13 @@ lumen dashboard --project <project-slug> --static
 
 ## Configuration and Credentials
 
-Workspace configuration is stored under `lumen/config/`. Secrets are stored in the workspace-local `lumen/.env.local`, which is ignored by Git.
+Workspace configuration is stored under `lumen/config/`. Integration secrets use the workspace-local `lumen/.env.local`, except Web visual-auth credentials, which are stored in the repository runtime config and never returned by the Dashboard API.
 
 ```bash
 lumen config set-webhook <feishu-webhook-url> --project <project-slug>
 lumen config set-cursor-api-key <api-key> --project <project-slug>
 lumen config set-gh-token <token> --host <git-host> --project <project-slug>
+lumen config set-visual-auth <repository> <credential> --project <project-slug>
 lumen config set-scan-window 14 --project <project-slug>
 ```
 
