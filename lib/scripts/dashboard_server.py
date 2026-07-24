@@ -305,6 +305,20 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
         })
         if "generate_tests" in repository:
             cleaned[-1]["generate_tests"] = bool(repository.get("generate_tests"))
+        runtime = repository.get("runtime")
+        if runtime is not None:
+            if not isinstance(runtime, dict):
+                raise ValueError(f"Runtime configuration for {name} must be an object")
+            try:
+                json.dumps(runtime)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Runtime configuration for {name} must contain JSON values") from exc
+            cleaned[-1]["runtime"] = runtime
+        if "runtime_status" in repository:
+            runtime_status = str(repository.get("runtime_status") or "").strip()
+            if runtime_status not in {"ready", "incomplete"}:
+                raise ValueError(f"Runtime status for {name} must be ready or incomplete")
+            cleaned[-1]["runtime_status"] = runtime_status
         if "delivery_commands" in repository:
             commands = repository["delivery_commands"]
             lines = commands.splitlines() if isinstance(commands, str) else commands

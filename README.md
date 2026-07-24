@@ -145,6 +145,16 @@ This only approves MCP use for a delivery with a Figma contract; it does not ins
 
 For a configured Web repository, Delivery can start one persistent local Playwright session before the implementation Agent runs. Configure `runtime` in `lumen/config/repos.json` with `browser_mode` (`managed` or `cdp`), `base_url`, `ready_url`, and one authentication strategy: `existing-session`, `storage-state`, or `login-endpoint`. Store login credentials in `lumen/.env.local` with `lumen config set-visual-auth`; the credential value is never included in the Agent prompt or session evidence. The Agent receives one internal session helper and discovers routes from repository code.
 
+Quick setup and checks:
+
+```bash
+lumen dashboard --project <project-slug>   # Repository → Visual runtime
+lumen doctor                                # Validate Node, Playwright, auth, fixture, and runtime readiness
+lumen config set-visual-auth <repository> <credential> --project <project-slug>
+```
+
+The Dashboard's Repository → Visual runtime editor stores the generic per-repository runtime contract in `lumen/config/repos.json`: package/install/start commands, base and ready URLs, timeout, browser mode, authentication, and fixture strategy. Platform-specific fields remain in the same runtime object so Web and React Native repositories share one configuration boundary.
+
 ### Delivery Scheduling
 
 ```bash
