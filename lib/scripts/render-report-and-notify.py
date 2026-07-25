@@ -887,8 +887,13 @@ def main() -> int:
         scan["report"] = {"html_path": None, "pdf_path": None, "status": "not_generated", "reason": "no_findings"}
 
     webhook_url = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
+    notifications = common.get("notifications") if isinstance(common.get("notifications"), dict) else {}
+    feishu_cfg = notifications.get("feishu") if isinstance(notifications.get("feishu"), dict) else {}
+    feishu_enabled = bool(feishu_cfg.get("enabled", True)) if "enabled" in feishu_cfg else True
     if dry_run:
         scan["feishu"] = {"status": "dry_run_skipped", "error": None}
+    elif not feishu_enabled:
+        scan["feishu"] = {"status": "skipped", "error": "Feishu notifications are disabled"}
     elif not webhook_url:
         scan["feishu"] = {"status": "not_sent", "error": "FEISHU_WEBHOOK_URL is not set"}
     else:

@@ -168,6 +168,7 @@ def init_progress(
             "delivery_status": "in_progress",
             "story_id": context.metadata.get("storyId") or context.story_dir.name,
             "story_path": str(context.story_dir.relative_to(context.docs_dir)),
+            "story_title": str(context.metadata.get("title") or "").strip(),
             "jira_key": context.metadata.get("jiraKey", ""),
             "docs_dir": str(context.docs_dir),
             "workspace_root": str(context.workspace_root),

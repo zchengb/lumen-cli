@@ -246,6 +246,7 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
             "scan": str((common.get("execution") or {}).get("model") or "composer-2.5"),
             "delivery": str((delivery_config.get("execution") or {}).get("model") or "composer-2.5"),
         },
+        "feishu_notifications_enabled": feishu_notifications_enabled(workspace),
     }
 
 
@@ -501,19 +502,50 @@ def intervals_duration(intervals: list[tuple[datetime, datetime]]) -> str:
 
 
 def story_title(workspace: Path, delivery: dict[str, Any], progress: dict[str, Any]) -> str:
-    story_path = str(delivery.get("story_path") or progress.get("story_path") or "").strip()
-    embedded_title = str(delivery.get("story_title") or progress.get("story_title") or "").strip()
+    embedded_title = str(progress.get("story_title") or delivery.get("story_title") or "").strip()
     if embedded_title:
         return embedded_title
+    story_path = str(progress.get("story_path") or delivery.get("story_path") or "").strip()
     if not story_path:
         return ""
-    configured_docs = Path(str(delivery.get("docs_dir") or progress.get("docs_dir") or workspace.parent)).expanduser()
+    configured_docs = Path(str(progress.get("docs_dir") or delivery.get("docs_dir") or workspace.parent)).expanduser()
     for docs_dir in dict.fromkeys((configured_docs, workspace.parent)):
         metadata = read_delivery_json(docs_dir / story_path / "metadata.json", {})
         title = str(metadata.get("title") or "").strip()
         if title:
             return title
     return ""
+
+
+def feishu_notifications_enabled(workspace: Path) -> bool:
+    common = load_json(workspace / "config" / "common.json", {})
+    notifications = common.get("notifications") if isinstance(common.get("notifications"), dict) else {}
+    feishu = notifications.get("feishu") if isinstance(notifications.get("feishu"), dict) else {}
+    if "enabled" in feishu:
+        return bool(feishu.get("enabled"))
+    delivery = load_json(workspace / "config" / "delivery.json", {})
+    delivery_notifications = delivery.get("notifications") if isinstance(delivery.get("notifications"), dict) else {}
+    delivery_feishu = delivery_notifications.get("feishu") if isinstance(delivery_notifications.get("feishu"), dict) else {}
+    if "enabled" in delivery_feishu:
+        return bool(delivery_feishu.get("enabled"))
+    return True
+
+
+def save_feishu_notifications(workspace: Path, enabled: bool) -> dict[str, Any]:
+    for relative in ("config/common.json", "config/delivery.json"):
+        path = workspace / relative
+        config = load_json(path, {})
+        notifications = config.setdefault("notifications", {})
+        if not isinstance(notifications, dict):
+            notifications = {}
+            config["notifications"] = notifications
+        feishu = notifications.setdefault("feishu", {})
+        if not isinstance(feishu, dict):
+            feishu = {}
+            notifications["feishu"] = feishu
+        feishu["enabled"] = enabled
+        write_json(path, config)
+    return workspace_payload(workspace)
 
 
 def delivery_stages(phases: object) -> list[dict[str, Any]]:
@@ -649,7 +681,7 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
         current["remediation"] = remediation
     if isinstance(result.get("agent_trace"), dict):
         current["agent_trace"] = result["agent_trace"]
-    current["story_title"] = story_title(workspace, result, progress)
+    current["story_title"] = story_title(workspace, current, progress)
     current["stages"] = delivery_stages(current.get("phases"))
     activity_path = workspace / "state" / "delivery-scheduler-activity.jsonl"
     activity: list[dict[str, Any]] = []
@@ -1172,6 +1204,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     delivery = load_json(delivery_path, {})
                     delivery.setdefault("execution", {})["model"] = delivery_model
                     write_json(delivery_path, delivery)
+                if "feishu_notifications_enabled" in body:
+                    save_feishu_notifications(workspace, bool(body.get("feishu_notifications_enabled")))
                 return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
             if parsed.path == "/api/integration":
                 update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))

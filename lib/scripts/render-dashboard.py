@@ -530,6 +530,10 @@ def build_payload(root: Path) -> dict:
         issue_for_dashboard(item, repository_paths, snippets_by_id, snippets_by_match, common, root.parent)
         for item in deduplicate_issues(registry.get("issues", []))
     ]
+    issues.sort(
+        key=lambda item: str(item.get("first_seen_at") or item.get("last_seen_at") or ""),
+        reverse=True,
+    )
     issue_counts = {}
     for issue in issues:
         status = issue.get("status", "unknown")

@@ -47,8 +47,10 @@ from dashboard_server import (  # noqa: E402
     clone_repository,
     delivery_payload,
     delivery_stages,
+    feishu_notifications_enabled,
     repository_branches,
     save_delivery_steps,
+    save_feishu_notifications,
     save_publish_policy,
     save_repositories,
 )
@@ -1607,6 +1609,92 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             runs = delivery_payload(workspace)["runs"]
 
             self.assertEqual("Example delivery story", runs[0]["story_title"])
+
+    def test_delivery_dashboard_prefers_progress_story_title_while_running(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp) / "docs"
+            workspace = docs / "lumen"
+            results = workspace / "results"
+            story = docs / "stories" / "DEMO-2-example"
+            results.mkdir(parents=True)
+            story.mkdir(parents=True)
+            (story / "metadata.json").write_text('{"title":"Running delivery story"}\n', encoding="utf-8")
+            (results / "delivery-progress.json").write_text(
+                json.dumps({
+                    "run_id": "run-2",
+                    "delivery_status": "in_progress",
+                    "story_id": "DEMO-2",
+                    "story_path": "stories/DEMO-2-example",
+                    "story_title": "Running delivery story",
+                    "jira_key": "DEMO-2",
+                    "docs_dir": str(docs),
+                    "started_at": "2026-07-25T03:00:00Z",
+                }),
+                encoding="utf-8",
+            )
+            (results / "delivery-result.json").write_text(
+                json.dumps({
+                    "delivery_status": "completed",
+                    "story_id": "OLD-1",
+                    "story_path": "stories/missing",
+                    "docs_dir": str(docs),
+                }),
+                encoding="utf-8",
+            )
+
+            current = delivery_payload(workspace)["current"]
+
+            self.assertEqual("DEMO-2", current["jira_key"])
+            self.assertEqual("Running delivery story", current["story_title"])
+
+    def test_feishu_notification_toggle_updates_common_and_delivery_config(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "lumen"
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "config" / "delivery.json").write_text(
+                json.dumps({"notifications": {"feishu": {"enabled": True}}}),
+                encoding="utf-8",
+            )
+
+            payload = save_feishu_notifications(workspace, False)
+
+            self.assertFalse(payload["feishu_notifications_enabled"])
+            self.assertFalse(feishu_notifications_enabled(workspace))
+            common = json.loads((workspace / "config" / "common.json").read_text(encoding="utf-8"))
+            delivery = json.loads((workspace / "config" / "delivery.json").read_text(encoding="utf-8"))
+            self.assertFalse(common["notifications"]["feishu"]["enabled"])
+            self.assertFalse(delivery["notifications"]["feishu"]["enabled"])
+
+    def test_dashboard_findings_are_sorted_by_creation_time_descending(self) -> None:
+        path = SCRIPTS / "render-dashboard.py"
+        spec = importlib.util.spec_from_file_location("render_dashboard_sort_test", path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError("Unable to load dashboard renderer")
+        renderer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(renderer)
+
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "lumen"
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "state").mkdir(parents=True)
+            (workspace / "results").mkdir(parents=True)
+            (workspace / "config" / "common.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "config" / "repos.json").write_text('{"repositories":[]}\n', encoding="utf-8")
+            (workspace / "state" / "issue-registry.json").write_text(
+                json.dumps({
+                    "issues": [
+                        {"id": "ISSUE-1", "title": "Older", "status": "open", "first_seen_at": "2026-07-01T00:00:00Z", "last_seen_at": "2026-07-20T00:00:00Z"},
+                        {"id": "ISSUE-2", "title": "Newest", "status": "open", "first_seen_at": "2026-07-20T00:00:00Z", "last_seen_at": "2026-07-21T00:00:00Z"},
+                        {"id": "ISSUE-3", "title": "Middle", "status": "open", "first_seen_at": "2026-07-10T00:00:00Z", "last_seen_at": "2026-07-11T00:00:00Z"},
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            issues = renderer.build_payload(workspace)["issues"]
+
+            self.assertEqual(["ISSUE-2", "ISSUE-3", "ISSUE-1"], [item["id"] for item in issues])
 
     def test_init_merges_delivery_assets_into_an_existing_scan_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
