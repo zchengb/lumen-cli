@@ -66,6 +66,25 @@ def deduplicate_issues(issues: list) -> list:
     return merged
 
 
+def issue_status_group(status) -> int:
+    value = str(status or "").strip().lower()
+    if value in {"open", "in_progress", "pr_open"}:
+        return 0
+    if value in {"ignored", "resolved", "accepted_risk", "false_positive"}:
+        return 2
+    return 1
+
+
+def sort_dashboard_issues(issues: list) -> list:
+    ordered = sorted(
+        issues,
+        key=lambda item: str(item.get("first_seen_at") or item.get("last_seen_at") or ""),
+        reverse=True,
+    )
+    ordered.sort(key=lambda item: issue_status_group(item.get("status")))
+    return ordered
+
+
 def severity_counts(findings):
     counts = {"High": 0, "Medium": 0, "Low": 0}
     for finding in findings or []:
@@ -526,14 +545,10 @@ def build_payload(root: Path) -> dict:
         if isinstance(repository, dict) and str(repository.get("name") or "") and str(repository.get("path") or "")
     }
     snippets_by_id, snippets_by_match = scan_code_snippets(scan_results)
-    issues = [
+    issues = sort_dashboard_issues([
         issue_for_dashboard(item, repository_paths, snippets_by_id, snippets_by_match, common, root.parent)
         for item in deduplicate_issues(registry.get("issues", []))
-    ]
-    issues.sort(
-        key=lambda item: str(item.get("first_seen_at") or item.get("last_seen_at") or ""),
-        reverse=True,
-    )
+    ])
     issue_counts = {}
     for issue in issues:
         status = issue.get("status", "unknown")

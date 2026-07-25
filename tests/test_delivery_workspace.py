@@ -1684,9 +1684,11 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             (workspace / "state" / "issue-registry.json").write_text(
                 json.dumps({
                     "issues": [
-                        {"id": "ISSUE-1", "title": "Older", "status": "open", "first_seen_at": "2026-07-01T00:00:00Z", "last_seen_at": "2026-07-20T00:00:00Z"},
-                        {"id": "ISSUE-2", "title": "Newest", "status": "open", "first_seen_at": "2026-07-20T00:00:00Z", "last_seen_at": "2026-07-21T00:00:00Z"},
-                        {"id": "ISSUE-3", "title": "Middle", "status": "open", "first_seen_at": "2026-07-10T00:00:00Z", "last_seen_at": "2026-07-11T00:00:00Z"},
+                        {"id": "ISSUE-1", "title": "Older open", "status": "open", "first_seen_at": "2026-07-01T00:00:00Z", "last_seen_at": "2026-07-20T00:00:00Z"},
+                        {"id": "ISSUE-2", "title": "Newest resolved", "status": "resolved", "first_seen_at": "2026-07-22T00:00:00Z", "last_seen_at": "2026-07-22T00:00:00Z"},
+                        {"id": "ISSUE-3", "title": "Middle open", "status": "open", "first_seen_at": "2026-07-10T00:00:00Z", "last_seen_at": "2026-07-11T00:00:00Z"},
+                        {"id": "ISSUE-4", "title": "Newest open", "status": "pr_open", "first_seen_at": "2026-07-20T00:00:00Z", "last_seen_at": "2026-07-21T00:00:00Z"},
+                        {"id": "ISSUE-5", "title": "Ignored", "status": "ignored", "first_seen_at": "2026-07-21T00:00:00Z", "last_seen_at": "2026-07-21T00:00:00Z"},
                     ]
                 }),
                 encoding="utf-8",
@@ -1694,7 +1696,10 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
             issues = renderer.build_payload(workspace)["issues"]
 
-            self.assertEqual(["ISSUE-2", "ISSUE-3", "ISSUE-1"], [item["id"] for item in issues])
+            self.assertEqual(
+                ["ISSUE-4", "ISSUE-3", "ISSUE-1", "ISSUE-2", "ISSUE-5"],
+                [item["id"] for item in issues],
+            )
 
     def test_init_merges_delivery_assets_into_an_existing_scan_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
