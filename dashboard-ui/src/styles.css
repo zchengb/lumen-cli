@@ -150,3 +150,44 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 /* Keep complex repository settings discoverable without making every explanation permanent. */
 .field-label{display:inline-flex;align-items:center;gap:5px}.field-help{position:relative;display:inline-flex;align-items:center}.field-help summary{display:grid;place-items:center;width:15px;height:15px;padding:0;border:0;border-radius:50%;color:#85858c;cursor:pointer;list-style:none}.field-help summary::-webkit-details-marker{display:none}.field-help summary:hover,.field-help[open] summary{color:#0071e3}.field-help>span{position:absolute;z-index:30;top:22px;left:-8px;width:min(280px,60vw);padding:9px 10px;border:1px solid #d8d8d5;border-radius:6px;background:#fff;color:#55555c;box-shadow:0 8px 24px rgba(0,0,0,.12);font-size:11px;font-weight:400;line-height:1.45;text-transform:none;letter-spacing:0}.repository-runtime-heading strong{display:inline-flex;align-items:center;gap:5px}.repository-runtime-advanced{border-top:1px solid #ececea}.repository-runtime-advanced>summary{padding:8px 0 2px;color:#5e5e66;font-size:11px;font-weight:600;cursor:pointer;list-style:none}.repository-runtime-advanced>summary::-webkit-details-marker{display:none}.repository-runtime-advanced>summary:before{display:inline-block;width:12px;color:#85858c;content:"+"}.repository-runtime-advanced[open]>summary:before{content:"−"}.repository-runtime-advanced>.form-grid{padding-top:10px}.repository-runtime-advanced>.field{margin-top:10px}
 .repository-verification-advanced{border-top:1px solid #ececea}.repository-verification-advanced>summary{display:flex;align-items:center;gap:6px;padding:9px 0 2px;color:#5e5e66;font-size:11px;font-weight:600;cursor:pointer;list-style:none}.repository-verification-advanced>summary::-webkit-details-marker{display:none}.repository-verification-advanced>summary:before{display:inline-block;width:12px;color:#85858c;content:"+"}.repository-verification-advanced[open]>summary:before{content:"−"}.repository-verification-advanced .repository-commands{margin-top:10px}
+
+:root,body,.dashboard-layout,.content-area{background:#fff}
+
+.dashboard-layout{grid-template-columns:260px minmax(0,1fr)}
+.dashboard-layout.sidebar-is-collapsed{grid-template-columns:84px minmax(0,1fr)}
+.sidebar{padding:28px 18px 22px;border-right:1px solid #ebebeb;background:#fff}
+.sidebar-brand{gap:12px;min-height:48px;padding:0 10px}
+.brand-mark{width:36px;height:36px;border-radius:10px}
+.sidebar-brand-copy strong{font-size:18px;font-weight:600;letter-spacing:-.02em}
+.sidebar-brand-copy span{color:#8a8a92;font-size:11px;line-height:1.4}
+.side-nav{gap:6px;margin-top:42px}
+.side-nav button{height:42px;padding:0 14px;gap:12px;border-radius:10px;color:#5c5c64;font-size:13px;font-weight:500;letter-spacing:-.01em;transition:background .18s cubic-bezier(.23,1,.32,1),color .18s cubic-bezier(.23,1,.32,1),transform .16s cubic-bezier(.23,1,.32,1),box-shadow .18s cubic-bezier(.23,1,.32,1)}
+.side-nav button:hover{background:#f4f4f5;color:#1d1d1f}
+.side-nav button:active{transform:scale(.985)}
+.side-nav button.active{background:#464646;color:#fff;box-shadow:none}
+.side-nav button.active:hover{background:#464646;color:#fff}
+.sidebar-is-collapsed .side-nav button{width:46px;padding:0}
+.sidebar-foot{padding:18px 10px 10px;border-top-color:#ececec}
+.company-mark{max-width:148px;height:24px;opacity:.78}
+.sidebar-toggle{top:22px;left:calc(260px - 16px);transition:left .22s cubic-bezier(.23,1,.32,1),transform .16s cubic-bezier(.23,1,.32,1)}
+.sidebar-is-collapsed .sidebar-toggle{left:calc(84px - 16px)}
+.sidebar-toggle:active{transform:scale(.94)}
+
+.page-content{animation:page-enter .28s cubic-bezier(.23,1,.32,1)}
+@keyframes page-enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+.toast{animation:toast-enter .28s cubic-bezier(.23,1,.32,1)}
+@keyframes toast-enter{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+.modal-backdrop{animation:backdrop-enter .2s ease-out}
+.modal{animation:modal-enter .28s cubic-bezier(.23,1,.32,1)}
+@keyframes backdrop-enter{from{opacity:0}to{opacity:1}}
+@keyframes modal-enter{from{opacity:0;transform:translateY(8px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+
+.button,.icon-button{transition:background .16s cubic-bezier(.23,1,.32,1),border-color .16s cubic-bezier(.23,1,.32,1),color .16s cubic-bezier(.23,1,.32,1),transform .14s cubic-bezier(.23,1,.32,1)}
+.button:active,.icon-button:active{transform:scale(.97)}
+
+@media(prefers-reduced-motion:reduce){
+  .side-nav button,.sidebar-toggle,.button,.icon-button,.page-content,.toast,.modal,.modal-backdrop{animation:none;transition:none}
+  .side-nav button:active,.button:active,.icon-button:active,.sidebar-toggle:active{transform:none}
+}

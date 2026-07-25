@@ -196,7 +196,7 @@ function App() {
         <div className="masthead-context"><strong>{context.title}</strong><span>{context.description}</span></div>
         <div className="masthead-actions"><span className="last-updated">{lastUpdated ? `Updated ${when(lastUpdated.toISOString())}` : "Syncing…"}</span><label className="project-picker"><span>Project</span><select value={project} onChange={(event) => changeProject(event.target.value)}>{projects.map((item) => <option value={item.slug} key={item.slug}>{item.name}</option>)}</select><ChevronDown size={15} /></label></div>
       </header>
-      <div className="page-content">
+      <div className="page-content" key={activeTab}>
         {error && <div className="status-note"><Activity size={15} />{error}</div>}
         {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
         {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
