@@ -172,6 +172,19 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertNotIn("prUrl", metadata)
             self.assertFalse((workspace / "history").exists())
 
+    def test_retry_delivery_rejects_restarting_completed_story(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp) / "docs"
+            workspace = docs / "lumen"
+            results = workspace / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(json.dumps({
+                "delivery_status": "completed", "story_id": "DEMO-1", "jira_key": "DEMO-1", "docs_dir": str(docs),
+            }), encoding="utf-8")
+            server = object.__new__(DashboardServer)
+            with self.assertRaisesRegex(ValueError, "Only a stopped, failed, blocked, or not-started"):
+                server.retry_delivery(workspace, "DEMO-1")
+
     def test_stop_delivery_finalizes_blocked_progress_and_archives_history(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             docs = Path(temp) / "docs"

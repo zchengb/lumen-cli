@@ -13,6 +13,9 @@ import "./styles.css";
 
 type RecordValue = Record<string, any>;
 type Tab = "scan" | "delivery" | "repositories" | "prompts" | "settings";
+type NoticeTone = "success" | "error" | "info";
+type Notice = { message: string; tone: NoticeTone };
+type Notify = (message: string, tone?: NoticeTone) => void;
 
 declare global {
   interface Window { DASHBOARD_DATA?: DashboardData }
@@ -127,11 +130,12 @@ function App() {
   const pathTab = (tabItems.find((item) => `/${item.id}` === window.location.pathname)?.id || "scan") as Tab;
   const [activeTab, setActiveTab] = useState<Tab>(pathTab);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [loading, setLoading] = useState(true);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("lumen-sidebar-collapsed") === "true");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
+  const notify: Notify = (message, tone = "info") => setNotice({ message, tone });
 
   const load = async () => {
     setLoading(true);
@@ -149,7 +153,7 @@ function App() {
   };
 
   useEffect(() => { void load(); const id = window.setInterval(load, 5_000); return () => window.clearInterval(id); }, [project]);
-  useEffect(() => { if (!notice) return; const id = window.setTimeout(() => setNotice(""), 3000); return () => window.clearTimeout(id); }, [notice]);
+  useEffect(() => { if (!notice) return; const id = window.setTimeout(() => setNotice(null), 3200); return () => window.clearTimeout(id); }, [notice]);
   useEffect(() => { window.localStorage.setItem("lumen-sidebar-collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
   useEffect(() => { const onPopState = () => setActiveTab((tabItems.find((item) => `/${item.id}` === window.location.pathname)?.id || "scan") as Tab); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []);
 
@@ -171,8 +175,8 @@ function App() {
     if (tab !== "settings") setSettingsDirty(false);
   };
   const interact = async (path: string, json: RecordValue, message: string) => {
-    try { await request(path, project, { method: "POST", json }); setNotice(message); await load(); }
-    catch (err) { setNotice(err instanceof Error ? err.message : "Request failed"); }
+    try { await request(path, project, { method: "POST", json }); notify(message, "success"); await load(); }
+    catch (err) { notify(err instanceof Error ? err.message : "Request failed", "error"); }
   };
   const projects = data?.interactive?.projects || [];
   const tagline = data?.product?.tagline || "Engineering, made legible.";
@@ -206,7 +210,7 @@ function App() {
         {data && activeTab === "settings" && <SettingsView data={data} project={project} notify={setNotice} onDirtyChange={setSettingsDirty} reload={load} />}
       </div>
     </section>
-    {notice && <div className="toast" role="status">{notice}</div>}
+    {notice && <div className={`toast toast-${notice.tone}`} role="status">{notice.tone === "success" ? <CircleCheck size={16} /> : notice.tone === "error" ? <CircleAlert size={16} /> : <CircleDot size={16} />}<span>{notice.message}</span></div>}
   </main>;
 }
 
@@ -256,12 +260,13 @@ function IgnoreDialog({ onClose, onConfirm }: { onClose: () => void; onConfirm: 
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Ignore finding" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Mark this finding as ignored?</strong><Field label="Reason (optional)"><textarea className="ignore-reason" rows={2} autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Why is this safe to ignore?" /></Field></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={() => onConfirm(reason)}>Mark ignored</button></footer></section></div>;
 }
 
-function DeliveryView({ data, project, notify, reload }: { data: DashboardData; project: string; notify: (message: string) => void; reload: () => Promise<void> }) {
+function DeliveryView({ data, project, notify, reload }: { data: DashboardData; project: string; notify: Notify; reload: () => Promise<void> }) {
   const delivery = data.delivery || {};
   const current = delivery.current || {};
   const runs = delivery.runs || [];
   const stages = current.stages || [];
   const schedulerActivity = delivery.scheduler_activity || [];
+  const availableStories = delivery.available_stories || [];
   const [selectedStage, setSelectedStage] = useState<RecordValue | null>(null);
   const [selectedChecks, setSelectedChecks] = useState<RecordValue[] | null>(null);
   const [logContent, setLogContent] = useState("");
@@ -271,12 +276,30 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
   const [retryOpen, setRetryOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState("");
+  const [startOpen, setStartOpen] = useState(false);
+  const [selectedStory, setSelectedStory] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
   const [deleteCandidate, setDeleteCandidate] = useState<RecordValue | null>(null);
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [now, setNow] = useState(Date.now());
   const running = /in_progress|running/i.test(String(current.delivery_status || ""));
+  const storyOptions = (() => {
+    const options: Array<{ value: string; label: string }> = [];
+    const seen = new Set<string>();
+    const pushOption = (value: string, title = "") => {
+      const key = value.trim();
+      if (!key || seen.has(key.toLowerCase())) return;
+      seen.add(key.toLowerCase());
+      options.push({ value: key, label: title ? `${key} · ${title}` : key });
+    };
+    for (const item of availableStories) pushOption(String(item.story || item.jira_key || ""), String(item.title || ""));
+    const currentRef = String(current.story_id || current.jira_key || "").trim();
+    if (currentRef && /failed|blocked|not_started/i.test(String(current.delivery_status || ""))) {
+      pushOption(currentRef, String(current.story_title || ""));
+    }
+    return options;
+  })();
   const loadDeliveryLog = useCallback(async (runId = current.run_id || "", refresh = false) => {
     if (!refresh) setLoadingLog(true);
     try { const response = await request(`/api/delivery/log?run_id=${encodeURIComponent(runId)}`, project); setLogContent(response.content || "No log content recorded."); setLogError(""); }
@@ -297,21 +320,36 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
   };
   const retry = async () => {
     setRetrying(true); setRetryError("");
-    try { await request("/api/delivery/retry", project, { method: "POST", json: {} }); setRetryOpen(false); }
+    try { await request("/api/delivery/retry", project, { method: "POST", json: {} }); setRetryOpen(false); notify("Delivery retry started", "success"); await reload().catch(() => undefined); }
     catch (err) { const message = err instanceof Error ? err.message : "Unable to retry delivery"; setRetryError(message === "Not found" ? "Dashboard is still running an older version. Run `lumen dashboard stop --project …`, then open the dashboard again." : message); }
     finally { setRetrying(false); }
   };
+  const openStart = () => {
+    setActionError("");
+    setSelectedStory(storyOptions[0]?.value || "");
+    setStartOpen(true);
+  };
   const start = async () => {
+    const story = selectedStory.trim();
+    if (!story) {
+      notify("Select a story to start", "error");
+      return;
+    }
     setActionBusy(true); setActionError("");
-    try { await request("/api/delivery/start", project, { method: "POST", json: { story: current.story_id || current.jira_key || "" } }); }
-    catch (err) { setActionError(err instanceof Error ? err.message : "Unable to start delivery"); }
+    try {
+      await request("/api/delivery/start", project, { method: "POST", json: { story } });
+      setStartOpen(false);
+      notify(`Delivery started for ${story}`, "success");
+      await reload().catch(() => undefined);
+    }
+    catch (err) { const message = err instanceof Error ? err.message : "Unable to start delivery"; setActionError(message); notify(message, "error"); }
     finally { setActionBusy(false); }
   };
   const stop = async () => {
     if (!window.confirm("Stop this delivery and remove its worktrees?")) return;
     setActionBusy(true); setActionError("");
-    try { await request("/api/delivery/stop", project, { method: "POST", json: {} }); notify("Delivery stopped"); await reload(); }
-    catch (err) { setActionError(err instanceof Error ? err.message : "Unable to stop delivery"); }
+    try { await request("/api/delivery/stop", project, { method: "POST", json: {} }); notify("Delivery stopped", "success"); await reload(); }
+    catch (err) { const message = err instanceof Error ? err.message : "Unable to stop delivery"; setActionError(message); notify(message, "error"); }
     finally { setActionBusy(false); }
   };
   const openTrace = async (runId: string) => {
@@ -325,24 +363,28 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
     try {
       await request("/api/delivery/history/delete", project, { method: "POST", json: { run_id: runId } });
       setDeleteCandidate(null);
-      notify("Delivery history deleted");
+      notify("Delivery history deleted", "success");
       await reload().catch(() => undefined);
-    } catch (err) { setActionError(err instanceof Error ? err.message : "Unable to delete delivery history"); }
+    } catch (err) { const message = err instanceof Error ? err.message : "Unable to delete delivery history"; setActionError(message); notify(message, "error"); }
     finally { setDeletingHistoryId(""); }
   };
   const canRetry = /failed|blocked/i.test(String(current.delivery_status || ""));
-  const canStart = !running && Boolean(current.story_id || current.jira_key || (delivery.available_stories || []).length);
-  const stopped = /stopped from dashboard/i.test(String(current.current_step || ""));
+  const canStart = !running && storyOptions.length > 0;
   return <>
-    <Panel title="Current Progress" className="delivery-summary" action={<span className="panel-actions">{canStart && <button className="button secondary" disabled={actionBusy} onClick={() => void start()}><Play size={14} />Start</button>}{running && <button className="button danger secondary" disabled={actionBusy} onClick={() => void stop()}>Stop</button>}{canRetry && <button className="button secondary" onClick={() => setRetryOpen(true)}><RotateCcw size={14} />Retry</button>}</span>}><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at || (running ? new Date(now).toISOString() : undefined))} /><Fact label="Finished" value={running ? "Running" : when(current.finished_at)} /></div>{actionError && <div className="status-note">{actionError}</div>}<DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} currentStep={String(current.current_step || "")} startedAt={current.started_at} finishedAt={current.finished_at} remediation={current.remediation} now={now} onStageClick={openStage} /></Panel>
+    <Panel title="Current Progress" className="delivery-summary" action={<span className="panel-actions">{canStart && <button className="button secondary" disabled={actionBusy} onClick={openStart}><Play size={14} />Start</button>}{running && <button className="button danger secondary" disabled={actionBusy} onClick={() => void stop()}>Stop</button>}{canRetry && <button className="button secondary" onClick={() => setRetryOpen(true)}><RotateCcw size={14} />Retry</button>}</span>}><div className="delivery-facts"><Fact label="Current story" value={<StoryReference jiraKey={current.jira_key || current.story_id} title={current.story_title} />} /><Fact label="Status" value={<Badge value={current.delivery_status || "not started"} />} /><Fact label="Elapsed" value={elapsed(current.started_at, current.finished_at || (running ? new Date(now).toISOString() : undefined))} /><Fact label="Finished" value={running ? "Running" : when(current.finished_at)} /></div>{actionError && <div className="status-note">{actionError}</div>}<DeliveryFlow stages={stages} deliveryStatus={String(current.delivery_status || "")} currentStep={String(current.current_step || "")} startedAt={current.started_at} finishedAt={current.finished_at} remediation={current.remediation} now={now} onStageClick={openStage} /></Panel>
     <Panel title="Delivery History" className="history-panel" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Story</th><th>Finished</th><th>Status</th><th>Pull requests</th><th>Checks</th><th>Duration</th><th>Trace</th><th>Operation</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => { const runChecks = run.verification || []; const failed = runChecks.filter((item: RecordValue) => item.status === "failed"); const canInspectStatus = failed.length || /failed|blocked/i.test(String(run.status)); return <tr key={run.run_id}><td><div className="history-story"><span className="history-story-line"><code>{text(run.jira_key || run.story || run.run_id)}</code>{run.story_title && <span className="history-story-title">{run.story_title}</span>}</span><small>{text(run.branch, "")}</small></div></td><td>{when(run.finished_at || run.started_at)}</td><td>{canInspectStatus ? <button className="status-badge-button" title="Open failure log" onClick={() => void openStage({ label: "Delivery failure", duration: elapsed(run.started_at, run.finished_at), detail: failed.map((item: RecordValue) => item.summary || item.label).filter(Boolean).join(" · ") || "Open the delivery log for details." }, run.run_id)}><Badge value={run.status} /></button> : <Badge value={run.status} />}</td><td><PrLinks items={run.pull_requests || []} /></td><td><VerificationSummary checks={runChecks} onClick={() => setSelectedChecks(runChecks)} /></td><td>{elapsed(run.started_at, run.finished_at)}</td><td>{run.agent_trace && <button className="text-button" onClick={() => void openTrace(run.run_id)}>View trace</button>}</td><td><IconButton label="Delete delivery record" danger disabled={deletingHistoryId === run.run_id} onClick={() => setDeleteCandidate(run)}><Trash2 size={15} /></IconButton></td></tr>; }) : <tr><td colSpan={8}><Empty label="No delivery history yet." /></td></tr>}</tbody></table></div></Panel>
     <Panel title="Scheduler Activity" action={<span className="panel-actions"><span className="muted">{schedulerActivity.length} recent events</span>{delivery.scheduler_log_available && <button className="button secondary" onClick={() => void openSchedulerLog()}><Terminal size={14} />View raw log</button>}</span>}><div className="scheduler-activity">{schedulerActivity.length ? schedulerActivity.map((event: RecordValue, index: number) => <article className="scheduler-event" key={`${event.at}-${index}`}><Badge value={event.outcome} /><div><strong>{text(event.story_id || event.jira_key, "Workspace")}</strong><p>{text(event.message)}</p></div><time>{when(event.at)}</time></article>) : <Empty label="No scheduled delivery activity recorded yet." />}</div></Panel>
     {selectedStage && <DeliveryLogDialog stage={selectedStage} content={logContent} error={logError} loading={loadingLog} live={selectedLogIsLive} onClose={() => setSelectedStage(null)} />}
     {schedulerLogOpen && <DeliveryLogDialog stage={{ label: "Scheduler log", duration: "Recent raw output", detail: "Launchd output is capped at 256 KiB; structured activity retains the latest 200 events." }} content={logContent} error={logError} loading={loadingLog} onClose={() => setSchedulerLogOpen(false)} />}
     {selectedChecks && <VerificationDialog checks={selectedChecks} onClose={() => setSelectedChecks(null)} />}
     {retryOpen && <RetryDeliveryDialog story={text(current.jira_key || current.story_id)} busy={retrying} error={retryError} onClose={() => setRetryOpen(false)} onConfirm={() => void retry()} />}
+    {startOpen && <StartDeliveryDialog stories={storyOptions} value={selectedStory} onChange={setSelectedStory} busy={actionBusy} error={actionError} onClose={() => setStartOpen(false)} onConfirm={() => void start()} />}
     {deleteCandidate && <DeleteHistoryDialog run={deleteCandidate} busy={Boolean(deletingHistoryId)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void removeHistory()} />}
   </>;
+}
+
+function StartDeliveryDialog({ stories, value, onChange, busy, error, onClose, onConfirm }: { stories: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Start delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Start delivery</strong><p className="modal-copy">Choose a ready story to launch.</p><label className="field"><span>Story</span><select value={value} onChange={(event) => onChange(event.target.value)} disabled={busy || stories.length === 0}>{stories.length ? stories.map((item) => <option value={item.value} key={item.value}>{item.label}</option>) : <option value="">No ready stories</option>}</select></label>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !value} onClick={onConfirm}><Play size={14} />{busy ? "Starting…" : "Start"}</button></footer></section></div>;
 }
 
 function RetryDeliveryDialog({ story, busy, error, onClose, onConfirm }: { story: string; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
@@ -354,7 +396,7 @@ function DeleteHistoryDialog({ run, busy, onClose, onConfirm }: { run: RecordVal
   return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal delete-history-modal" role="dialog" aria-modal="true" aria-label="Delete delivery history" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Delete delivery history?</strong><p className="modal-copy">This removes the {story} record, log, and trace files. This action cannot be undone.</p></div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button danger delete-confirm" disabled={busy} onClick={onConfirm}><Trash2 size={14} />{busy ? "Deleting…" : "Delete record"}</button></footer></section></div>;
 }
 
-function StoryReference({ jiraKey, title }: { jiraKey: string; title?: string }) { return <span className="story-reference"><code>{text(jiraKey, "No active delivery")}</code>{title ? <span className="story-reference-title">{title}</span> : null}</span>; }
+function StoryReference({ jiraKey, title }: { jiraKey: string; title?: string }) { return <span className="story-reference">{title ? <><code>{text(jiraKey)}</code><span className="story-reference-title">{title}</span></> : <code>{text(jiraKey, "No active delivery")}</code>}</span>; }
 function DeliveryFlow({ stages, deliveryStatus, currentStep, startedAt, finishedAt, remediation, now, onStageClick }: { stages: RecordValue[]; deliveryStatus: string; currentStep?: string; startedAt?: string; finishedAt?: string; remediation?: RecordValue; now: number; onStageClick: (stage: RecordValue) => void }) {
   const terminalSuccess = /completed|dev_done|pr_open/i.test(deliveryStatus);
   const stopped = /stopped from dashboard/i.test(String(currentStep || ""));
@@ -439,7 +481,7 @@ function workflowColumns(mode: "scan" | "delivery"): WorkflowColumn[] {
   ];
 }
 
-function PromptsView({ data, project, interact, notify }: { data: DashboardData; project: string; interact: (path: string, json: RecordValue, message: string) => Promise<void>; notify: (message: string) => void }) {
+function PromptsView({ data, project, interact, notify }: { data: DashboardData; project: string; interact: (path: string, json: RecordValue, message: string) => Promise<void>; notify: Notify }) {
   const prompts = data.interactive?.prompts || [];
   const [mode, setMode] = useState<"scan" | "delivery">("scan");
   const [selected, setSelected] = useState<{ mode: "scan" | "delivery"; path: string } | null>(null);
@@ -452,7 +494,7 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
   const choose = async (item: { mode: "scan" | "delivery"; path: string }) => {
     setSelected(item);
     try { const response = await request(`/api/prompt?mode=${encodeURIComponent(item.mode)}&path=${encodeURIComponent(item.path)}`, project); setContent(response.content); }
-    catch (err) { notify(err instanceof Error ? err.message : "Unable to load prompt"); }
+    catch (err) { notify(err instanceof Error ? err.message : "Unable to load prompt", "error"); }
   };
   const switchMode = (next: "scan" | "delivery") => { setMode(next); setSelected(null); setContent(""); setView({ x: 0, y: 0, scale: 1 }); };
   useEffect(() => {
@@ -577,7 +619,7 @@ function AddRepositoryDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal repository-modal" role="dialog" aria-modal="true" aria-label="Add repository" onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><strong>Add repository</strong><span>Paste a Git clone URL. Lumen derives the name, local path, branch, and runtime profile.</span></div></div><div className="repository-modal-body"><Field label="Clone URL"><input autoFocus value={url} placeholder="https://git.example.com/team/service.git" onChange={(event) => setUrl(event.target.value)} /></Field></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" disabled={!url.trim()} onClick={() => onAdd(url.trim())}>Clone and add</button></footer></section></div>;
 }
 
-function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: DashboardData; project: string; notify: (message: string) => void; onDirtyChange: (dirty: boolean) => void; reload: () => Promise<void> }) {
+function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: DashboardData; project: string; notify: Notify; onDirtyChange: (dirty: boolean) => void; reload: () => Promise<void> }) {
   const workspace = data.interactive?.workspace || {};
   const schedules = data.interactive?.schedules || {};
   const [scanWindow, setScanWindow] = useState(String(workspace.scan_window_days || 7));
@@ -605,8 +647,8 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   useEffect(() => { setFeishuEnabled(workspace.feishu_notifications_enabled !== false); }, [workspace.feishu_notifications_enabled]);
   useEffect(() => { const warn = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [dirty]);
   const getSecret = async (name: string) => { const response = await request(`/api/integration?key=${encodeURIComponent(name)}`, project); return String(response.value); };
-  const reveal = async (name: string) => { try { const result = await getSecret(name); setSecrets((current) => ({ ...current, [name]: result })); notify("Integration value revealed"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to reveal value"); } };
-  const copy = async (name: string) => { try { const result = await getSecret(name); await navigator.clipboard.writeText(result); notify("Integration value copied"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to copy value"); } };
+  const reveal = async (name: string) => { try { const result = await getSecret(name); setSecrets((current) => ({ ...current, [name]: result })); notify("Integration value revealed", "success"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to reveal value", "error"); } };
+  const copy = async (name: string) => { try { const result = await getSecret(name); await navigator.clipboard.writeText(result); notify("Integration value copied", "success"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to copy value", "error"); } };
   const configured = workspace.configured_integrations || [];
   const statusOptions = Array.from(new Set([...workflowStatuses, deliveryStatus, inDevStatus, devDoneStatus].filter(Boolean)));
   const saveAll = async () => {
@@ -618,8 +660,8 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
         request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode } }),
         ...Object.entries(changedSecrets).map(([key, value]) => request("/api/integration", project, { method: "POST", json: { key, value } }))
       ]);
-      setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved"); await reload();
-    } catch (err) { notify(err instanceof Error ? err.message : "Unable to save Settings"); }
+      setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved", "success"); await reload();
+    } catch (err) { notify(err instanceof Error ? err.message : "Unable to save Settings", "error"); }
   };
   return <div className="settings-stack">
     <Panel title="Automation Schedules">

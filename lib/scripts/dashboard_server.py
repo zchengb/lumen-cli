@@ -35,6 +35,7 @@ from scan_launchd import install as install_scan_schedule
 from scan_launchd import remove as remove_scan_schedule
 from scan_launchd import status as scan_schedule_status
 from discover_repos import default_branch, infer_profile
+from sync_delivery_docs import commit_story_metadata
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -854,7 +855,12 @@ class DashboardServer(ThreadingHTTPServer):
 
     def retry_delivery(self, workspace: Path, story_override: str = "") -> dict[str, Any]:
         progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
-        if not story_override and str(progress.get("delivery_status") or "").lower() not in {"failed", "blocked", "not_started", ""}:
+        status = str(progress.get("delivery_status") or "").lower()
+        current_story = str(progress.get("story_id") or progress.get("jira_key") or "").strip()
+        story_ref = str(story_override or current_story).strip()
+        retryable = {"failed", "blocked", "not_started", ""}
+        same_story = bool(story_ref) and bool(current_story) and story_ref.casefold() == current_story.casefold()
+        if status not in retryable and (not story_override or same_story):
             raise ValueError("Only a stopped, failed, blocked, or not-started delivery can be started")
         if (workspace / "locks" / "delivery-run").exists():
             raise RuntimeError("A delivery run is already active")
@@ -864,7 +870,6 @@ class DashboardServer(ThreadingHTTPServer):
         else:
             workspace_config = load_json(workspace / "config" / "workspace.json", {})
             docs_dir = Path(str(workspace_config.get("docs_repo") or workspace.parent)).expanduser().resolve()
-        story_ref = str(story_override or progress.get("story_id") or progress.get("jira_key") or "").strip()
         if not story_ref or workspace_lumen_dir(docs_dir).resolve() != workspace.resolve():
             raise ValueError("The failed delivery does not have a retryable workspace and story")
         context = load_story_context(docs_dir, story_ref, validate_gates=False)
@@ -888,6 +893,10 @@ class DashboardServer(ThreadingHTTPServer):
         for key in ("deliveryBranch", "prUrl", "jira_pr_url"):
             metadata.pop(key, None)
         write_json(context.metadata_path, metadata)
+        try:
+            commit_story_metadata(docs_dir, story_ref, push=True)
+        except Exception:
+            pass
         env = dict(os.environ, LUMEN_HOME=self.lumen_home)
         subprocess.Popen(
             [self.lumen_bin, "delivery", "run", str(docs_dir), "--story", story_ref],
@@ -964,6 +973,10 @@ class DashboardServer(ThreadingHTTPServer):
                 logs.append({"type": "delivery.run", "at": finished_at, "status": "blocked", "result": "stopped"})
                 metadata["logs"] = logs[-20:]
                 write_json(metadata_path, metadata)
+                try:
+                    commit_story_metadata(docs_dir, story_ref, push=True)
+                except Exception:
+                    pass
 
         result = {
             "schema_version": "1.0",
@@ -1229,12 +1242,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/delivery/retry":
                 return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace)})
             if parsed.path == "/api/delivery/start":
-                story = str(body.get("story") or "").strip()
+                payload = delivery_payload(workspace)
+                current = payload.get("current") or {}
+                status = str(current.get("delivery_status") or "").lower()
+                current_ref = str(current.get("story_id") or current.get("jira_key") or "").strip()
+                story = str(body.get("story") or "").strip() or current_ref
+                candidates = payload.get("available_stories") or []
+                if status in {"completed", "success"} and (
+                    not story or story.casefold() == current_ref.casefold()
+                ):
+                    story = next(
+                        (
+                            str(item.get("story") or item.get("jira_key") or "").strip()
+                            for item in candidates
+                            if str(item.get("story") or item.get("jira_key") or "").strip().casefold()
+                            != current_ref.casefold()
+                        ),
+                        "",
+                    )
+                    if not story:
+                        raise ValueError("Current delivery already completed; no other ready story to start")
                 if not story:
-                    current = delivery_payload(workspace).get("current") or {}
-                    story = str(current.get("story_id") or current.get("jira_key") or "").strip()
-                if not story:
-                    candidates = delivery_payload(workspace).get("available_stories") or []
                     story = str(candidates[0].get("story") or "") if candidates else ""
                 return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace, story)})
             if parsed.path == "/api/delivery/stop":
