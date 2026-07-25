@@ -1177,7 +1177,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 capture_output=True,
                 text=True,
             )
-            self.assertEqual("Update MBPAS-100 delivery status", log.stdout.strip())
+            self.assertEqual("[lumen] #MBPAS-100 feat: update MBPAS-100 delivery status", log.stdout.strip())
             status = subprocess.run(
                 ["git", "-C", str(docs), "status", "--short"],
                 check=True,

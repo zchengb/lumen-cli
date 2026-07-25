@@ -104,6 +104,10 @@ def sync_docs_checkout(docs_dir: Path) -> None:
             raise RuntimeError(f"Docs directory is not a git repository: {docs_dir}")
         if status.stdout.strip():
             raise RuntimeError("Docs workspace has uncommitted changes; scheduled delivery will not pull or run")
+        return
+    fetch = subprocess.run(["git", "-C", str(docs_dir), "fetch", "origin"], capture_output=True, text=True)
+    if fetch.returncode != 0:
+        raise RuntimeError((fetch.stderr or fetch.stdout or "git fetch failed").strip()[-500:])
     pull = subprocess.run(["git", "-C", str(docs_dir), "pull", "--ff-only"], capture_output=True, text=True)
     if pull.returncode != 0:
         raise RuntimeError((pull.stderr or pull.stdout or "git pull --ff-only failed").strip()[-500:])

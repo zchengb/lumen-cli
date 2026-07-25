@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
@@ -26,6 +27,11 @@ def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
 
 def failure_text(result: subprocess.CompletedProcess[str], fallback: str) -> str:
     return (result.stderr or result.stdout or fallback).strip()
+
+
+def lumen_commit_subject(ticket: str, summary: str) -> str:
+    key = str(ticket or "").strip().lstrip("#") or "N/A"
+    return f"[lumen] #{key} feat: {summary}"
 
 
 def porcelain_paths(docs_dir: Path) -> list[str]:
@@ -60,6 +66,64 @@ def classify_dirty_paths(docs_dir: Path) -> tuple[list[str], list[str], list[str
     return metadata, config, foreign
 
 
+def ticket_from_metadata_file(docs_dir: Path, relative_path: str) -> str:
+    try:
+        payload = json.loads((docs_dir / relative_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("jiraKey") or payload.get("storyId") or "").strip()
+
+
+def current_branch(docs_dir: Path) -> str:
+    branch = run_git(docs_dir, "branch", "--show-current")
+    name = branch.stdout.strip()
+    if branch.returncode != 0 or not name:
+        raise RuntimeError(failure_text(branch, "Docs repository is not on a branch"))
+    return name
+
+
+def integrate_remote_and_push(docs_dir: Path, branch_name: str) -> str:
+    """Rebase onto remote updates when needed, then push. Raises on conflict."""
+    fetch = run_git(docs_dir, "fetch", "origin", branch_name)
+    if fetch.returncode != 0:
+        # First push / missing remote branch — try push anyway.
+        detail = failure_text(fetch, "fetch failed")
+        pushed = run_git(docs_dir, "push", "-u", "origin", f"HEAD:{branch_name}")
+        if pushed.returncode != 0:
+            raise RuntimeError(failure_text(pushed, f"git push failed after fetch error: {detail}"))
+        return "pushed"
+
+    remote_ref = f"origin/{branch_name}"
+    if run_git(docs_dir, "rev-parse", "--verify", remote_ref).returncode != 0:
+        pushed = run_git(docs_dir, "push", "-u", "origin", f"HEAD:{branch_name}")
+        if pushed.returncode != 0:
+            raise RuntimeError(failure_text(pushed, "git push failed"))
+        return "pushed"
+
+    counts = run_git(docs_dir, "rev-list", "--left-right", "--count", f"HEAD...{remote_ref}")
+    if counts.returncode != 0:
+        raise RuntimeError(failure_text(counts, "Unable to compare local and remote docs branches"))
+    parts = counts.stdout.strip().split()
+    ahead = int(parts[0]) if parts else 0
+    behind = int(parts[1]) if len(parts) > 1 else 0
+    if behind > 0:
+        rebase = run_git(docs_dir, "rebase", remote_ref)
+        if rebase.returncode != 0:
+            run_git(docs_dir, "rebase", "--abort")
+            raise RuntimeError(
+                "Remote docs branch has updates that conflict with local Lumen commits; "
+                "resolve the docs repository manually, then retry"
+            )
+    if ahead == 0 and behind == 0:
+        return "up to date"
+    pushed = run_git(docs_dir, "push", "origin", f"HEAD:{branch_name}")
+    if pushed.returncode != 0:
+        raise RuntimeError(failure_text(pushed, "git push failed"))
+    return "rebased and pushed" if behind > 0 else "pushed"
+
+
 def commit_paths(docs_dir: Path, paths: list[str], subject: str, *, push: bool = True) -> str:
     if not paths:
         return "skipped"
@@ -74,14 +138,9 @@ def commit_paths(docs_dir: Path, paths: list[str], subject: str, *, push: bool =
     sha = run_git(docs_dir, "rev-parse", "HEAD").stdout.strip()
     if not push:
         return f"committed: {sha} {subject}"
-    branch = run_git(docs_dir, "branch", "--show-current")
-    branch_name = branch.stdout.strip()
-    if branch.returncode != 0 or not branch_name:
-        raise RuntimeError(failure_text(branch, "Docs repository is not on a branch"))
-    pushed = run_git(docs_dir, "push", "origin", f"HEAD:{branch_name}")
-    if pushed.returncode != 0:
-        return f"committed: {sha} {subject} (push deferred: {failure_text(pushed, 'push failed')})"
-    return f"committed: {sha} {subject}"
+    branch_name = current_branch(docs_dir)
+    sync = integrate_remote_and_push(docs_dir, branch_name)
+    return f"committed: {sha} {subject} ({sync})"
 
 
 def commit_story_metadata(docs_dir: Path, story_ref: str = "", *, push: bool = True) -> str:
@@ -94,7 +153,8 @@ def commit_story_metadata(docs_dir: Path, story_ref: str = "", *, push: bool = T
     if changed.returncode not in {0, 1} or staged.returncode not in {0, 1}:
         raise RuntimeError("Unable to inspect docs metadata change")
     story_key = str(context.metadata.get("jiraKey") or context.metadata.get("storyId") or context.story_dir.name)
-    return commit_paths(context.docs_dir, [relative_metadata], f"Update {story_key} delivery status", push=push)
+    subject = lumen_commit_subject(story_key, f"update {story_key} delivery status")
+    return commit_paths(context.docs_dir, [relative_metadata], subject, push=push)
 
 
 def heal_lumen_owned_docs_dirt(docs_dir: Path, *, push: bool = True) -> list[str]:
@@ -107,10 +167,12 @@ def heal_lumen_owned_docs_dirt(docs_dir: Path, *, push: bool = True) -> list[str
         )
     messages: list[str] = []
     for path in metadata:
-        story = path.split("/")[1]
-        messages.append(commit_paths(docs_dir, [path], f"Update {story} delivery status", push=push))
+        ticket = ticket_from_metadata_file(docs_dir, path) or path.split("/")[1]
+        subject = lumen_commit_subject(ticket, f"update {ticket} delivery status")
+        messages.append(commit_paths(docs_dir, [path], subject, push=push))
     if config:
-        messages.append(commit_paths(docs_dir, config, "Update Lumen workspace config", push=push))
+        subject = lumen_commit_subject("N/A", "update lumen workspace config")
+        messages.append(commit_paths(docs_dir, config, subject, push=push))
     return messages
 
 
