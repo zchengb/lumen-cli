@@ -5,8 +5,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { version as lumenVersion } from "../package.json";
 import {
-  Activity, ChevronDown, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
-  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, LoaderCircle, Menu,
+  Activity, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
+  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, LoaderCircle,
   Play, RotateCcw, Save, ScanSearch, Settings2, Terminal, Trash2,
   Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow
 } from "lucide-react";
@@ -121,19 +121,17 @@ function Badge({ value }: { value: unknown }) {
   return <span className={`badge ${statusTone(value)}`}>{titleStatus(value)}</span>;
 }
 
-function StoryStatusMeta({ business, technical, delivery }: { business: string; technical: string; delivery: string }) {
+function StoryStatusMeta({ business, technical }: { business: string; technical: string }) {
   return <div className="observatory-meta">
     <span className="observatory-meta-item"><em>Business</em><Badge value={business || "draft"} /></span>
     <span className="observatory-meta-item"><em>Technical</em><Badge value={technical || "draft"} /></span>
-    <span className="observatory-meta-item"><em>Delivery</em><Badge value={delivery || "not_started"} /></span>
   </div>;
 }
 
-function StoryStatusPills({ business, technical, delivery }: { business: string; technical: string; delivery: string }) {
-  return <span className="observatory-pills" title={`Business ${titleStatus(business || "draft")} · Technical ${titleStatus(technical || "draft")} · Delivery ${titleStatus(delivery || "not_started")}`}>
+function StoryStatusPills({ business, technical }: { business: string; technical: string }) {
+  return <span className="observatory-pills" title={`Business ${titleStatus(business || "draft")} · Technical ${titleStatus(technical || "draft")}`}>
     <Badge value={business || "draft"} />
     <Badge value={technical || "draft"} />
-    <Badge value={delivery || "not_started"} />
   </span>;
 }
 
@@ -157,6 +155,9 @@ function MermaidBlock({ chart }: { chart: string }) {
 function MarkdownBody({ content }: { content: string }) {
   return <div className="markdown-content">
     <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+      a({ href, children }) {
+        return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
+      },
       code({ className, children }) {
         const value = String(children).replace(/\n$/, "");
         if (/language-mermaid/.test(className || "")) return <MermaidBlock chart={value} />;
@@ -276,7 +277,7 @@ function App() {
         <small>{sidebarCollapsed ? `V${lumenVersion}` : `Version ${lumenVersion}`}</small>
       </div>
     </aside>
-    <IconButton className="sidebar-toggle" label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}><Menu size={14} /></IconButton>
+    <IconButton className="sidebar-toggle" label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}>{sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}</IconButton>
     <section className="content-area">
       <header className="masthead">
         <div className="masthead-context"><strong>{context.title}</strong><span>{context.description}</span></div>
@@ -488,7 +489,6 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   const [jiraUrl, setJiraUrl] = useState("");
   const [businessStatus, setBusinessStatus] = useState("");
   const [technicalStatus, setTechnicalStatus] = useState("");
-  const [deliveryStatus, setDeliveryStatus] = useState("");
   const [storyMarkdown, setStoryMarkdown] = useState("");
   const [planMarkdown, setPlanMarkdown] = useState("");
   const [baseline, setBaseline] = useState({ story: "", plan: "" });
@@ -534,7 +534,6 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
       setJiraUrl(String(response.jira_url || ""));
       setBusinessStatus(String(response.businessStatus || ""));
       setTechnicalStatus(String(response.technicalStatus || ""));
-      setDeliveryStatus(String(response.deliveryStatus || ""));
       setStoryMarkdown(nextStory);
       setPlanMarkdown(nextPlan);
       setBaseline({ story: nextStory, plan: nextPlan });
@@ -572,13 +571,20 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
       setSaving(false);
     }
   };
+  const storyKey = text(jiraKey || selected);
   return <div className="observatory-layout">
     <aside className="observatory-list panel">
       <div className="panel-header"><h3>Stories</h3><span className="muted">{stories.length}</span></div>
       <div className="observatory-list-body">
         {loadingList ? <div className="loading-state"><LoaderCircle size={18} className="spin" /> Loading…</div> : null}
         {!loadingList && !stories.length ? <Empty label="No stories found in the docs repository." /> : null}
-        {stories.map((item) => <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}><strong>{text(item.title, item.story)}</strong><span>{text(item.jira_key || item.story)}<StoryStatusPills business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} delivery={String(item.deliveryStatus || "not_started")} /></span></button>)}
+        {stories.map((item) => {
+          const key = text(item.jira_key || item.story);
+          return <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}>
+            <strong><span className="observatory-key">{key}</span><span className="observatory-story-title">{text(item.title, item.story)}</span></strong>
+            <StoryStatusPills business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
+          </button>;
+        })}
       </div>
     </aside>
     <section className="observatory-detail">
@@ -586,16 +592,18 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         <div className="observatory-header panel">
           <div>
             <div className="observatory-title-row">
-              <h2>{text(title, selected)}</h2>
-              <div className="panel-actions">
+              <h2>
+                {jiraUrl ? <a className="observatory-key" href={jiraUrl} target="_blank" rel="noreferrer">{storyKey} <ExternalLink size={12} /></a> : <span className="observatory-key">{storyKey}</span>}
+                <span className="observatory-heading-title">{text(title, selected)}</span>
+              </h2>
+              <div className="panel-actions observatory-actions">
                 <span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved" : "Saved"}</span>
-                <button className="button secondary" disabled={loadingContent} onClick={() => setEditing((current) => !current)}>{editing ? "Done" : "Edit"}</button>
-                <button className="button primary" disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
+                <button type="button" className="button" disabled={loadingContent} onClick={() => setEditing((current) => !current)}>{editing ? "Done" : "Edit"}</button>
+                <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
               </div>
             </div>
             <div className="observatory-subheader">
-              {jiraUrl ? <a href={jiraUrl} target="_blank" rel="noreferrer">{text(jiraKey || selected)} <ExternalLink size={12} /></a> : <code>{text(jiraKey || selected)}</code>}
-              <StoryStatusMeta business={businessStatus || "draft"} technical={technicalStatus || "draft"} delivery={deliveryStatus || "not_started"} />
+              <StoryStatusMeta business={businessStatus || "draft"} technical={technicalStatus || "draft"} />
             </div>
           </div>
         </div>

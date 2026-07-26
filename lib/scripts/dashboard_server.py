@@ -687,7 +687,7 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     activity_path = workspace / "state" / "delivery-scheduler-activity.jsonl"
     activity: list[dict[str, Any]] = []
     if activity_path.is_file():
-        for line in activity_path.read_text(encoding="utf-8", errors="replace").splitlines()[-24:]:
+        for line in activity_path.read_text(encoding="utf-8", errors="replace").splitlines()[-5:]:
             try:
                 event = json.loads(line)
             except json.JSONDecodeError:
