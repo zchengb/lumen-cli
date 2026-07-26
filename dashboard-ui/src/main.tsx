@@ -319,77 +319,7 @@ function joinFrontmatter(frontmatter: string, body: string) {
   return `---\n${frontmatter}\n---\n${body.startsWith("\n") ? body : `\n${body}`}`;
 }
 
-const AC_PREFIX_RE = /^\s*(?:<(?:strong|b|em|span)[^>]*>\s*)?(Given|When|Then)\s*[:：]?\s*(?:<\/(?:strong|b|em|span)>\s*)?/i;
 const COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16V4a2 2 0 0 1 2-2h12"/></svg>`;
-
-function parseAcPrefix(html: string) {
-  const match = html.match(AC_PREFIX_RE);
-  if (!match) return null;
-  return { kind: match[1].toLowerCase(), restHtml: html.slice(match[0].length) };
-}
-
-function isAcHeading(node: Element) {
-  return /^H[1-6]$/.test(node.tagName);
-}
-
-function isAcAbsorbable(node: Element) {
-  return /^(UL|OL|TABLE|BLOCKQUOTE)$/.test(node.tagName);
-}
-
-function isAcStackable(node: Element) {
-  return node instanceof HTMLElement && (node.classList.contains("ac-step") || node.classList.contains("md-code-block"));
-}
-
-function markAcRich(step: HTMLElement) {
-  const body = step.querySelector(".ac-body");
-  if (body?.querySelector("ul,ol,table,blockquote,.md-code-block,pre")) step.classList.add("ac-rich");
-  else step.classList.remove("ac-rich");
-}
-
-function decorateAcSteps(root: HTMLElement) {
-  for (const paragraph of Array.from(root.querySelectorAll("p"))) {
-    if (paragraph.closest(".ac-step, .md-code-block, .mermaid-wrap, .ac-stack")) continue;
-    const parsed = parseAcPrefix(paragraph.innerHTML);
-    if (!parsed) continue;
-    const step = document.createElement("div");
-    step.className = `ac-step ac-${parsed.kind}`;
-    step.setAttribute("data-ac", parsed.kind);
-    const bodyHtml = parsed.restHtml.trim() ? parsed.restHtml : "";
-    step.innerHTML = `<span class="ac-badge" contenteditable="false">${parsed.kind.toUpperCase()}</span><div class="ac-body">${bodyHtml}</div>`;
-    paragraph.replaceWith(step);
-  }
-
-  for (const parent of Array.from(new Set(Array.from(root.querySelectorAll(".ac-step")).map((node) => node.parentElement).filter(Boolean) as HTMLElement[]))) {
-    for (const child of Array.from(parent.children)) {
-      if (!isAcAbsorbable(child)) continue;
-      let prev = child.previousElementSibling;
-      while (prev && prev instanceof HTMLElement && prev.classList.contains("md-code-block")) prev = prev.previousElementSibling;
-      if (!(prev instanceof HTMLElement) || !prev.classList.contains("ac-step")) continue;
-      const body = prev.querySelector(".ac-body");
-      if (!body) continue;
-      body.append(child);
-      markAcRich(prev);
-    }
-  }
-
-  for (const parent of Array.from(new Set(Array.from(root.querySelectorAll(".ac-step, .md-code-block")).map((node) => node.parentElement).filter(Boolean) as HTMLElement[]))) {
-    let run: HTMLElement[] = [];
-    const flush = () => {
-      if (!run.length) return;
-      const stack = document.createElement("div");
-      stack.className = "ac-stack";
-      run[0].before(stack);
-      for (const item of run) stack.append(item);
-      run = [];
-    };
-    for (const child of Array.from(parent.children)) {
-      if (isAcStackable(child)) run.push(child as HTMLElement);
-      else if (isAcHeading(child)) flush();
-      else flush();
-    }
-    flush();
-  }
-}
 
 function decorateCodeBlocks(root: HTMLElement) {
   for (const pre of Array.from(root.querySelectorAll("pre"))) {
@@ -454,25 +384,6 @@ function createObservatoryTurndown() {
       return `\n\n\`\`\`${lang}\n${text}\n\`\`\`\n\n`;
     },
   });
-  turndown.addRule("acStack", {
-    filter: (node) => node instanceof HTMLElement && node.classList.contains("ac-stack"),
-    replacement: (content) => `\n\n${content}\n\n`,
-  });
-  turndown.addRule("acBadge", {
-    filter: (node) => node instanceof HTMLElement && node.classList.contains("ac-badge"),
-    replacement: () => "",
-  });
-  turndown.addRule("acStep", {
-    filter: (node) => node instanceof HTMLElement && node.classList.contains("ac-step"),
-    replacement: (_content, node) => {
-      const el = node as HTMLElement;
-      const kind = el.getAttribute("data-ac") || "given";
-      const label = `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`;
-      const body = el.querySelector(".ac-body");
-      const inner = body ? turndown.turndown(body.innerHTML) : _content.trim();
-      return `\n\n${label} ${inner.trim()}\n\n`;
-    },
-  });
   turndown.addRule("mermaidIsland", {
     filter: (node) => node instanceof HTMLElement && node.classList.contains("mermaid-wrap") && Boolean(node.getAttribute("data-mm-id")),
     replacement: (_content, node) => {
@@ -534,7 +445,6 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
     editedRef.current = false;
     root.innerHTML = markdownToEditableHtml(markdown);
     decorateCodeBlocks(root);
-    decorateAcSteps(root);
     root.querySelectorAll("a[href]").forEach((anchor) => {
       anchor.setAttribute("target", "_blank");
       anchor.setAttribute("rel", "noreferrer noopener");

@@ -37,16 +37,6 @@ function shouldCommitEditorSync(edited, nextBody, currentBody) {
   return edited && nextBody !== currentBody;
 }
 
-function parseAcPrefix(html) {
-  const match = html.match(/^\s*(?:<(?:strong|b|em|span)[^>]*>\s*)?(Given|When|Then)\s*[:：]?\s*(?:<\/(?:strong|b|em|span)>\s*)?/i);
-  if (!match) return null;
-  return { kind: match[1].toLowerCase(), restHtml: html.slice(match[0].length) };
-}
-
-function isAcAbsorbableTag(tag) {
-  return /^(UL|OL|TABLE|BLOCKQUOTE)$/.test(tag);
-}
-
 const sample = `---
 title: "Demo"
 jiraUrl: "https://example.com"
@@ -74,10 +64,4 @@ console.assert(extractMermaidBlocks(parts.body)[0] === "flowchart TD\n  A-->B", 
 console.assert(shouldCommitEditorSync(false, "changed", "original") === false, "focus-only blur stays clean");
 console.assert(shouldCommitEditorSync(true, "changed", "original") === true, "real edit commits");
 console.assert(shouldCommitEditorSync(true, "same", "same") === false, "noop edit stays clean");
-console.assert(parseAcPrefix("Given 用户已註冊").kind === "given", "given prefix");
-console.assert(parseAcPrefix("Then：").kind === "then" && parseAcPrefix("Then：").restHtml === "", "then colon");
-console.assert(parseAcPrefix("When 系統於 20:00").kind === "when", "when prefix");
-console.assert(parseAcPrefix("Hello Given world") === null, "ignores mid-sentence");
-console.assert(isAcAbsorbableTag("TABLE") && isAcAbsorbableTag("UL") && isAcAbsorbableTag("BLOCKQUOTE"), "absorbs rich blocks");
-console.assert(!isAcAbsorbableTag("PRE") && !isAcAbsorbableTag("DIV"), "keeps code as sibling");
 console.log("observatory-check ok");
