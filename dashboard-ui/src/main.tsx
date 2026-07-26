@@ -773,7 +773,7 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
   const [retryOpen, setRetryOpen] = useState(false);
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState("");
-  const [startOpen, setStartOpen] = useState(false);
+  const [startStep, setStartStep] = useState<0 | 1 | 2>(0);
   const [selectedStory, setSelectedStory] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
   const [actionError, setActionError] = useState("");
@@ -809,7 +809,7 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
   const openStart = () => {
     setActionError("");
     setSelectedStory(storyOptions[0]?.value || "");
-    setStartOpen(true);
+    setStartStep(1);
   };
   const start = async () => {
     const story = selectedStory.trim();
@@ -820,7 +820,7 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
     setActionBusy(true); setActionError("");
     try {
       await request("/api/delivery/start", project, { method: "POST", json: { story } });
-      setStartOpen(false);
+      setStartStep(0);
       notify(`Delivery started for ${story}`, "success");
       await reload().catch(() => undefined);
     }
@@ -860,13 +860,15 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
     {schedulerLogOpen && <DeliveryLogDialog stage={{ label: "Scheduler log", duration: "Recent raw output", detail: "Launchd output is capped at 256 KiB; structured activity retains the latest 200 events." }} content={logContent} error={logError} loading={loadingLog} onClose={() => setSchedulerLogOpen(false)} />}
     {selectedChecks && <VerificationDialog checks={selectedChecks} onClose={() => setSelectedChecks(null)} />}
     {retryOpen && <RetryDeliveryDialog story={text(current.jira_key || current.story_id)} busy={retrying} error={retryError} onClose={() => setRetryOpen(false)} onConfirm={() => void retry()} />}
-    {startOpen && <StartDeliveryDialog stories={storyOptions} value={selectedStory} onChange={setSelectedStory} busy={actionBusy} error={actionError} onClose={() => setStartOpen(false)} onConfirm={() => void start()} />}
+    {startStep > 0 && <StartDeliveryDialog stories={storyOptions} value={selectedStory} onChange={setSelectedStory} step={startStep === 1 ? 1 : 2} busy={actionBusy} error={actionError} onClose={() => { if (!actionBusy) setStartStep(0); }} onContinue={() => setStartStep(2)} onConfirm={() => void start()} />}
     {deleteCandidate && <DeleteHistoryDialog run={deleteCandidate} busy={Boolean(deletingHistoryId)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void removeHistory()} />}
   </>;
 }
 
-function StartDeliveryDialog({ stories, value, onChange, busy, error, onClose, onConfirm }: { stories: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Start delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Start delivery</strong><p className="modal-copy">Choose a ready story to launch.</p><label className="field"><span>Story</span><select value={value} onChange={(event) => onChange(event.target.value)} disabled={busy || stories.length === 0}>{stories.length ? stories.map((item) => <option value={item.value} key={item.value} title={item.label}>{item.label}</option>) : <option value="">No ready stories</option>}</select></label>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !value} onClick={onConfirm}><Play size={14} />{busy ? "Starting…" : "Start"}</button></footer></section></div>;
+function StartDeliveryDialog({ stories, value, onChange, step, busy, error, onClose, onContinue, onConfirm }: { stories: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void; step: 1 | 2; busy: boolean; error: string; onClose: () => void; onContinue: () => void; onConfirm: () => void }) {
+  const first = step === 1;
+  const selectedLabel = stories.find((item) => item.value === value)?.label || value;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label={first ? "Start delivery" : "Confirm start delivery"} onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>{first ? "Start delivery" : "Confirm delivery start"}</strong><p className="modal-copy">{first ? "Choose a ready story to launch." : `Are you sure you want to start delivery for ${selectedLabel} now?`}</p>{first && <label className="field"><span>Story</span><select value={value} onChange={(event) => onChange(event.target.value)} disabled={busy || stories.length === 0}>{stories.length ? stories.map((item) => <option value={item.value} key={item.value} title={item.label}>{item.label}</option>) : <option value="">No ready stories</option>}</select></label>}{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button>{first ? <button className="button primary" disabled={busy || !value} onClick={onContinue}>Continue</button> : <button className="button primary" disabled={busy || !value} onClick={onConfirm}><Play size={14} />{busy ? "Starting…" : "Start delivery"}</button>}</footer></section></div>;
 }
 
 function RetryDeliveryDialog({ story, busy, error, onClose, onConfirm }: { story: string; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
@@ -897,7 +899,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   const [storyQuery, setStoryQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
-  const [startOpen, setStartOpen] = useState(false);
+  const [startStep, setStartStep] = useState<0 | 1 | 2>(0);
   const [selectedStartStory, setSelectedStartStory] = useState("");
   const [startBusy, setStartBusy] = useState(false);
   const [startError, setStartError] = useState("");
@@ -962,7 +964,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
     setStartError("");
     const preferred = deliveryOptions.find((item) => item.value === selected)?.value || deliveryOptions[0]?.value || "";
     setSelectedStartStory(preferred);
-    setStartOpen(true);
+    setStartStep(1);
   };
   const startDelivery = async () => {
     const story = selectedStartStory.trim();
@@ -975,7 +977,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
     setStartError("");
     try {
       await request("/api/delivery/start", project, { method: "POST", json: { story } });
-      setStartOpen(false);
+      setStartStep(0);
       notify(`Delivery started for ${story}`, "success");
       await loadStories();
     } catch (err) {
@@ -1065,7 +1067,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         </>}
       </>}
     </section>
-    {startOpen && <StartDeliveryDialog stories={deliveryOptions} value={selectedStartStory} onChange={setSelectedStartStory} busy={startBusy} error={startError} onClose={() => setStartOpen(false)} onConfirm={() => void startDelivery()} />}
+    {startStep > 0 && <StartDeliveryDialog stories={deliveryOptions} value={selectedStartStory} onChange={setSelectedStartStory} step={startStep === 1 ? 1 : 2} busy={startBusy} error={startError} onClose={() => { if (!startBusy) setStartStep(0); }} onContinue={() => setStartStep(2)} onConfirm={() => void startDelivery()} />}
   </div>;
 }
 
