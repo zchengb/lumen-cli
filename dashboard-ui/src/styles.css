@@ -211,30 +211,28 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .observatory-list>.panel-header{min-height:48px;padding:0 16px;border-bottom-color:#ebebe7;background:rgba(255,255,255,.72);backdrop-filter:blur(10px)}
 .observatory-list>.panel-header h3{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#6f6f76}
 .observatory-list-body{display:grid;gap:6px;padding:10px;overflow:auto;max-height:calc(100vh - 176px)}
-.observatory-story{display:grid;width:100%;padding:12px;border:1px solid transparent;border-radius:10px;background:rgba(255,255,255,.55);color:#35353a;text-align:left;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease}
+.observatory-story{display:grid;gap:8px;width:100%;padding:12px;border:1px solid transparent;border-radius:10px;background:rgba(255,255,255,.55);color:#35353a;text-align:left;transition:border-color .16s ease,background .16s ease,box-shadow .16s ease}
 .observatory-story:hover{border-color:#e2e2de;background:#fff;box-shadow:0 4px 14px rgba(28,28,30,.05)}
 .observatory-story.selected{border-color:#d2d2cd;background:#fff;box-shadow:0 0 0 1px rgba(70,70,70,.04),0 8px 20px rgba(28,28,30,.06)}
-.observatory-story-row{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px 10px}
-.observatory-story-link{display:inline;flex:1 1 160px;min-width:0;color:inherit;text-decoration:none;font-size:12px;font-weight:600;line-height:1.4}
-.observatory-story-link:hover{color:#0071e3}
-.observatory-key{color:inherit;font:inherit;font-weight:600;white-space:nowrap}
+.observatory-story-copy{min-width:0;font-size:12px;font-weight:400;line-height:1.4}
+.observatory-key{color:inherit;font:inherit;font-weight:400;white-space:nowrap}
 .observatory-key::after{content:" ";white-space:pre}
-.observatory-story-title{color:inherit;font:inherit;font-weight:600;white-space:normal;overflow-wrap:anywhere}
-.observatory-pills{display:inline-flex;flex:none;flex-wrap:wrap;gap:4px;align-items:center;margin-top:1px}
-.observatory-pills .badge{padding:2px 7px;border-radius:999px;font-size:9px}
+.observatory-story-title{color:inherit;font:inherit;font-weight:400;white-space:normal;overflow-wrap:anywhere}
 .observatory-detail{display:grid;gap:12px;min-width:0}
 .observatory-header{margin:0;padding:14px 16px}
 .observatory-title-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
-.observatory-header h2{margin:0;font-size:17px;font-weight:600;letter-spacing:-.02em;line-height:1.35}
+.observatory-header h2{margin:0;font-size:17px;font-weight:400;letter-spacing:-.02em;line-height:1.35}
 .observatory-heading-link{display:inline;color:inherit;text-decoration:none}
 .observatory-heading-link:hover{color:#0071e3}
 .observatory-heading-link svg{display:inline;margin-left:6px;vertical-align:-1px}
-.observatory-header .observatory-key,.observatory-heading-title{color:inherit;font:inherit;font-weight:600}
+.observatory-header .observatory-key,.observatory-heading-title{color:inherit;font:inherit;font-weight:400}
 .observatory-actions .button{min-height:33px;padding:0 11px;font-size:12px}
 .observatory-subheader{display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;margin-top:8px}
 .observatory-meta{display:inline-flex;flex-wrap:wrap;gap:8px 12px;margin:0}
+.observatory-meta.compact{display:flex;flex-wrap:wrap;gap:6px 10px;margin:0}
 .observatory-meta-item{display:inline-flex;align-items:center;gap:5px}
 .observatory-meta-item em{color:#8a8a93;font-size:10px;font-style:normal;font-weight:600;letter-spacing:.02em;text-transform:uppercase}
+.observatory-meta.compact .observatory-meta-item em{font-size:9px}
 .observatory-doc-panel{margin:0;overflow:hidden}
 .observatory-doc-panel>.panel-header{min-height:44px;padding:0 8px}
 .observatory-tabs{display:inline-flex;gap:2px;padding:3px;border-radius:7px;background:#efefed}

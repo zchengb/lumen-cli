@@ -121,18 +121,11 @@ function Badge({ value }: { value: unknown }) {
   return <span className={`badge ${statusTone(value)}`}>{titleStatus(value)}</span>;
 }
 
-function StoryStatusMeta({ business, technical }: { business: string; technical: string }) {
-  return <div className="observatory-meta">
+function StoryStatusMeta({ business, technical, compact = false }: { business: string; technical: string; compact?: boolean }) {
+  return <div className={`observatory-meta${compact ? " compact" : ""}`}>
     <span className="observatory-meta-item"><em>Business</em><Badge value={business || "draft"} /></span>
     <span className="observatory-meta-item"><em>Technical</em><Badge value={technical || "draft"} /></span>
   </div>;
-}
-
-function StoryStatusPills({ business, technical }: { business: string; technical: string }) {
-  return <span className="observatory-pills" title={`Business ${titleStatus(business || "draft")} · Technical ${titleStatus(technical || "draft")}`}>
-    <Badge value={business || "draft"} />
-    <Badge value={technical || "draft"} />
-  </span>;
 }
 
 function MermaidBlock({ chart }: { chart: string }) {
@@ -609,14 +602,9 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         {stories.map((item) => {
           const key = text(item.jira_key || item.story);
           const itemTitle = text(item.title, item.story);
-          const href = String(item.jira_url || "");
           return <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}>
-            <div className="observatory-story-row">
-              {href
-                ? <a className="observatory-story-link" href={href} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></a>
-                : <span className="observatory-story-link"><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></span>}
-              <StoryStatusPills business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
-            </div>
+            <div className="observatory-story-copy"><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></div>
+            <StoryStatusMeta compact business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
           </button>;
         })}
       </div>
