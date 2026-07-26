@@ -10,7 +10,7 @@ import {
   Activity, Bold, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
   Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, LoaderCircle,
   Play, RotateCcw, Save, ScanSearch, Settings2, Terminal, Trash2,
-  Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow, X
+  Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow, X, ZoomIn, ZoomOut
 } from "lucide-react";
 import "./styles.css";
 
@@ -19,6 +19,9 @@ marked.setOptions({ gfm: true, breaks: false });
 const mermaidSvgCache = new Map<string, string>();
 const mermaidChartById = new Map<string, string>();
 let mermaidPaintSeq = 0;
+const FULLSCREEN_ZOOM_MIN = 0.5;
+const FULLSCREEN_ZOOM_MAX = 3;
+const FULLSCREEN_ZOOM_STEP = 0.25;
 
 type RecordValue = Record<string, any>;
 type Tab = "scan" | "delivery" | "observatory" | "repositories" | "prompts" | "settings";
@@ -135,15 +138,31 @@ function StoryStatusMeta({ business, technical, compact = false }: { business: s
 }
 
 function FullscreenMedia({ label, onClose, children }: { label: string; onClose: () => void; children: React.ReactNode }) {
+  const [zoom, setZoom] = useState(1);
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "+" || event.key === "=") setZoom((value) => Math.min(FULLSCREEN_ZOOM_MAX, Number((value + FULLSCREEN_ZOOM_STEP).toFixed(2))));
+      if (event.key === "-" || event.key === "_") setZoom((value) => Math.max(FULLSCREEN_ZOOM_MIN, Number((value - FULLSCREEN_ZOOM_STEP).toFixed(2))));
+      if (event.key === "0") setZoom(1);
+    };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
   return <div className="modal-backdrop media-fullscreen-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="media-fullscreen" role="dialog" aria-modal="true" aria-label={label} onMouseDown={(event) => event.stopPropagation()}>
-      <header><span>{label}</span><button type="button" className="button secondary" onClick={onClose} aria-label="Close fullscreen"><X size={14} /></button></header>
-      <div className="media-fullscreen-body">{children}</div>
+      <header>
+        <span>{label}</span>
+        <div className="media-fullscreen-actions">
+          <button type="button" className="button secondary" title="Zoom out" aria-label="Zoom out" onClick={() => setZoom((value) => Math.max(FULLSCREEN_ZOOM_MIN, Number((value - FULLSCREEN_ZOOM_STEP).toFixed(2))))}><ZoomOut size={14} /></button>
+          <button type="button" className="button secondary media-fullscreen-zoom-label" title="Reset zoom" aria-label="Reset zoom" onClick={() => setZoom(1)}>{Math.round(zoom * 100)}%</button>
+          <button type="button" className="button secondary" title="Zoom in" aria-label="Zoom in" onClick={() => setZoom((value) => Math.min(FULLSCREEN_ZOOM_MAX, Number((value + FULLSCREEN_ZOOM_STEP).toFixed(2))))}><ZoomIn size={14} /></button>
+          <button type="button" className="button secondary" onClick={onClose} aria-label="Close fullscreen"><X size={14} /></button>
+        </div>
+      </header>
+      <div className="media-fullscreen-body">
+        <div className="media-fullscreen-zoom" style={{ width: `${Math.round(zoom * 100)}%` }}>{children}</div>
+      </div>
     </section>
   </div>;
 }
