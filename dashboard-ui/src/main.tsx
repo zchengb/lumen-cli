@@ -248,6 +248,33 @@ function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
   </>;
 }
 
+function CodeFence({ className, children }: { className?: string; children?: React.ReactNode }) {
+  const value = String(children).replace(/\n$/, "");
+  const [copied, setCopied] = useState(false);
+  if (/language-mermaid/.test(className || "")) return <MermaidBlock chart={value} />;
+  if (!value.includes("\n") && !className) return <code className={className}>{children}</code>;
+  const lang = (className || "").replace(/^language-/, "") || "code";
+  return <div className="md-code-block">
+    <div className="md-code-toolbar">
+      <span className="md-code-lang">{lang}</span>
+      <button
+        type="button"
+        className="md-code-copy"
+        title="Copy code"
+        aria-label="Copy code"
+        data-copied={copied ? "true" : undefined}
+        onClick={() => {
+          void navigator.clipboard.writeText(value).then(() => {
+            setCopied(true);
+            window.setTimeout(() => setCopied(false), 1200);
+          });
+        }}
+      ><Copy size={14} /></button>
+    </div>
+    <pre><code className={className}>{value}</code></pre>
+  </div>;
+}
+
 const markdownComponents = {
   a({ href, children }: { href?: string; children?: React.ReactNode }) {
     return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
@@ -256,10 +283,7 @@ const markdownComponents = {
     return <MarkdownImage src={src} alt={alt} />;
   },
   code({ className, children }: { className?: string; children?: React.ReactNode }) {
-    const value = String(children).replace(/\n$/, "");
-    if (/language-mermaid/.test(className || "")) return <MermaidBlock chart={value} />;
-    if (value.includes("\n")) return <pre><code className={className}>{value}</code></pre>;
-    return <code className={className}>{children}</code>;
+    return <CodeFence className={className}>{children}</CodeFence>;
   },
 };
 
@@ -280,6 +304,86 @@ function joinFrontmatter(frontmatter: string, body: string) {
   return `---\n${frontmatter}\n---\n${body.startsWith("\n") ? body : `\n${body}`}`;
 }
 
+const AC_PREFIX_RE = /^\s*(?:<(?:strong|b|em|span)[^>]*>\s*)?(Given|When|Then)\s*[:：]?\s*(?:<\/(?:strong|b|em|span)>\s*)?/i;
+const COPY_ICON = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16V4a2 2 0 0 1 2-2h12"/></svg>`;
+
+function parseAcPrefix(html: string) {
+  const match = html.match(AC_PREFIX_RE);
+  if (!match) return null;
+  return { kind: match[1].toLowerCase(), restHtml: html.slice(match[0].length) };
+}
+
+function decorateAcSteps(root: HTMLElement) {
+  for (const paragraph of Array.from(root.querySelectorAll("p"))) {
+    if (paragraph.closest(".ac-step, .md-code-block, .mermaid-wrap")) continue;
+    const parsed = parseAcPrefix(paragraph.innerHTML);
+    if (!parsed) continue;
+    paragraph.className = `ac-step ac-${parsed.kind}`;
+    paragraph.setAttribute("data-ac", parsed.kind);
+    paragraph.innerHTML = `<span class="ac-badge" contenteditable="false">${parsed.kind.toUpperCase()}</span><span class="ac-body">${parsed.restHtml || "&nbsp;"}</span>`;
+  }
+  for (const step of Array.from(root.querySelectorAll(".ac-then"))) {
+    const body = step.querySelector(".ac-body");
+    if (!body) continue;
+    let next = step.nextElementSibling;
+    while (next && (next.tagName === "UL" || next.tagName === "OL")) {
+      const list = next;
+      next = next.nextElementSibling;
+      body.append(list);
+    }
+  }
+  for (const parent of Array.from(new Set(Array.from(root.querySelectorAll(".ac-step")).map((node) => node.parentElement).filter(Boolean) as HTMLElement[]))) {
+    let run: HTMLElement[] = [];
+    const flush = () => {
+      if (!run.length) return;
+      const stack = document.createElement("div");
+      stack.className = "ac-stack";
+      run[0].before(stack);
+      for (const step of run) stack.append(step);
+      run = [];
+    };
+    for (const child of Array.from(parent.children)) {
+      if (child instanceof HTMLElement && child.classList.contains("ac-step")) run.push(child);
+      else flush();
+    }
+    flush();
+  }
+}
+
+function decorateCodeBlocks(root: HTMLElement) {
+  for (const pre of Array.from(root.querySelectorAll("pre"))) {
+    if (pre.closest(".md-code-block, .mermaid-wrap") || pre.classList.contains("mermaid-error")) continue;
+    const code = pre.querySelector("code");
+    const lang = ((code?.className || "").match(/language-([\w-]+)/) || [])[1] || "code";
+    const wrap = document.createElement("div");
+    wrap.className = "md-code-block";
+    const toolbar = document.createElement("div");
+    toolbar.className = "md-code-toolbar";
+    toolbar.contentEditable = "false";
+    const langEl = document.createElement("span");
+    langEl.className = "md-code-lang";
+    langEl.textContent = lang;
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "md-code-copy";
+    button.title = "Copy code";
+    button.setAttribute("aria-label", "Copy code");
+    button.innerHTML = COPY_ICON;
+    button.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const text = code?.textContent || pre.textContent || "";
+      void navigator.clipboard.writeText(text).then(() => {
+        button.dataset.copied = "true";
+        window.setTimeout(() => { delete button.dataset.copied; }, 1200);
+      });
+    };
+    toolbar.append(langEl, button);
+    pre.replaceWith(wrap);
+    wrap.append(toolbar, pre);
+  }
+}
+
 function markdownToEditableHtml(markdown: string) {
   const rewritten = markdown.replace(/```mermaid\r?\n([\s\S]*?)```/g, (_, chart: string) => {
     const id = `mm-${++mermaidPaintSeq}`;
@@ -294,6 +398,39 @@ function createObservatoryTurndown() {
   turndown.addRule("fullscreenBtn", {
     filter: (node) => node instanceof HTMLElement && node.classList.contains("mermaid-fullscreen-btn"),
     replacement: () => "",
+  });
+  turndown.addRule("codeToolbar", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("md-code-toolbar"),
+    replacement: () => "",
+  });
+  turndown.addRule("codeBlockShell", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("md-code-block"),
+    replacement: (_content, node) => {
+      const code = (node as HTMLElement).querySelector("code");
+      const pre = (node as HTMLElement).querySelector("pre");
+      const lang = ((code?.className || "").match(/language-([\w-]+)/) || [])[1] || "";
+      const text = (code?.textContent || pre?.textContent || "").replace(/\n$/, "");
+      return `\n\n\`\`\`${lang}\n${text}\n\`\`\`\n\n`;
+    },
+  });
+  turndown.addRule("acStack", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("ac-stack"),
+    replacement: (content) => `\n\n${content}\n\n`,
+  });
+  turndown.addRule("acBadge", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("ac-badge"),
+    replacement: () => "",
+  });
+  turndown.addRule("acStep", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("ac-step"),
+    replacement: (_content, node) => {
+      const el = node as HTMLElement;
+      const kind = el.getAttribute("data-ac") || "given";
+      const label = `${kind.charAt(0).toUpperCase()}${kind.slice(1)}`;
+      const body = el.querySelector(".ac-body");
+      const inner = body ? turndown.turndown(body.innerHTML) : _content.trim();
+      return `\n\n${label} ${inner.trim()}\n\n`;
+    },
   });
   turndown.addRule("mermaidIsland", {
     filter: (node) => node instanceof HTMLElement && node.classList.contains("mermaid-wrap") && Boolean(node.getAttribute("data-mm-id")),
@@ -355,6 +492,8 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
     if (!root) return;
     editedRef.current = false;
     root.innerHTML = markdownToEditableHtml(markdown);
+    decorateAcSteps(root);
+    decorateCodeBlocks(root);
     root.querySelectorAll("a[href]").forEach((anchor) => {
       anchor.setAttribute("target", "_blank");
       anchor.setAttribute("rel", "noreferrer noopener");
