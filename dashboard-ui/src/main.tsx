@@ -313,37 +313,63 @@ function parseAcPrefix(html: string) {
   return { kind: match[1].toLowerCase(), restHtml: html.slice(match[0].length) };
 }
 
+function isAcHeading(node: Element) {
+  return /^H[1-6]$/.test(node.tagName);
+}
+
+function isAcAbsorbable(node: Element) {
+  return /^(UL|OL|TABLE|BLOCKQUOTE)$/.test(node.tagName);
+}
+
+function isAcStackable(node: Element) {
+  return node instanceof HTMLElement && (node.classList.contains("ac-step") || node.classList.contains("md-code-block"));
+}
+
+function markAcRich(step: HTMLElement) {
+  const body = step.querySelector(".ac-body");
+  if (body?.querySelector("ul,ol,table,blockquote,.md-code-block,pre")) step.classList.add("ac-rich");
+  else step.classList.remove("ac-rich");
+}
+
 function decorateAcSteps(root: HTMLElement) {
   for (const paragraph of Array.from(root.querySelectorAll("p"))) {
-    if (paragraph.closest(".ac-step, .md-code-block, .mermaid-wrap")) continue;
+    if (paragraph.closest(".ac-step, .md-code-block, .mermaid-wrap, .ac-stack")) continue;
     const parsed = parseAcPrefix(paragraph.innerHTML);
     if (!parsed) continue;
-    paragraph.className = `ac-step ac-${parsed.kind}`;
-    paragraph.setAttribute("data-ac", parsed.kind);
-    paragraph.innerHTML = `<span class="ac-badge" contenteditable="false">${parsed.kind.toUpperCase()}</span><span class="ac-body">${parsed.restHtml || "&nbsp;"}</span>`;
+    const step = document.createElement("div");
+    step.className = `ac-step ac-${parsed.kind}`;
+    step.setAttribute("data-ac", parsed.kind);
+    const bodyHtml = parsed.restHtml.trim() ? parsed.restHtml : "";
+    step.innerHTML = `<span class="ac-badge" contenteditable="false">${parsed.kind.toUpperCase()}</span><div class="ac-body">${bodyHtml}</div>`;
+    paragraph.replaceWith(step);
   }
-  for (const step of Array.from(root.querySelectorAll(".ac-then"))) {
-    const body = step.querySelector(".ac-body");
-    if (!body) continue;
-    let next = step.nextElementSibling;
-    while (next && (next.tagName === "UL" || next.tagName === "OL")) {
-      const list = next;
-      next = next.nextElementSibling;
-      body.append(list);
+
+  for (const parent of Array.from(new Set(Array.from(root.querySelectorAll(".ac-step")).map((node) => node.parentElement).filter(Boolean) as HTMLElement[]))) {
+    for (const child of Array.from(parent.children)) {
+      if (!isAcAbsorbable(child)) continue;
+      let prev = child.previousElementSibling;
+      while (prev && prev instanceof HTMLElement && prev.classList.contains("md-code-block")) prev = prev.previousElementSibling;
+      if (!(prev instanceof HTMLElement) || !prev.classList.contains("ac-step")) continue;
+      const body = prev.querySelector(".ac-body");
+      if (!body) continue;
+      body.append(child);
+      markAcRich(prev);
     }
   }
-  for (const parent of Array.from(new Set(Array.from(root.querySelectorAll(".ac-step")).map((node) => node.parentElement).filter(Boolean) as HTMLElement[]))) {
+
+  for (const parent of Array.from(new Set(Array.from(root.querySelectorAll(".ac-step, .md-code-block")).map((node) => node.parentElement).filter(Boolean) as HTMLElement[]))) {
     let run: HTMLElement[] = [];
     const flush = () => {
       if (!run.length) return;
       const stack = document.createElement("div");
       stack.className = "ac-stack";
       run[0].before(stack);
-      for (const step of run) stack.append(step);
+      for (const item of run) stack.append(item);
       run = [];
     };
     for (const child of Array.from(parent.children)) {
-      if (child instanceof HTMLElement && child.classList.contains("ac-step")) run.push(child);
+      if (isAcStackable(child)) run.push(child as HTMLElement);
+      else if (isAcHeading(child)) flush();
       else flush();
     }
     flush();
@@ -492,8 +518,8 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
     if (!root) return;
     editedRef.current = false;
     root.innerHTML = markdownToEditableHtml(markdown);
-    decorateAcSteps(root);
     decorateCodeBlocks(root);
+    decorateAcSteps(root);
     root.querySelectorAll("a[href]").forEach((anchor) => {
       anchor.setAttribute("target", "_blank");
       anchor.setAttribute("rel", "noreferrer noopener");
@@ -968,37 +994,33 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         })}
       </div>
     </aside>
-    <section className="observatory-detail">
+    <section className="observatory-detail panel">
       {!selected ? <Empty label="Select a story to inspect." /> : <>
-        <div className="observatory-header panel">
-          <div>
-            <div className="observatory-title-row">
-              <h2>
-                {jiraUrl
-                  ? <a className="observatory-heading-link" href={jiraUrl} target="_blank" rel="noreferrer"><span className="observatory-key">{storyKey}</span><span className="observatory-heading-title">{storyTitle}</span><ExternalLink size={12} /></a>
-                  : <><span className="observatory-key">{storyKey}</span><span className="observatory-heading-title">{storyTitle}</span></>}
-              </h2>
-              <div className="panel-actions observatory-actions">
-                <span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved" : "Saved"}</span>
-                <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
-              </div>
-            </div>
-            <div className="observatory-subheader">
-              <StoryStatusMeta business={businessStatus || "draft"} technical={technicalStatus || "draft"} />
+        <div className="observatory-header">
+          <div className="observatory-title-row">
+            <h2>
+              {jiraUrl
+                ? <a className="observatory-heading-link" href={jiraUrl} target="_blank" rel="noreferrer"><span className="observatory-key">{storyKey}</span><span className="observatory-heading-title">{storyTitle}</span><ExternalLink size={12} /></a>
+                : <><span className="observatory-key">{storyKey}</span><span className="observatory-heading-title">{storyTitle}</span></>}
+            </h2>
+            <div className="panel-actions observatory-actions">
+              <span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved" : "Saved"}</span>
+              <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
             </div>
           </div>
+          <div className="observatory-subheader">
+            <StoryStatusMeta business={businessStatus || "draft"} technical={technicalStatus || "draft"} />
+          </div>
         </div>
-        {loadingContent ? <div className="loading-state"><LoaderCircle size={20} className="spin" /> Loading story…</div> : <section className="panel observatory-doc-panel">
-          <header className="panel-header">
-            <div className="observatory-tabs" role="tablist">
-              <button type="button" role="tab" aria-selected={docTab === "story"} className={docTab === "story" ? "active" : ""} onClick={() => setDocTab("story")}>Story</button>
-              <button type="button" role="tab" aria-selected={docTab === "plan"} className={docTab === "plan" ? "active" : ""} onClick={() => setDocTab("plan")}>Technical plan</button>
-            </div>
-          </header>
+        {loadingContent ? <div className="loading-state"><LoaderCircle size={20} className="spin" /> Loading story…</div> : <>
+          <div className="observatory-doc-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected={docTab === "story"} className={docTab === "story" ? "active" : ""} onClick={() => setDocTab("story")}>Story</button>
+            <button type="button" role="tab" aria-selected={docTab === "plan"} className={docTab === "plan" ? "active" : ""} onClick={() => setDocTab("plan")}>Technical plan</button>
+          </div>
           {docTab === "story"
             ? <ObservatoryDocEditor key={`${selected || "none"}-story`} value={storyMarkdown} onChange={setStoryMarkdown} />
             : <ObservatoryDocEditor key={`${selected || "none"}-plan`} value={planMarkdown} onChange={setPlanMarkdown} />}
-        </section>}
+        </>}
       </>}
     </section>
   </div>;

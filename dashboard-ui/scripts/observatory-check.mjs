@@ -43,6 +43,10 @@ function parseAcPrefix(html) {
   return { kind: match[1].toLowerCase(), restHtml: html.slice(match[0].length) };
 }
 
+function isAcAbsorbableTag(tag) {
+  return /^(UL|OL|TABLE|BLOCKQUOTE)$/.test(tag);
+}
+
 const sample = `---
 title: "Demo"
 jiraUrl: "https://example.com"
@@ -74,4 +78,6 @@ console.assert(parseAcPrefix("Given 用户已註冊").kind === "given", "given p
 console.assert(parseAcPrefix("Then：").kind === "then" && parseAcPrefix("Then：").restHtml === "", "then colon");
 console.assert(parseAcPrefix("When 系統於 20:00").kind === "when", "when prefix");
 console.assert(parseAcPrefix("Hello Given world") === null, "ignores mid-sentence");
+console.assert(isAcAbsorbableTag("TABLE") && isAcAbsorbableTag("UL") && isAcAbsorbableTag("BLOCKQUOTE"), "absorbs rich blocks");
+console.assert(!isAcAbsorbableTag("PRE") && !isAcAbsorbableTag("DIV"), "keeps code as sibling");
 console.log("observatory-check ok");
