@@ -8,8 +8,8 @@ import TurndownService from "turndown";
 import { version as lumenVersion } from "../package.json";
 import {
   Activity, Bold, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
-  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, LoaderCircle,
-  Play, RotateCcw, Save, ScanSearch, Settings2, Terminal, Trash2,
+  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, ListFilter, LoaderCircle,
+  Play, RotateCcw, Save, ScanSearch, Search, Settings2, Terminal, Trash2,
   Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow, X, ZoomIn, ZoomOut
 } from "lucide-react";
 import "./styles.css";
@@ -134,6 +134,27 @@ function StoryStatusMeta({ business, technical, compact = false }: { business: s
   return <div className={`observatory-meta${compact ? " compact" : ""}`}>
     <span className="observatory-meta-item"><em>Business</em><Badge value={business || "draft"} /></span>
     <span className="observatory-meta-item"><em>Technical</em><Badge value={technical || "draft"} /></span>
+  </div>;
+}
+
+function parseStoryPackage(title: string) {
+  const match = title.match(/^【\s*Pkg\s*(\d+)\s*】\s*(.+)$/i) || title.match(/^\[\s*Pkg\s*(\d+)\s*\]\s*(.+)$/i);
+  if (!match) return { pkg: "", headline: title };
+  return { pkg: `Pkg ${match[1].padStart(2, "0")}`, headline: match[2].trim() };
+}
+
+function StoryListStatus({ business, technical }: { business: string; technical: string }) {
+  const businessTone = statusTone(business || "draft");
+  const technicalTone = statusTone(technical || "draft");
+  return <div className="observatory-story-status">
+    <span className={`observatory-story-status-item ${businessTone}`}>
+      {businessTone === "success" ? <i className="observatory-status-dot" /> : <CircleDot size={11} />}
+      Business {titleStatus(business || "draft")}
+    </span>
+    <span className={`observatory-story-status-item ${technicalTone}`}>
+      {technicalTone === "success" ? <CircleCheck size={12} /> : <CircleDot size={11} />}
+      Technical {titleStatus(technical || "draft")}
+    </span>
   </div>;
 }
 
@@ -904,6 +925,9 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   const [loadingList, setLoadingList] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [storyQuery, setStoryQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [readyOnly, setReadyOnly] = useState(false);
   const dirty = storyMarkdown !== baseline.story || planMarkdown !== baseline.plan;
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
@@ -978,18 +1002,33 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   };
   const storyKey = text(jiraKey || selected);
   const storyTitle = text(title, selected);
+  const visibleStories = stories.filter((item) => {
+    if (readyOnly && String(item.businessStatus || "").toLowerCase() !== "ready") return false;
+    const needle = storyQuery.trim().toLowerCase();
+    if (!needle) return true;
+    const haystack = `${item.jira_key || ""} ${item.title || ""} ${item.story || ""}`.toLowerCase();
+    return haystack.includes(needle);
+  });
   return <div className="observatory-layout">
     <aside className="observatory-list panel">
-      <div className="panel-header"><h3>Stories</h3><span className="muted">{stories.length}</span></div>
+      <div className="panel-header observatory-list-header">
+        <h3>Stories</h3>
+        <div className="observatory-list-tools">
+          <button type="button" className={`icon-button${searchOpen ? " active" : ""}`} title="Search stories" aria-label="Search stories" aria-pressed={searchOpen} onClick={() => setSearchOpen((value) => !value)}><Search size={15} /></button>
+          <button type="button" className={`icon-button${readyOnly ? " active" : ""}`} title={readyOnly ? "Showing business-ready stories" : "Filter business-ready stories"} aria-label="Filter stories" aria-pressed={readyOnly} onClick={() => setReadyOnly((value) => !value)}><ListFilter size={15} /></button>
+        </div>
+      </div>
+      {searchOpen && <div className="observatory-list-search"><input value={storyQuery} onChange={(event) => setStoryQuery(event.target.value)} placeholder="Search stories" aria-label="Search stories" autoFocus /></div>}
       <div className="observatory-list-body">
         {loadingList ? <div className="loading-state"><LoaderCircle size={18} className="spin" /> Loading…</div> : null}
-        {!loadingList && !stories.length ? <Empty label="No stories found in the docs repository." /> : null}
-        {stories.map((item) => {
+        {!loadingList && !visibleStories.length ? <Empty label={stories.length ? "No stories match this filter." : "No stories found in the docs repository."} /> : null}
+        {visibleStories.map((item) => {
           const key = text(item.jira_key || item.story);
-          const itemTitle = text(item.title, item.story);
+          const parsed = parseStoryPackage(text(item.title, item.story));
           return <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}>
-            <div className="observatory-story-copy"><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></div>
-            <StoryStatusMeta compact business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
+            <span className="observatory-story-meta">{key}{parsed.pkg ? ` · ${parsed.pkg}` : ""}</span>
+            <span className="observatory-story-title">{parsed.headline}</span>
+            <StoryListStatus business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
           </button>;
         })}
       </div>
