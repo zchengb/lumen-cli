@@ -33,6 +33,10 @@ function extractMermaidBlocks(markdown) {
   return [...markdown.matchAll(/```mermaid\r?\n([\s\S]*?)```/g)].map((match) => match[1].trim());
 }
 
+function shouldCommitEditorSync(edited, nextBody, currentBody) {
+  return edited && nextBody !== currentBody;
+}
+
 const sample = `---
 title: "Demo"
 jiraUrl: "https://example.com"
@@ -57,4 +61,7 @@ console.assert(titleStatus("pr_open") === "PR open", "pr_open label");
 console.assert(statusTone("pr_open") === "success", "pr_open tone");
 console.assert(statusTone("open") === "danger", "open tone");
 console.assert(extractMermaidBlocks(parts.body)[0] === "flowchart TD\n  A-->B", "mermaid extract");
+console.assert(shouldCommitEditorSync(false, "changed", "original") === false, "focus-only blur stays clean");
+console.assert(shouldCommitEditorSync(true, "changed", "original") === true, "real edit commits");
+console.assert(shouldCommitEditorSync(true, "same", "same") === false, "noop edit stays clean");
 console.log("observatory-check ok");

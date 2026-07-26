@@ -282,21 +282,31 @@ async function hydrateMermaidHosts(root: HTMLElement) {
   }));
 }
 
+function shouldCommitEditorSync(edited: boolean, nextBody: string, currentBody: string) {
+  return edited && nextBody !== currentBody;
+}
+
 function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const { frontmatter, body } = splitFrontmatter(value);
   const editorRef = useRef<HTMLDivElement>(null);
   const focusedRef = useRef(false);
+  const editedRef = useRef(false);
+  const bodyRef = useRef(body);
   const turndownRef = useRef(createObservatoryTurndown());
   const [fullscreen, setFullscreen] = useState<{ kind: "html" | "img"; value: string; alt?: string } | null>(null);
+  bodyRef.current = body;
   const setBody = (nextBody: string) => onChange(joinFrontmatter(frontmatter, nextBody));
   const syncFromDom = () => {
     const root = editorRef.current;
     if (!root) return;
-    setBody(turndownRef.current.turndown(root));
+    const nextBody = turndownRef.current.turndown(root);
+    if (!shouldCommitEditorSync(editedRef.current, nextBody, bodyRef.current)) return;
+    setBody(nextBody);
   };
   const paint = useCallback(async (markdown: string) => {
     const root = editorRef.current;
     if (!root) return;
+    editedRef.current = false;
     root.innerHTML = markdownToEditableHtml(markdown);
     root.querySelectorAll("a[href]").forEach((anchor) => {
       anchor.setAttribute("target", "_blank");
@@ -341,6 +351,7 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
   const run = (command: string, commandValue?: string) => {
     editorRef.current?.focus();
     document.execCommand(command, false, commandValue);
+    editedRef.current = true;
     syncFromDom();
   };
   return <div className="observatory-doc">
@@ -366,7 +377,7 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
       aria-label="Document body"
       onFocus={() => { focusedRef.current = true; }}
       onBlur={() => { focusedRef.current = false; syncFromDom(); }}
-      onInput={syncFromDom}
+      onInput={() => { editedRef.current = true; syncFromDom(); }}
     />
     {fullscreen && <FullscreenMedia label={fullscreen.kind === "img" ? (fullscreen.alt || "Image") : "Diagram"} onClose={() => setFullscreen(null)}>
       {fullscreen.kind === "img"
