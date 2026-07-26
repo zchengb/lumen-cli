@@ -1,18 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { marked } from "marked";
 import mermaid from "mermaid";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import TurndownService from "turndown";
 import { version as lumenVersion } from "../package.json";
 import {
   Activity, Bold, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
   Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, LoaderCircle,
   Play, RotateCcw, Save, ScanSearch, Settings2, Terminal, Trash2,
-  Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow
+  Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow, X
 } from "lucide-react";
 import "./styles.css";
 
 mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+marked.setOptions({ gfm: true, breaks: false });
+const mermaidSvgCache = new Map<string, string>();
+const mermaidChartById = new Map<string, string>();
+let mermaidPaintSeq = 0;
 
 type RecordValue = Record<string, any>;
 type Tab = "scan" | "delivery" | "observatory" | "repositories" | "prompts" | "settings";
@@ -128,36 +134,91 @@ function StoryStatusMeta({ business, technical, compact = false }: { business: s
   </div>;
 }
 
-function MermaidBlock({ chart }: { chart: string }) {
+function FullscreenMedia({ label, onClose, children }: { label: string; onClose: () => void; children: React.ReactNode }) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return <div className="modal-backdrop media-fullscreen-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="media-fullscreen" role="dialog" aria-modal="true" aria-label={label} onMouseDown={(event) => event.stopPropagation()}>
+      <header><span>{label}</span><button type="button" className="button secondary" onClick={onClose} aria-label="Close fullscreen"><X size={14} /></button></header>
+      <div className="media-fullscreen-body">{children}</div>
+    </section>
+  </div>;
+}
+
+async function renderMermaidSvg(chart: string) {
+  const cached = mermaidSvgCache.get(chart);
+  if (cached) return cached;
+  const id = `mmd-${++mermaidPaintSeq}`;
+  const { svg } = await mermaid.render(id, chart);
+  mermaidSvgCache.set(chart, svg);
+  return svg;
+}
+
+const MermaidBlock = memo(function MermaidBlock({ chart }: { chart: string }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
   useEffect(() => {
     const host = ref.current;
     if (!host) return;
+    const cached = mermaidSvgCache.get(chart);
+    if (cached) {
+      host.innerHTML = cached;
+      return;
+    }
     let cancelled = false;
-    const id = `mmd-${Math.random().toString(36).slice(2)}`;
-    void mermaid.render(id, chart).then(({ svg }) => {
-      if (!cancelled) host.innerHTML = svg;
+    void renderMermaidSvg(chart).then((svg) => {
+      if (!cancelled && ref.current) ref.current.innerHTML = svg;
     }).catch((err) => {
-      if (!cancelled) host.innerHTML = `<pre class="mermaid-error">${String(err)}</pre>`;
+      if (!cancelled && ref.current) ref.current.innerHTML = `<pre class="mermaid-error">${String(err)}</pre>`;
     });
     return () => { cancelled = true; };
   }, [chart]);
-  return <div className="mermaid-block" ref={ref} />;
+  return <>
+    <div className="mermaid-wrap">
+      <button type="button" className="mermaid-fullscreen-btn" title="Show fullscreen" aria-label="Show fullscreen" onClick={() => setFullscreen(true)}><Maximize2 size={14} /></button>
+      <div className="mermaid-block" ref={ref} />
+    </div>
+    {fullscreen && <FullscreenMedia label="Diagram" onClose={() => setFullscreen(false)}>
+      <div className="mermaid-block mermaid-block-fullscreen" dangerouslySetInnerHTML={{ __html: mermaidSvgCache.get(chart) || ref.current?.innerHTML || "" }} />
+    </FullscreenMedia>}
+  </>;
+});
+
+function MarkdownImage({ src, alt }: { src?: string; alt?: string }) {
+  const [fullscreen, setFullscreen] = useState(false);
+  if (!src) return null;
+  return <>
+    <span className="markdown-image-wrap">
+      <button type="button" className="mermaid-fullscreen-btn" title="Show fullscreen" aria-label="Show fullscreen" onClick={() => setFullscreen(true)}><Maximize2 size={14} /></button>
+      <img src={src} alt={alt || ""} />
+    </span>
+    {fullscreen && <FullscreenMedia label={alt || "Image"} onClose={() => setFullscreen(false)}>
+      <img src={src} alt={alt || ""} />
+    </FullscreenMedia>}
+  </>;
 }
+
+const markdownComponents = {
+  a({ href, children }: { href?: string; children?: React.ReactNode }) {
+    return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
+  },
+  img({ src, alt }: { src?: string; alt?: string }) {
+    return <MarkdownImage src={src} alt={alt} />;
+  },
+  code({ className, children }: { className?: string; children?: React.ReactNode }) {
+    const value = String(children).replace(/\n$/, "");
+    if (/language-mermaid/.test(className || "")) return <MermaidBlock chart={value} />;
+    if (value.includes("\n")) return <pre><code className={className}>{value}</code></pre>;
+    return <code className={className}>{children}</code>;
+  },
+};
 
 function MarkdownBody({ content }: { content: string }) {
   return <div className="markdown-content">
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-      a({ href, children }) {
-        return <a href={href} target="_blank" rel="noreferrer noopener">{children}</a>;
-      },
-      code({ className, children }) {
-        const value = String(children).replace(/\n$/, "");
-        if (/language-mermaid/.test(className || "")) return <MermaidBlock chart={value} />;
-        if (value.includes("\n")) return <pre><code className={className}>{value}</code></pre>;
-        return <code className={className}>{children}</code>;
-      }
-    }}>{content}</ReactMarkdown>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</ReactMarkdown>
   </div>;
 }
 
@@ -172,45 +233,146 @@ function joinFrontmatter(frontmatter: string, body: string) {
   return `---\n${frontmatter}\n---\n${body.startsWith("\n") ? body : `\n${body}`}`;
 }
 
-function applyMarkdownEdit(value: string, start: number, end: number, before: string, after = "") {
-  const selected = value.slice(start, end);
-  const inner = selected || "text";
-  const insertion = `${before}${inner}${after}`;
-  return {
-    next: `${value.slice(0, start)}${insertion}${value.slice(end)}`,
-    selectionStart: start + before.length,
-    selectionEnd: start + before.length + inner.length,
-  };
+function markdownToEditableHtml(markdown: string) {
+  const rewritten = markdown.replace(/```mermaid\r?\n([\s\S]*?)```/g, (_, chart: string) => {
+    const id = `mm-${++mermaidPaintSeq}`;
+    mermaidChartById.set(id, chart.trim());
+    return `\n\n<div class="mermaid-wrap" contenteditable="false" data-mm-id="${id}"><button type="button" class="mermaid-fullscreen-btn" data-mm-fullscreen title="Show fullscreen" aria-label="Show fullscreen"></button><div class="mermaid-block" data-mm-host></div></div>\n\n`;
+  });
+  return String(marked.parse(rewritten, { async: false }));
+}
+
+function createObservatoryTurndown() {
+  const turndown = new TurndownService({ headingStyle: "atx", codeBlockStyle: "fenced", bulletListMarker: "-" });
+  turndown.addRule("fullscreenBtn", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("mermaid-fullscreen-btn"),
+    replacement: () => "",
+  });
+  turndown.addRule("mermaidIsland", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("mermaid-wrap") && Boolean(node.getAttribute("data-mm-id")),
+    replacement: (_content, node) => {
+      const id = (node as HTMLElement).getAttribute("data-mm-id") || "";
+      const chart = mermaidChartById.get(id) || "";
+      return `\n\n\`\`\`mermaid\n${chart}\n\`\`\`\n\n`;
+    },
+  });
+  turndown.addRule("imageWrap", {
+    filter: (node) => node instanceof HTMLElement && node.classList.contains("markdown-image-wrap"),
+    replacement: (_content, node) => {
+      const img = (node as HTMLElement).querySelector("img");
+      if (!img) return "";
+      return `![${img.getAttribute("alt") || ""}](${img.getAttribute("src") || ""})`;
+    },
+  });
+  return turndown;
+}
+
+async function hydrateMermaidHosts(root: HTMLElement) {
+  const hosts = Array.from(root.querySelectorAll<HTMLElement>("[data-mm-host]"));
+  await Promise.all(hosts.map(async (host) => {
+    const wrap = host.closest<HTMLElement>(".mermaid-wrap");
+    const id = wrap?.getAttribute("data-mm-id") || "";
+    const chart = mermaidChartById.get(id);
+    if (!chart) return;
+    try {
+      host.innerHTML = await renderMermaidSvg(chart);
+    } catch (err) {
+      host.innerHTML = `<pre class="mermaid-error">${String(err)}</pre>`;
+    }
+  }));
 }
 
 function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const { frontmatter, body } = splitFrontmatter(value);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const focusedRef = useRef(false);
+  const turndownRef = useRef(createObservatoryTurndown());
+  const [fullscreen, setFullscreen] = useState<{ kind: "html" | "img"; value: string; alt?: string } | null>(null);
   const setBody = (nextBody: string) => onChange(joinFrontmatter(frontmatter, nextBody));
-  const edit = (before: string, after = "") => {
-    const area = textareaRef.current;
-    if (!area) {
-      setBody(`${body}${before}text${after}`);
-      return;
-    }
-    const result = applyMarkdownEdit(body, area.selectionStart, area.selectionEnd, before, after);
-    setBody(result.next);
-    requestAnimationFrame(() => {
-      area.focus();
-      area.setSelectionRange(result.selectionStart, result.selectionEnd);
+  const syncFromDom = () => {
+    const root = editorRef.current;
+    if (!root) return;
+    setBody(turndownRef.current.turndown(root));
+  };
+  const paint = useCallback(async (markdown: string) => {
+    const root = editorRef.current;
+    if (!root) return;
+    root.innerHTML = markdownToEditableHtml(markdown);
+    root.querySelectorAll("a[href]").forEach((anchor) => {
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noreferrer noopener");
     });
+    const maximizeIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg>`;
+    root.querySelectorAll<HTMLButtonElement>("[data-mm-fullscreen]").forEach((button) => {
+      button.innerHTML = maximizeIcon;
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const host = button.parentElement?.querySelector("[data-mm-host]");
+        setFullscreen({ kind: "html", value: host?.innerHTML || "" });
+      };
+    });
+    root.querySelectorAll("img").forEach((image) => {
+      if (image.closest(".markdown-image-wrap")) return;
+      const wrap = document.createElement("span");
+      wrap.className = "markdown-image-wrap";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "mermaid-fullscreen-btn";
+      button.title = "Show fullscreen";
+      button.setAttribute("aria-label", "Show fullscreen");
+      button.innerHTML = maximizeIcon;
+      const src = image.getAttribute("src") || "";
+      const alt = image.getAttribute("alt") || "";
+      button.onclick = (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setFullscreen({ kind: "img", value: src, alt });
+      };
+      image.replaceWith(wrap);
+      wrap.append(button, image);
+    });
+    await hydrateMermaidHosts(root);
+  }, []);
+  useEffect(() => {
+    if (focusedRef.current) return;
+    void paint(body);
+  }, [body, paint]);
+  const run = (command: string, commandValue?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(command, false, commandValue);
+    syncFromDom();
   };
   return <div className="observatory-doc">
-    <div className="observatory-toolbar" role="toolbar" aria-label="Markdown tools">
-      <button type="button" title="Heading" onClick={() => edit("## ", "")}><Heading2 size={14} /></button>
-      <button type="button" title="Bold" onClick={() => edit("**", "**")}><Bold size={14} /></button>
-      <button type="button" title="Italic" onClick={() => edit("*", "*")}><Italic size={14} /></button>
-      <button type="button" title="Link" onClick={() => edit("[", "](https://)")}><Link2 size={14} /></button>
-      <button type="button" title="List" onClick={() => edit("- ", "")}><List size={14} /></button>
-      <button type="button" title="Code" onClick={() => edit("`", "`")}><Code2 size={14} /></button>
+    <div className="observatory-toolbar" role="toolbar" aria-label="Formatting tools">
+      <button type="button" title="Heading" onMouseDown={(event) => event.preventDefault()} onClick={() => run("formatBlock", "h2")}><Heading2 size={14} /></button>
+      <button type="button" title="Bold" onMouseDown={(event) => event.preventDefault()} onClick={() => run("bold")}><Bold size={14} /></button>
+      <button type="button" title="Italic" onMouseDown={(event) => event.preventDefault()} onClick={() => run("italic")}><Italic size={14} /></button>
+      <button type="button" title="Link" onMouseDown={(event) => event.preventDefault()} onClick={() => {
+        const href = window.prompt("Link URL", "https://");
+        if (href) run("createLink", href);
+      }}><Link2 size={14} /></button>
+      <button type="button" title="List" onMouseDown={(event) => event.preventDefault()} onClick={() => run("insertUnorderedList")}><List size={14} /></button>
+      <button type="button" title="Code" onMouseDown={(event) => event.preventDefault()} onClick={() => run("formatBlock", "pre")}><Code2 size={14} /></button>
     </div>
-    <div className="observatory-doc-preview"><MarkdownBody content={body} /></div>
-    <textarea ref={textareaRef} className="observatory-doc-input" value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} aria-label="Document body" />
+    <div
+      ref={editorRef}
+      className="observatory-doc-preview markdown-content"
+      contentEditable
+      suppressContentEditableWarning
+      spellCheck={false}
+      role="textbox"
+      aria-multiline="true"
+      aria-label="Document body"
+      onFocus={() => { focusedRef.current = true; }}
+      onBlur={() => { focusedRef.current = false; syncFromDom(); }}
+      onInput={syncFromDom}
+    />
+    {fullscreen && <FullscreenMedia label={fullscreen.kind === "img" ? (fullscreen.alt || "Image") : "Diagram"} onClose={() => setFullscreen(null)}>
+      {fullscreen.kind === "img"
+        ? <img src={fullscreen.value} alt={fullscreen.alt || ""} />
+        : <div className="mermaid-block mermaid-block-fullscreen" dangerouslySetInnerHTML={{ __html: fullscreen.value }} />}
+    </FullscreenMedia>}
   </div>;
 }
 
@@ -637,8 +799,8 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
             </div>
           </header>
           {docTab === "story"
-            ? <ObservatoryDocEditor value={storyMarkdown} onChange={setStoryMarkdown} />
-            : <ObservatoryDocEditor value={planMarkdown} onChange={setPlanMarkdown} />}
+            ? <ObservatoryDocEditor key={`${selected || "none"}-story`} value={storyMarkdown} onChange={setStoryMarkdown} />
+            : <ObservatoryDocEditor key={`${selected || "none"}-plan`} value={planMarkdown} onChange={setPlanMarkdown} />}
         </section>}
       </>}
     </section>

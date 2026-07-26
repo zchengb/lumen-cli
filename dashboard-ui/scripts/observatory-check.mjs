@@ -29,6 +29,10 @@ function joinFrontmatter(frontmatter, body) {
   return `---\n${frontmatter}\n---\n${body.startsWith("\n") ? body : `\n${body}`}`;
 }
 
+function extractMermaidBlocks(markdown) {
+  return [...markdown.matchAll(/```mermaid\r?\n([\s\S]*?)```/g)].map((match) => match[1].trim());
+}
+
 const sample = `---
 title: "Demo"
 jiraUrl: "https://example.com"
@@ -52,18 +56,5 @@ console.assert(joinFrontmatter(parts.frontmatter, parts.body).startsWith("---\n"
 console.assert(titleStatus("pr_open") === "PR open", "pr_open label");
 console.assert(statusTone("pr_open") === "success", "pr_open tone");
 console.assert(statusTone("open") === "danger", "open tone");
-
-function applyMarkdownEdit(value, start, end, before, after = "") {
-  const selected = value.slice(start, end);
-  const inner = selected || "text";
-  const insertion = `${before}${inner}${after}`;
-  return {
-    next: `${value.slice(0, start)}${insertion}${value.slice(end)}`,
-    selectionStart: start + before.length,
-    selectionEnd: start + before.length + inner.length,
-  };
-}
-const bold = applyMarkdownEdit("hello world", 6, 11, "**", "**");
-console.assert(bold.next === "hello **world**", "bold wrap");
-console.assert(bold.selectionStart === 8 && bold.selectionEnd === 13, "bold selection");
+console.assert(extractMermaidBlocks(parts.body)[0] === "flowchart TD\n  A-->B", "mermaid extract");
 console.log("observatory-check ok");
