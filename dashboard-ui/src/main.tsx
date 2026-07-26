@@ -1047,7 +1047,6 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
             </h2>
             <div className="panel-actions observatory-actions">
               {canStartDelivery && <button type="button" className="button secondary" disabled={startBusy || loadingContent} onClick={openStartDelivery}><Play size={14} />Start delivery</button>}
-              <span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved" : "Saved"}</span>
               <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
             </div>
           </div>
