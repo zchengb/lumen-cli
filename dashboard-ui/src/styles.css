@@ -227,7 +227,7 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .observatory-story-copy{min-width:0;font-size:12px;font-weight:400;line-height:1.4}
 .observatory-story-title{color:inherit;font:inherit;font-weight:400;white-space:normal;overflow-wrap:anywhere}
 .observatory-story-status{display:flex;flex-wrap:wrap;gap:8px 12px;margin-top:2px}
-.observatory-story-status-item{display:inline-flex;align-items:center;gap:5px;color:#7a7a82;font-size:11px;font-weight:500;line-height:1.2}
+.observatory-story-status-item{display:inline-flex;align-items:center;gap:5px;color:#7a7a82;font-size:11px;font-weight:inherit;line-height:1.2}
 .observatory-story-status-item.success{color:#2f7a4d}
 .observatory-story-status-item.danger{color:#9a3b2c}
 .observatory-story-status-item.info{color:#3d6ea8}
