@@ -757,6 +757,42 @@ def story_markdown_paths(story_dir: Path, metadata: dict[str, Any]) -> tuple[Pat
     return story_md, story_dir / plan_name
 
 
+def story_date_value(metadata: dict[str, Any]) -> str:
+    for key in ("updatedAt", "jiraPublishedAt", "jiraImportedAt"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value[:10]
+    return ""
+
+
+def story_assignee_name(docs_dir: Path, metadata: dict[str, Any]) -> str:
+    direct = str(metadata.get("jiraAssignee") or metadata.get("assignee") or "").strip()
+    if direct:
+        return direct
+    snap = str(metadata.get("jiraSnapshotFile") or "").strip()
+    if not snap:
+        return ""
+    path = (docs_dir / snap).resolve()
+    try:
+        path.relative_to(docs_dir.resolve())
+    except ValueError:
+        return ""
+    if not path.is_file():
+        return ""
+    payload = load_json(path, {})
+    workitem = payload.get("workitem")
+    if isinstance(workitem, list):
+        workitem = workitem[0] if workitem else {}
+    if not isinstance(workitem, dict):
+        return ""
+    assignee = workitem.get("assignee")
+    if isinstance(assignee, dict):
+        return str(assignee.get("displayName") or assignee.get("display_name") or assignee.get("name") or "").strip()
+    if isinstance(assignee, str):
+        return assignee.strip()
+    return ""
+
+
 def list_observatory_stories(workspace: Path) -> list[dict[str, Any]]:
     docs_dir = docs_dir_for_workspace(workspace)
     stories = docs_dir / "stories"
@@ -774,7 +810,8 @@ def list_observatory_stories(workspace: Path) -> list[dict[str, Any]]:
                 "businessStatus": str(metadata.get("businessStatus") or ""),
                 "technicalStatus": str(metadata.get("technicalStatus") or ""),
                 "deliveryStatus": str(metadata.get("deliveryStatus") or "not_started"),
-                "updatedAt": str(metadata.get("updatedAt") or ""),
+                "updatedAt": story_date_value(metadata),
+                "assignee": story_assignee_name(docs_dir, metadata),
             }
         )
     return result

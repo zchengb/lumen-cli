@@ -226,6 +226,9 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .observatory-story.selected:before{position:absolute;top:8px;bottom:8px;left:0;width:3px;border-radius:0 3px 3px 0;background:#c67a36;content:""}
 .observatory-story-copy{min-width:0;font-size:12px;font-weight:400;line-height:1.4}
 .observatory-story-title{color:inherit;font:inherit;font-weight:400;white-space:normal;overflow-wrap:anywhere}
+.observatory-story-meta{display:flex;flex-wrap:wrap;gap:6px 10px;color:#8a8a91;font-size:11px;font-weight:inherit;line-height:1.2}
+.observatory-story-meta-item{display:inline-flex;align-items:center;gap:4px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.observatory-story-meta-item svg{flex:none;opacity:.72}
 .observatory-story-status{display:flex;flex-wrap:wrap;gap:8px 12px;margin-top:2px}
 .observatory-story-status-item{display:inline-flex;align-items:center;gap:5px;color:#7a7a82;font-size:11px;font-weight:inherit;line-height:1.2}
 .observatory-story-status-item.success{color:#2f7a4d}

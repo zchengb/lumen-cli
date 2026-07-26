@@ -37,6 +37,11 @@ function shouldCommitEditorSync(edited, nextBody, currentBody) {
   return edited && nextBody !== currentBody;
 }
 
+function storyDateLabel(value) {
+  const day = String(value || "").trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : "";
+}
+
 const sample = `---
 title: "Demo"
 jiraUrl: "https://example.com"
@@ -64,4 +69,6 @@ console.assert(extractMermaidBlocks(parts.body)[0] === "flowchart TD\n  A-->B", 
 console.assert(shouldCommitEditorSync(false, "changed", "original") === false, "focus-only blur stays clean");
 console.assert(shouldCommitEditorSync(true, "changed", "original") === true, "real edit commits");
 console.assert(shouldCommitEditorSync(true, "same", "same") === false, "noop edit stays clean");
+console.assert(storyDateLabel("2026-07-22T08:45:45Z") === "2026-07-22", "story date day");
+console.assert(storyDateLabel("nope") === "", "invalid story date");
 console.log("observatory-check ok");

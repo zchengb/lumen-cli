@@ -1203,9 +1203,15 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             (workspace / "config" / "workspace.json").write_text(json.dumps({"docs_repo": str(docs)}), encoding="utf-8")
             draft = docs / "stories" / "DRAFT-1"
             ready = docs / "stories" / "READY-1"
+            snapshot = docs / "lumen" / "context" / "READY-1" / "jira-import.json"
+            snapshot.parent.mkdir(parents=True)
+            snapshot.write_text(
+                json.dumps({"jira_key": "READY-1", "workitem": {"assignee": {"displayName": "Ada Lovelace"}}}),
+                encoding="utf-8",
+            )
             for story_dir, meta in (
-                (draft, {"jiraKey": "DRAFT-1", "title": "Draft story", "businessStatus": "draft", "technicalStatus": "draft", "deliveryStatus": "not_started"}),
-                (ready, {"jiraKey": "READY-1", "title": "Ready story", "businessStatus": "ready", "technicalStatus": "approved", "deliveryStatus": "not_started", "linkedRepos": ["service"]}),
+                (draft, {"jiraKey": "DRAFT-1", "title": "Draft story", "businessStatus": "draft", "technicalStatus": "draft", "deliveryStatus": "not_started", "updatedAt": "2026-07-10"}),
+                (ready, {"jiraKey": "READY-1", "title": "Ready story", "businessStatus": "ready", "technicalStatus": "approved", "deliveryStatus": "not_started", "linkedRepos": ["service"], "updatedAt": "2026-07-22T08:45:45Z", "jiraSnapshotFile": "lumen/context/READY-1/jira-import.json"}),
             ):
                 story_dir.mkdir(parents=True)
                 (story_dir / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -1213,13 +1219,18 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 (story_dir / "technical-plan.md").write_text("# Plan\n\nSteps\n", encoding="utf-8")
             unrelated = docs / "notes.md"
             unrelated.write_text("Leave me alone\n", encoding="utf-8")
-            git(docs, "add", "stories", "lumen/config/workspace.json")
+            git(docs, "add", "stories", "lumen/config/workspace.json", "lumen/context")
             git(docs, "commit", "-m", "Initialize stories")
             git(docs, "remote", "add", "origin", str(remote))
             git(docs, "push", "-u", "origin", "main")
 
             listed = list_observatory_stories(workspace)
             self.assertEqual({"DRAFT-1", "READY-1"}, {item["story"] for item in listed})
+            by_story = {item["story"]: item for item in listed}
+            self.assertEqual("2026-07-10", by_story["DRAFT-1"]["updatedAt"])
+            self.assertEqual("", by_story["DRAFT-1"]["assignee"])
+            self.assertEqual("2026-07-22", by_story["READY-1"]["updatedAt"])
+            self.assertEqual("Ada Lovelace", by_story["READY-1"]["assignee"])
             content = observatory_story_content(workspace, "DRAFT-1")
             self.assertIn("Hello", content["story_markdown"])
             result = save_observatory_story_content(workspace, "DRAFT-1", "# Story\n\nUpdated\n", "# Plan\n\nDone\n")

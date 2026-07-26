@@ -8,8 +8,8 @@ import TurndownService from "turndown";
 import { version as lumenVersion } from "../package.json";
 import {
   Activity, Bold, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
-  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, ListFilter, LoaderCircle,
-  Play, RotateCcw, Save, ScanSearch, Search, Settings2, Terminal, Trash2,
+  Calendar, Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, ListFilter, LoaderCircle,
+  Play, RotateCcw, Save, ScanSearch, Search, Settings2, Terminal, Trash2, User,
   Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow, X, ZoomIn, ZoomOut
 } from "lucide-react";
 import "./styles.css";
@@ -134,6 +134,21 @@ function StoryStatusMeta({ business, technical, compact = false }: { business: s
   return <div className={`observatory-meta${compact ? " compact" : ""}`}>
     <span className="observatory-meta-item"><em>Business</em><Badge value={business || "draft"} /></span>
     <span className="observatory-meta-item"><em>Technical</em><Badge value={technical || "draft"} /></span>
+  </div>;
+}
+
+function storyDateLabel(value: string) {
+  const day = String(value || "").trim().slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : "";
+}
+
+function StoryListMeta({ date, assignee }: { date: string; assignee: string }) {
+  const day = storyDateLabel(date);
+  const person = String(assignee || "").trim();
+  if (!day && !person) return null;
+  return <div className="observatory-story-meta">
+    {day ? <span className="observatory-story-meta-item"><Calendar size={11} aria-hidden="true" />{day}</span> : null}
+    {person ? <span className="observatory-story-meta-item"><User size={11} aria-hidden="true" />{person}</span> : null}
   </div>;
 }
 
@@ -910,7 +925,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
     if (readyOnly && String(item.businessStatus || "").toLowerCase() !== "ready") return false;
     const needle = storyQuery.trim().toLowerCase();
     if (!needle) return true;
-    const haystack = `${item.jira_key || ""} ${item.title || ""} ${item.story || ""}`.toLowerCase();
+    const haystack = `${item.jira_key || ""} ${item.title || ""} ${item.story || ""} ${item.assignee || ""}`.toLowerCase();
     return haystack.includes(needle);
   });
   return <div className="observatory-layout">
@@ -931,6 +946,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
           const itemTitle = text(item.title, item.story);
           return <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}>
             <div className="observatory-story-copy"><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></div>
+            <StoryListMeta date={String(item.updatedAt || "")} assignee={String(item.assignee || "")} />
             <StoryListStatus business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
           </button>;
         })}
