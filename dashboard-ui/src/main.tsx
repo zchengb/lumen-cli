@@ -137,12 +137,6 @@ function StoryStatusMeta({ business, technical, compact = false }: { business: s
   </div>;
 }
 
-function parseStoryPackage(title: string) {
-  const match = title.match(/^【\s*Pkg\s*(\d+)\s*】\s*(.+)$/i) || title.match(/^\[\s*Pkg\s*(\d+)\s*\]\s*(.+)$/i);
-  if (!match) return { pkg: "", headline: title };
-  return { pkg: `Pkg ${match[1].padStart(2, "0")}`, headline: match[2].trim() };
-}
-
 function StoryListStatus({ business, technical }: { business: string; technical: string }) {
   const businessTone = statusTone(business || "draft");
   const technicalTone = statusTone(technical || "draft");
@@ -1024,10 +1018,9 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         {!loadingList && !visibleStories.length ? <Empty label={stories.length ? "No stories match this filter." : "No stories found in the docs repository."} /> : null}
         {visibleStories.map((item) => {
           const key = text(item.jira_key || item.story);
-          const parsed = parseStoryPackage(text(item.title, item.story));
+          const itemTitle = text(item.title, item.story);
           return <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}>
-            <span className="observatory-story-meta">{key}{parsed.pkg ? ` · ${parsed.pkg}` : ""}</span>
-            <span className="observatory-story-title">{parsed.headline}</span>
+            <div className="observatory-story-copy"><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></div>
             <StoryListStatus business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
           </button>;
         })}

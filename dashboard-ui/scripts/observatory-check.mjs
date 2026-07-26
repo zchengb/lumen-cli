@@ -47,12 +47,6 @@ function isAcAbsorbableTag(tag) {
   return /^(UL|OL|TABLE|BLOCKQUOTE)$/.test(tag);
 }
 
-function parseStoryPackage(title) {
-  const match = title.match(/^【\s*Pkg\s*(\d+)\s*】\s*(.+)$/i) || title.match(/^\[\s*Pkg\s*(\d+)\s*\]\s*(.+)$/i);
-  if (!match) return { pkg: "", headline: title };
-  return { pkg: `Pkg ${match[1].padStart(2, "0")}`, headline: match[2].trim() };
-}
-
 const sample = `---
 title: "Demo"
 jiraUrl: "https://example.com"
@@ -86,6 +80,4 @@ console.assert(parseAcPrefix("When 系統於 20:00").kind === "when", "when pref
 console.assert(parseAcPrefix("Hello Given world") === null, "ignores mid-sentence");
 console.assert(isAcAbsorbableTag("TABLE") && isAcAbsorbableTag("UL") && isAcAbsorbableTag("BLOCKQUOTE"), "absorbs rich blocks");
 console.assert(!isAcAbsorbableTag("PRE") && !isAcAbsorbableTag("DIV"), "keeps code as sibling");
-console.assert(parseStoryPackage("【Pkg 03】Trigger Based #1 Inactive user reactivation").pkg === "Pkg 03", "pkg parse");
-console.assert(parseStoryPackage("【Pkg 03】Trigger Based #1 Inactive user reactivation").headline.startsWith("Trigger Based"), "pkg headline");
 console.log("observatory-check ok");
