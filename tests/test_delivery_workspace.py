@@ -48,9 +48,12 @@ from dashboard_server import (  # noqa: E402
     delivery_payload,
     delivery_stages,
     feishu_notifications_enabled,
+    list_observatory_stories,
+    observatory_story_content,
     repository_branches,
     save_delivery_steps,
     save_feishu_notifications,
+    save_observatory_story_content,
     save_publish_policy,
     save_repositories,
 )
@@ -1185,6 +1188,72 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 text=True,
             )
             self.assertEqual("?? notes.md", status.stdout.strip())
+
+    def test_observatory_lists_all_stories_and_saves_story_docs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            remote = root / "remote.git"
+            docs = root / "docs"
+            workspace = docs / "lumen"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-b", "main", str(docs)], check=True, capture_output=True)
+            git(docs, "config", "user.email", "lumen@example.test")
+            git(docs, "config", "user.name", "Lumen Test")
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "workspace.json").write_text(json.dumps({"docs_repo": str(docs)}), encoding="utf-8")
+            draft = docs / "stories" / "DRAFT-1"
+            ready = docs / "stories" / "READY-1"
+            for story_dir, meta in (
+                (draft, {"jiraKey": "DRAFT-1", "title": "Draft story", "businessStatus": "draft", "technicalStatus": "draft", "deliveryStatus": "not_started"}),
+                (ready, {"jiraKey": "READY-1", "title": "Ready story", "businessStatus": "ready", "technicalStatus": "approved", "deliveryStatus": "not_started", "linkedRepos": ["service"]}),
+            ):
+                story_dir.mkdir(parents=True)
+                (story_dir / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
+                (story_dir / "story.md").write_text("# Story\n\nHello\n", encoding="utf-8")
+                (story_dir / "technical-plan.md").write_text("# Plan\n\nSteps\n", encoding="utf-8")
+            unrelated = docs / "notes.md"
+            unrelated.write_text("Leave me alone\n", encoding="utf-8")
+            git(docs, "add", "stories", "lumen/config/workspace.json")
+            git(docs, "commit", "-m", "Initialize stories")
+            git(docs, "remote", "add", "origin", str(remote))
+            git(docs, "push", "-u", "origin", "main")
+
+            listed = list_observatory_stories(workspace)
+            self.assertEqual({"DRAFT-1", "READY-1"}, {item["story"] for item in listed})
+            content = observatory_story_content(workspace, "DRAFT-1")
+            self.assertIn("Hello", content["story_markdown"])
+            result = save_observatory_story_content(workspace, "DRAFT-1", "# Story\n\nUpdated\n", "# Plan\n\nDone\n")
+            self.assertTrue(result["ok"])
+            self.assertEqual("[lumen] #DRAFT-1 feat: update DRAFT-1 story docs", result["subject"])
+            log = subprocess.run(["git", "-C", str(docs), "log", "-1", "--format=%s"], check=True, capture_output=True, text=True)
+            self.assertEqual("[lumen] #DRAFT-1 feat: update DRAFT-1 story docs", log.stdout.strip())
+            status = subprocess.run(["git", "-C", str(docs), "status", "--short"], check=True, capture_output=True, text=True)
+            self.assertEqual("?? notes.md", status.stdout.strip())
+            self.assertEqual("# Story\n\nUpdated\n", (draft / "story.md").read_text(encoding="utf-8"))
+
+    def test_docs_dir_resolves_relative_docs_repo_against_workspace_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "mbpass-workspace"
+            workspace = root / "lumen"
+            stories = root / "stories" / "DEMO-1"
+            stories.mkdir(parents=True)
+            (workspace / "config").mkdir(parents=True)
+            (workspace / "config" / "workspace.json").write_text(
+                json.dumps({"workspace_root": str(root), "docs_repo": ".", "layout": "nested"}),
+                encoding="utf-8",
+            )
+            (stories / "metadata.json").write_text(
+                json.dumps({"jiraKey": "DEMO-1", "title": "Demo", "businessStatus": "draft"}),
+                encoding="utf-8",
+            )
+            previous = Path.cwd()
+            try:
+                os.chdir(temp)
+                self.assertEqual(root.resolve(), dashboard_server.docs_dir_for_workspace(workspace))
+                listed = list_observatory_stories(workspace)
+            finally:
+                os.chdir(previous)
+            self.assertEqual(["DEMO-1"], [item["story"] for item in listed])
 
     def test_delivery_notification_uses_a_card_level_jira_link(self) -> None:
         renderer = load_delivery_notification_renderer()

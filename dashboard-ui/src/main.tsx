@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import mermaid from "mermaid";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { version as lumenVersion } from "../package.json";
@@ -11,8 +12,10 @@ import {
 } from "lucide-react";
 import "./styles.css";
 
+mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+
 type RecordValue = Record<string, any>;
-type Tab = "scan" | "delivery" | "repositories" | "prompts" | "settings";
+type Tab = "scan" | "delivery" | "observatory" | "repositories" | "prompts" | "settings";
 type NoticeTone = "success" | "error" | "info";
 type Notice = { message: string; tone: NoticeTone };
 type Notify = (message: string, tone?: NoticeTone) => void;
@@ -36,6 +39,7 @@ interface DashboardData extends RecordValue {
 const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
   { id: "scan", label: "AUTO SCAN", icon: ScanSearch },
   { id: "delivery", label: "AUTO DELIVERY", icon: Truck },
+  { id: "observatory", label: "OBSERVATORY", icon: Eye },
   { id: "repositories", label: "REPOSITORY", icon: FolderGit2 },
   { id: "prompts", label: "WORKFLOW", icon: Workflow },
   { id: "settings", label: "SETTINGS", icon: Settings2 }
@@ -44,6 +48,7 @@ const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
 const tabContext: Record<Tab, { title: string; description: string }> = {
   scan: { title: "AUTO SCAN", description: "Review history and manage tracked findings." },
   delivery: { title: "AUTO DELIVERY", description: "Story execution, verification, and pull request delivery." },
+  observatory: { title: "OBSERVATORY", description: "Browse and edit story briefs and technical plans." },
   repositories: { title: "REPOSITORY", description: "Local repositories, scan profiles, and delivery verification commands." },
   prompts: { title: "WORKFLOW", description: "The prompts, scripts, control points, and recovery paths behind each local automation." },
   settings: { title: "SETTINGS", description: "Workspace configuration, scheduling, and local integrations." }
@@ -78,10 +83,10 @@ function durationMs(value: unknown) {
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
 }
 function statusTone(value: unknown) {
-  const normalized = String(value || "unknown").toLowerCase();
-  if (/(completed|succeeded|clean|passed|resolved|synced|configured|included|available)/.test(normalized)) return "success";
-  if (/(failed|blocked|open)/.test(normalized)) return "danger";
-  if (/(progress|running|active|partial)/.test(normalized)) return "info";
+  const normalized = String(value || "unknown").toLowerCase().replaceAll("_", " ");
+  if (normalized === "open" || /(failed|blocked)/.test(normalized)) return "danger";
+  if (/(completed|succeeded|clean|passed|resolved|synced|configured|included|available|approved|ready|done|pr open)/.test(normalized)) return "success";
+  if (/(progress|running|active|partial|draft|not started)/.test(normalized)) return "info";
   return "neutral";
 }
 function titleStatus(value: unknown) {
@@ -92,7 +97,8 @@ function titleStatus(value: unknown) {
     "in progress": "In progress", running: "Running", configured: "Active",
     "not configured": "Not set", resolved: "Resolved", synced: "Synced",
     ignored: "Ignored", blocked: "Blocked", pending: "Pending", active: "Active",
-    pr_open: "Open", "pr open": "Open", in_progress: "Open"
+    "pr open": "PR open", "not started": "Not started", "dev done": "Dev done",
+    approved: "Approved", ready: "Ready", draft: "Draft", done: "Done", clarifying: "Clarifying", changed: "Changed"
   };
   return labels[raw] || raw.replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -115,6 +121,75 @@ function Badge({ value }: { value: unknown }) {
   return <span className={`badge ${statusTone(value)}`}>{titleStatus(value)}</span>;
 }
 
+function StoryStatusMeta({ business, technical, delivery }: { business: string; technical: string; delivery: string }) {
+  return <div className="observatory-meta">
+    <span className="observatory-meta-item"><em>Business</em><Badge value={business || "draft"} /></span>
+    <span className="observatory-meta-item"><em>Technical</em><Badge value={technical || "draft"} /></span>
+    <span className="observatory-meta-item"><em>Delivery</em><Badge value={delivery || "not_started"} /></span>
+  </div>;
+}
+
+function StoryStatusPills({ business, technical, delivery }: { business: string; technical: string; delivery: string }) {
+  return <span className="observatory-pills" title={`Business ${titleStatus(business || "draft")} · Technical ${titleStatus(technical || "draft")} · Delivery ${titleStatus(delivery || "not_started")}`}>
+    <Badge value={business || "draft"} />
+    <Badge value={technical || "draft"} />
+    <Badge value={delivery || "not_started"} />
+  </span>;
+}
+
+function MermaidBlock({ chart }: { chart: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const host = ref.current;
+    if (!host) return;
+    let cancelled = false;
+    const id = `mmd-${Math.random().toString(36).slice(2)}`;
+    void mermaid.render(id, chart).then(({ svg }) => {
+      if (!cancelled) host.innerHTML = svg;
+    }).catch((err) => {
+      if (!cancelled) host.innerHTML = `<pre class="mermaid-error">${String(err)}</pre>`;
+    });
+    return () => { cancelled = true; };
+  }, [chart]);
+  return <div className="mermaid-block" ref={ref} />;
+}
+
+function MarkdownBody({ content }: { content: string }) {
+  return <div className="markdown-content">
+    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+      code({ className, children }) {
+        const value = String(children).replace(/\n$/, "");
+        if (/language-mermaid/.test(className || "")) return <MermaidBlock chart={value} />;
+        if (value.includes("\n")) return <pre><code className={className}>{value}</code></pre>;
+        return <code className={className}>{children}</code>;
+      }
+    }}>{content}</ReactMarkdown>
+  </div>;
+}
+
+function splitFrontmatter(markdown: string) {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) return { frontmatter: "", body: markdown };
+  return { frontmatter: match[1], body: match[2] };
+}
+
+function joinFrontmatter(frontmatter: string, body: string) {
+  if (!frontmatter) return body;
+  return `---\n${frontmatter}\n---\n${body.startsWith("\n") ? body : `\n${body}`}`;
+}
+
+function ObservatoryDocEditor({ value, onChange, editing }: { value: string; onChange: (next: string) => void; editing: boolean }) {
+  const { frontmatter, body } = splitFrontmatter(value);
+  const setBody = (nextBody: string) => onChange(joinFrontmatter(frontmatter, nextBody));
+  if (editing) {
+    return <div className="observatory-doc editing">
+      <div className="observatory-doc-preview"><MarkdownBody content={body} /></div>
+      <textarea className="observatory-doc-input" value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} aria-label="Document body" />
+    </div>;
+  }
+  return <div className="observatory-doc"><MarkdownBody content={body} /></div>;
+}
+
 function IconButton({ label, children, onClick, danger = false, disabled = false, className = "" }: { label: string; children: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean; className?: string }) {
   return <button className={`icon-button ${danger ? "danger" : ""} ${className}`} title={label} aria-label={label} disabled={disabled} onClick={onClick}>{children}</button>;
 }
@@ -135,7 +210,8 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("lumen-sidebar-collapsed") === "true");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
-  const notify: Notify = (message, tone = "info") => setNotice({ message, tone });
+  const [observatoryDirty, setObservatoryDirty] = useState(false);
+  const notify = useCallback<Notify>((message, tone = "info") => setNotice({ message, tone }), []);
 
   const load = async () => {
     setLoading(true);
@@ -157,22 +233,28 @@ function App() {
   useEffect(() => { window.localStorage.setItem("lumen-sidebar-collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
   useEffect(() => { const onPopState = () => setActiveTab((tabItems.find((item) => `/${item.id}` === window.location.pathname)?.id || "scan") as Tab); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []);
 
-  const confirmLeaveSettings = () => !settingsDirty || window.confirm("You have unsaved Settings changes. Leave without saving?");
+  const confirmLeaveUnsaved = () => {
+    if (settingsDirty && !window.confirm("You have unsaved Settings changes. Leave without saving?")) return false;
+    if (observatoryDirty && !window.confirm("You have unsaved Observatory changes. Leave without saving?")) return false;
+    return true;
+  };
   const changeProject = (slug: string) => {
-    if (slug !== project && !confirmLeaveSettings()) return;
+    if (slug !== project && !confirmLeaveUnsaved()) return;
     const url = new URL(window.location.href);
     url.searchParams.set("project", slug);
     window.history.replaceState({}, "", `${window.location.pathname}${url.search}`);
     setProject(slug);
     setSettingsDirty(false);
+    setObservatoryDirty(false);
   };
   const changeTab = (tab: Tab) => {
-    if (tab !== activeTab && !confirmLeaveSettings()) return;
+    if (tab !== activeTab && !confirmLeaveUnsaved()) return;
     const url = new URL(window.location.href);
     url.pathname = `/${tab}`;
     window.history.pushState({}, "", url);
     setActiveTab(tab);
     if (tab !== "settings") setSettingsDirty(false);
+    if (tab !== "observatory") setObservatoryDirty(false);
   };
   const interact = async (path: string, json: RecordValue, message: string) => {
     try { await request(path, project, { method: "POST", json }); notify(message, "success"); await load(); }
@@ -204,10 +286,11 @@ function App() {
         {error && <div className="status-note"><Activity size={15} />{error}</div>}
         {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
         {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
-        {data && activeTab === "delivery" && <DeliveryView data={data} project={project} notify={setNotice} reload={load} />}
+        {data && activeTab === "delivery" && <DeliveryView data={data} project={project} notify={notify} reload={load} />}
+        {data && activeTab === "observatory" && <ObservatoryView project={project} notify={notify} onDirtyChange={setObservatoryDirty} />}
         {data && activeTab === "repositories" && <RepositoryView data={data} interact={interact} />}
-        {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={setNotice} />}
-        {data && activeTab === "settings" && <SettingsView data={data} project={project} notify={setNotice} onDirtyChange={setSettingsDirty} reload={load} />}
+        {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={notify} />}
+        {data && activeTab === "settings" && <SettingsView data={data} project={project} notify={notify} onDirtyChange={setSettingsDirty} reload={load} />}
       </div>
     </section>
     {notice && <div className={`toast toast-${notice.tone}`} role="status">{notice.tone === "success" ? <CircleCheck size={16} /> : notice.tone === "error" ? <CircleAlert size={16} /> : <CircleDot size={16} />}<span>{notice.message}</span></div>}
@@ -396,6 +479,142 @@ function DeleteHistoryDialog({ run, busy, onClose, onConfirm }: { run: RecordVal
   return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal delete-history-modal" role="dialog" aria-modal="true" aria-label="Delete delivery history" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Delete delivery history?</strong><p className="modal-copy">This removes the {story} record, log, and trace files. This action cannot be undone.</p></div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button danger delete-confirm" disabled={busy} onClick={onConfirm}><Trash2 size={14} />{busy ? "Deleting…" : "Delete record"}</button></footer></section></div>;
 }
 
+function ObservatoryView({ project, notify, onDirtyChange }: { project: string; notify: Notify; onDirtyChange: (dirty: boolean) => void }) {
+  const initialStory = new URLSearchParams(window.location.search).get("story") || "";
+  const [stories, setStories] = useState<RecordValue[]>([]);
+  const [selected, setSelected] = useState(initialStory);
+  const [title, setTitle] = useState("");
+  const [jiraKey, setJiraKey] = useState("");
+  const [jiraUrl, setJiraUrl] = useState("");
+  const [businessStatus, setBusinessStatus] = useState("");
+  const [technicalStatus, setTechnicalStatus] = useState("");
+  const [deliveryStatus, setDeliveryStatus] = useState("");
+  const [storyMarkdown, setStoryMarkdown] = useState("");
+  const [planMarkdown, setPlanMarkdown] = useState("");
+  const [baseline, setBaseline] = useState({ story: "", plan: "" });
+  const [docTab, setDocTab] = useState<"story" | "plan">("story");
+  const [editing, setEditing] = useState(false);
+  const [loadingList, setLoadingList] = useState(true);
+  const [loadingContent, setLoadingContent] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const dirty = storyMarkdown !== baseline.story || planMarkdown !== baseline.plan;
+  useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
+  const loadStories = useCallback(async () => {
+    setLoadingList(true);
+    try {
+      const response = await request("/api/stories", project);
+      const items = Array.isArray(response.stories) ? response.stories : [];
+      setStories(items);
+      setSelected((current) => {
+        if (current && items.some((item: RecordValue) => item.story === current)) return current;
+        return String(items[0]?.story || "");
+      });
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Unable to load stories", "error");
+    } finally {
+      setLoadingList(false);
+    }
+  }, [project, notify]);
+  const loadContent = useCallback(async (story: string) => {
+    if (!story) return;
+    setLoadingContent(true);
+    setEditing(false);
+    setDocTab("story");
+    try {
+      const response = await request(`/api/stories/content?story=${encodeURIComponent(story)}`, project);
+      const nextStory = String(response.story_markdown || "");
+      const nextPlan = String(response.plan_markdown || "");
+      setTitle(String(response.title || story));
+      setJiraKey(String(response.jira_key || ""));
+      setJiraUrl(String(response.jira_url || ""));
+      setBusinessStatus(String(response.businessStatus || ""));
+      setTechnicalStatus(String(response.technicalStatus || ""));
+      setDeliveryStatus(String(response.deliveryStatus || ""));
+      setStoryMarkdown(nextStory);
+      setPlanMarkdown(nextPlan);
+      setBaseline({ story: nextStory, plan: nextPlan });
+      const url = new URL(window.location.href);
+      url.searchParams.set("story", story);
+      window.history.replaceState({}, "", `${url.pathname}${url.search}`);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Unable to load story content", "error");
+    } finally {
+      setLoadingContent(false);
+    }
+  }, [project, notify]);
+  useEffect(() => { void loadStories(); }, [loadStories]);
+  useEffect(() => { if (selected) void loadContent(selected); }, [selected, loadContent]);
+  const selectStory = (story: string) => {
+    if (story === selected) return;
+    if (dirty && !window.confirm("You have unsaved Observatory changes. Switch stories without saving?")) return;
+    setSelected(story);
+  };
+  const save = async () => {
+    if (!selected || !dirty) return;
+    setSaving(true);
+    try {
+      const result = await request("/api/stories/content", project, {
+        method: "POST",
+        json: { story: selected, story_markdown: storyMarkdown, plan_markdown: planMarkdown },
+      });
+      setBaseline({ story: storyMarkdown, plan: planMarkdown });
+      setEditing(false);
+      notify(String(result.subject || "Story docs saved"), "success");
+      await loadStories();
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Unable to save story docs", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <div className="observatory-layout">
+    <aside className="observatory-list panel">
+      <div className="panel-header"><h3>Stories</h3><span className="muted">{stories.length}</span></div>
+      <div className="observatory-list-body">
+        {loadingList ? <div className="loading-state"><LoaderCircle size={18} className="spin" /> Loading…</div> : null}
+        {!loadingList && !stories.length ? <Empty label="No stories found in the docs repository." /> : null}
+        {stories.map((item) => <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}><strong>{text(item.title, item.story)}</strong><span>{text(item.jira_key || item.story)}<StoryStatusPills business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} delivery={String(item.deliveryStatus || "not_started")} /></span></button>)}
+      </div>
+    </aside>
+    <section className="observatory-detail">
+      {!selected ? <Empty label="Select a story to inspect." /> : <>
+        <div className="observatory-header panel">
+          <div>
+            <div className="observatory-title-row">
+              <h2>{text(title, selected)}</h2>
+              <div className="panel-actions">
+                <span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved" : "Saved"}</span>
+                <button className="button secondary" disabled={loadingContent} onClick={() => setEditing((current) => !current)}>{editing ? "Done" : "Edit"}</button>
+                <button className="button primary" disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
+              </div>
+            </div>
+            <div className="observatory-subheader">
+              {jiraUrl ? <a href={jiraUrl} target="_blank" rel="noreferrer">{text(jiraKey || selected)} <ExternalLink size={12} /></a> : <code>{text(jiraKey || selected)}</code>}
+              <StoryStatusMeta business={businessStatus || "draft"} technical={technicalStatus || "draft"} delivery={deliveryStatus || "not_started"} />
+            </div>
+          </div>
+        </div>
+        {loadingContent ? <div className="loading-state"><LoaderCircle size={20} className="spin" /> Loading story…</div> : <section className="panel observatory-doc-panel">
+          <header className="panel-header">
+            <div className="observatory-tabs" role="tablist">
+              <button type="button" role="tab" aria-selected={docTab === "story"} className={docTab === "story" ? "active" : ""} onClick={() => setDocTab("story")}>Story</button>
+              <button type="button" role="tab" aria-selected={docTab === "plan"} className={docTab === "plan" ? "active" : ""} onClick={() => setDocTab("plan")}>Technical plan</button>
+            </div>
+          </header>
+          {docTab === "story"
+            ? <ObservatoryDocEditor value={storyMarkdown} onChange={setStoryMarkdown} editing={editing} />
+            : <ObservatoryDocEditor value={planMarkdown} onChange={setPlanMarkdown} editing={editing} />}
+        </section>}
+      </>}
+    </section>
+  </div>;
+}
+
 function StoryReference({ jiraKey, title }: { jiraKey: string; title?: string }) { return <span className="story-reference">{title ? <><code>{text(jiraKey)}</code><span className="story-reference-title">{title}</span></> : <code>{text(jiraKey, "No active delivery")}</code>}</span>; }
 function DeliveryFlow({ stages, deliveryStatus, currentStep, startedAt, finishedAt, remediation, now, onStageClick }: { stages: RecordValue[]; deliveryStatus: string; currentStep?: string; startedAt?: string; finishedAt?: string; remediation?: RecordValue; now: number; onStageClick: (stage: RecordValue) => void }) {
   const terminalSuccess = /completed|dev_done|pr_open/i.test(deliveryStatus);
@@ -548,7 +767,7 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
 
 function PromptInspectorDialog({ item, content, onChange, onClose, onSave }: { item: { mode: "scan" | "delivery"; path: string }; content: string; onChange: (value: string) => void; onClose: () => void; onSave: () => void }) {
   const meta = promptMeta(item);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : "Auto Delivery"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><div className="markdown-content"><ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown></div></article></div></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={onSave}><Save size={14} />Save prompt</button></footer></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : "Auto Delivery"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><MarkdownBody content={content} /></article></div></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={onSave}><Save size={14} />Save prompt</button></footer></section></div>;
 }
 
 function HelpTip({ children }: { children: React.ReactNode }) {

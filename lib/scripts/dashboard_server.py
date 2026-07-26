@@ -26,7 +26,7 @@ from delivery_launchd import install as install_delivery_schedule
 from delivery_launchd import remove as remove_delivery_schedule
 from delivery_launchd import status as delivery_schedule_status
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees
-from delivery_workspace import load_story_context, read_json as read_delivery_json, workspace_lumen_dir
+from delivery_workspace import find_story_dir, load_story_context, read_json as read_delivery_json, workspace_lumen_dir
 from jira_delivery_sync import add_delivery_comment, jira_delivery_config, should_sync_jira, transition_issue
 from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, twg_ready
 from issue_registry import set_issue_status
@@ -35,7 +35,7 @@ from scan_launchd import install as install_scan_schedule
 from scan_launchd import remove as remove_scan_schedule
 from scan_launchd import status as scan_schedule_status
 from discover_repos import default_branch, infer_profile
-from sync_delivery_docs import commit_story_metadata
+from sync_delivery_docs import commit_paths, commit_story_metadata, lumen_commit_subject
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -705,12 +705,7 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
 
 
 def available_delivery_stories(workspace: Path, current: dict[str, Any]) -> list[dict[str, str]]:
-    docs_value = str(current.get("docs_dir") or "").strip()
-    if docs_value:
-        docs_dir = Path(docs_value).expanduser()
-    else:
-        workspace_config = load_json(workspace / "config" / "workspace.json", {})
-        docs_dir = Path(str(workspace_config.get("docs_repo") or workspace.parent)).expanduser()
+    docs_dir = docs_dir_for_workspace(workspace, current)
     stories = docs_dir / "stories"
     if not stories.is_dir():
         return []
@@ -725,6 +720,102 @@ def available_delivery_stories(workspace: Path, current: dict[str, Any]) -> list
             continue
         result.append({"story": story_dir.name, "jira_key": str(metadata.get("jiraKey") or ""), "title": str(metadata.get("title") or "")})
     return result
+
+
+def docs_dir_for_workspace(workspace: Path, current: dict[str, Any] | None = None) -> Path:
+    current = current if isinstance(current, dict) else {}
+    docs_value = str(current.get("docs_dir") or "").strip()
+    if docs_value:
+        return Path(docs_value).expanduser().resolve()
+    workspace_config = load_json(workspace / "config" / "workspace.json", {})
+    configured_root = str(workspace_config.get("workspace_root") or "").strip()
+    root = Path(configured_root).expanduser().resolve() if configured_root else workspace.parent.resolve()
+    docs_repo = str(workspace_config.get("docs_repo") or ".").strip() or "."
+    docs_path = Path(docs_repo).expanduser()
+    if docs_path.is_absolute():
+        return docs_path.resolve()
+    return (root / docs_path).resolve()
+
+
+def safe_story_dir(docs_dir: Path, story_ref: str) -> Path:
+    stories_root = (docs_dir / "stories").resolve()
+    if not stories_root.is_dir():
+        raise ValueError(f"Stories directory not found: {stories_root}")
+    story_dir = find_story_dir(docs_dir, story_ref)
+    try:
+        story_dir.resolve().relative_to(stories_root)
+    except ValueError as exc:
+        raise ValueError("Invalid story path") from exc
+    return story_dir.resolve()
+
+
+def story_markdown_paths(story_dir: Path, metadata: dict[str, Any]) -> tuple[Path, Path]:
+    story_md = story_dir / "story.md"
+    plan_name = str(metadata.get("technicalPlanFile") or "technical-plan.md").strip() or "technical-plan.md"
+    if "/" in plan_name or plan_name.startswith(".") or Path(plan_name).name != plan_name:
+        raise ValueError("Invalid technical plan file name")
+    return story_md, story_dir / plan_name
+
+
+def list_observatory_stories(workspace: Path) -> list[dict[str, Any]]:
+    docs_dir = docs_dir_for_workspace(workspace)
+    stories = docs_dir / "stories"
+    if not stories.is_dir():
+        return []
+    result: list[dict[str, Any]] = []
+    for story_dir in sorted(item for item in stories.iterdir() if item.is_dir()):
+        metadata = read_delivery_json(story_dir / "metadata.json", {})
+        result.append(
+            {
+                "story": story_dir.name,
+                "title": str(metadata.get("title") or story_dir.name),
+                "jira_key": str(metadata.get("jiraKey") or ""),
+                "jira_url": str(metadata.get("jiraUrl") or ""),
+                "businessStatus": str(metadata.get("businessStatus") or ""),
+                "technicalStatus": str(metadata.get("technicalStatus") or ""),
+                "deliveryStatus": str(metadata.get("deliveryStatus") or "not_started"),
+                "updatedAt": str(metadata.get("updatedAt") or ""),
+            }
+        )
+    return result
+
+
+def observatory_story_content(workspace: Path, story_ref: str) -> dict[str, Any]:
+    docs_dir = docs_dir_for_workspace(workspace)
+    story_dir = safe_story_dir(docs_dir, story_ref)
+    metadata = read_delivery_json(story_dir / "metadata.json", {})
+    story_md, plan_md = story_markdown_paths(story_dir, metadata)
+    return {
+        "story": story_dir.name,
+        "title": str(metadata.get("title") or story_dir.name),
+        "jira_key": str(metadata.get("jiraKey") or ""),
+        "jira_url": str(metadata.get("jiraUrl") or ""),
+        "businessStatus": str(metadata.get("businessStatus") or ""),
+        "technicalStatus": str(metadata.get("technicalStatus") or ""),
+        "deliveryStatus": str(metadata.get("deliveryStatus") or "not_started"),
+        "metadata": metadata,
+        "story_markdown": story_md.read_text(encoding="utf-8") if story_md.is_file() else "",
+        "plan_markdown": plan_md.read_text(encoding="utf-8") if plan_md.is_file() else "",
+        "plan_path": plan_md.name,
+        "story_path": "story.md",
+    }
+
+
+def save_observatory_story_content(workspace: Path, story_ref: str, story_markdown: str, plan_markdown: str) -> dict[str, Any]:
+    docs_dir = docs_dir_for_workspace(workspace)
+    story_dir = safe_story_dir(docs_dir, story_ref)
+    metadata = read_delivery_json(story_dir / "metadata.json", {})
+    story_md, plan_md = story_markdown_paths(story_dir, metadata)
+    story_md.write_text(str(story_markdown).rstrip() + "\n", encoding="utf-8")
+    plan_md.write_text(str(plan_markdown).rstrip() + "\n", encoding="utf-8")
+    ticket = str(metadata.get("jiraKey") or metadata.get("storyId") or story_dir.name).strip() or "N/A"
+    subject = lumen_commit_subject(ticket, f"update {ticket} story docs")
+    relative_paths = [
+        str(story_md.relative_to(docs_dir)),
+        str(plan_md.relative_to(docs_dir)),
+    ]
+    commit = commit_paths(docs_dir, relative_paths, subject, push=True)
+    return {"ok": True, "story": story_dir.name, "commit": commit, "subject": subject}
 
 
 def trace_directory(workspace: Path, run_id: str) -> Path:
@@ -1166,7 +1257,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/delivery/status-options":
             return self.respond_json(HTTPStatus.OK, jira_status_options(workspace))
-        if parsed.path in {"/", "/dashboard.html", "/scan", "/delivery", "/repositories", "/prompts", "/settings"}:
+        if parsed.path == "/api/stories":
+            return self.respond_json(HTTPStatus.OK, {"stories": list_observatory_stories(workspace)})
+        if parsed.path == "/api/stories/content":
+            try:
+                return self.respond_json(HTTPStatus.OK, observatory_story_content(workspace, query.get("story", [""])[0]))
+            except (OSError, ValueError, FileNotFoundError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path in {"/", "/dashboard.html", "/scan", "/delivery", "/repositories", "/prompts", "/settings", "/observatory"}:
             return self.serve_file(self.server.workspace / "dashboard.html", "text/html; charset=utf-8")
         if parsed.path == "/dashboard-data.js":
             return self.serve_file(self.server.workspace / "dashboard-data.js", "application/javascript; charset=utf-8")
@@ -1198,6 +1296,19 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     raise ValueError("Prompt file does not exist")
                 path.write_text(str(body.get("content", "")).rstrip() + "\n", encoding="utf-8")
                 return self.respond_json(HTTPStatus.OK, {"saved_at": utc_now()})
+            if parsed.path == "/api/stories/content":
+                story = str(body.get("story") or "").strip()
+                if not story:
+                    raise ValueError("Story is required")
+                return self.respond_json(
+                    HTTPStatus.OK,
+                    save_observatory_story_content(
+                        workspace,
+                        story,
+                        str(body.get("story_markdown") or ""),
+                        str(body.get("plan_markdown") or ""),
+                    ),
+                )
             if parsed.path == "/api/workspace":
                 days = int(body.get("scan_window_days", 0))
                 if days < 1 or days > 365:
