@@ -155,13 +155,14 @@ function StoryListMeta({ date, assignee }: { date: string; assignee: string }) {
 function StoryListStatus({ business, technical }: { business: string; technical: string }) {
   const businessTone = statusTone(business || "draft");
   const technicalTone = statusTone(technical || "draft");
+  const icon = (tone: string) => tone === "success" ? <i className="observatory-status-dot" /> : <CircleDot size={11} />;
   return <div className="observatory-story-status">
     <span className={`observatory-story-status-item ${businessTone}`}>
-      {businessTone === "success" ? <i className="observatory-status-dot" /> : <CircleDot size={11} />}
+      {icon(businessTone)}
       Business {titleStatus(business || "draft")}
     </span>
     <span className={`observatory-story-status-item ${technicalTone}`}>
-      {technicalTone === "success" ? <CircleCheck size={12} /> : <CircleDot size={11} />}
+      {icon(technicalTone)}
       Technical {titleStatus(technical || "draft")}
     </span>
   </div>;
