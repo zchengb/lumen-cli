@@ -765,31 +765,37 @@ def story_date_value(metadata: dict[str, Any]) -> str:
     return ""
 
 
-def story_assignee_name(docs_dir: Path, metadata: dict[str, Any]) -> str:
+def story_assignee_name(docs_dir: Path, metadata: dict[str, Any], story_dir: Path | None = None) -> str:
     direct = str(metadata.get("jiraAssignee") or metadata.get("assignee") or "").strip()
     if direct:
         return direct
+    candidates: list[Path] = []
     snap = str(metadata.get("jiraSnapshotFile") or "").strip()
-    if not snap:
-        return ""
-    path = (docs_dir / snap).resolve()
-    try:
-        path.relative_to(docs_dir.resolve())
-    except ValueError:
-        return ""
-    if not path.is_file():
-        return ""
-    payload = load_json(path, {})
-    workitem = payload.get("workitem")
-    if isinstance(workitem, list):
-        workitem = workitem[0] if workitem else {}
-    if not isinstance(workitem, dict):
-        return ""
-    assignee = workitem.get("assignee")
-    if isinstance(assignee, dict):
-        return str(assignee.get("displayName") or assignee.get("display_name") or assignee.get("name") or "").strip()
-    if isinstance(assignee, str):
-        return assignee.strip()
+    if snap:
+        candidates.append(docs_dir / snap)
+    if story_dir is not None:
+        candidates.append(docs_dir / "lumen" / "context" / story_dir.name / "jira-import.json")
+    for path in candidates:
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(docs_dir.resolve())
+        except ValueError:
+            continue
+        if not resolved.is_file():
+            continue
+        payload = load_json(resolved, {})
+        workitem = payload.get("workitem")
+        if isinstance(workitem, list):
+            workitem = workitem[0] if workitem else {}
+        if not isinstance(workitem, dict):
+            continue
+        assignee = workitem.get("assignee")
+        if isinstance(assignee, dict):
+            name = str(assignee.get("displayName") or assignee.get("display_name") or assignee.get("name") or "").strip()
+            if name:
+                return name
+        if isinstance(assignee, str) and assignee.strip():
+            return assignee.strip()
     return ""
 
 
@@ -811,7 +817,7 @@ def list_observatory_stories(workspace: Path) -> list[dict[str, Any]]:
                 "technicalStatus": str(metadata.get("technicalStatus") or ""),
                 "deliveryStatus": str(metadata.get("deliveryStatus") or "not_started"),
                 "updatedAt": story_date_value(metadata),
-                "assignee": story_assignee_name(docs_dir, metadata),
+                "assignee": story_assignee_name(docs_dir, metadata, story_dir),
             }
         )
     return result
