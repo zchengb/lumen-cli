@@ -5,8 +5,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { version as lumenVersion } from "../package.json";
 import {
-  Activity, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
-  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, LoaderCircle,
+  Activity, Bold, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
+  Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, LoaderCircle,
   Play, RotateCcw, Save, ScanSearch, Settings2, Terminal, Trash2,
   Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow
 } from "lucide-react";
@@ -179,16 +179,46 @@ function joinFrontmatter(frontmatter: string, body: string) {
   return `---\n${frontmatter}\n---\n${body.startsWith("\n") ? body : `\n${body}`}`;
 }
 
-function ObservatoryDocEditor({ value, onChange, editing }: { value: string; onChange: (next: string) => void; editing: boolean }) {
+function applyMarkdownEdit(value: string, start: number, end: number, before: string, after = "") {
+  const selected = value.slice(start, end);
+  const inner = selected || "text";
+  const insertion = `${before}${inner}${after}`;
+  return {
+    next: `${value.slice(0, start)}${insertion}${value.slice(end)}`,
+    selectionStart: start + before.length,
+    selectionEnd: start + before.length + inner.length,
+  };
+}
+
+function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const { frontmatter, body } = splitFrontmatter(value);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const setBody = (nextBody: string) => onChange(joinFrontmatter(frontmatter, nextBody));
-  if (editing) {
-    return <div className="observatory-doc editing">
-      <div className="observatory-doc-preview"><MarkdownBody content={body} /></div>
-      <textarea className="observatory-doc-input" value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} aria-label="Document body" />
-    </div>;
-  }
-  return <div className="observatory-doc"><MarkdownBody content={body} /></div>;
+  const edit = (before: string, after = "") => {
+    const area = textareaRef.current;
+    if (!area) {
+      setBody(`${body}${before}text${after}`);
+      return;
+    }
+    const result = applyMarkdownEdit(body, area.selectionStart, area.selectionEnd, before, after);
+    setBody(result.next);
+    requestAnimationFrame(() => {
+      area.focus();
+      area.setSelectionRange(result.selectionStart, result.selectionEnd);
+    });
+  };
+  return <div className="observatory-doc">
+    <div className="observatory-toolbar" role="toolbar" aria-label="Markdown tools">
+      <button type="button" title="Heading" onClick={() => edit("## ", "")}><Heading2 size={14} /></button>
+      <button type="button" title="Bold" onClick={() => edit("**", "**")}><Bold size={14} /></button>
+      <button type="button" title="Italic" onClick={() => edit("*", "*")}><Italic size={14} /></button>
+      <button type="button" title="Link" onClick={() => edit("[", "](https://)")}><Link2 size={14} /></button>
+      <button type="button" title="List" onClick={() => edit("- ", "")}><List size={14} /></button>
+      <button type="button" title="Code" onClick={() => edit("`", "`")}><Code2 size={14} /></button>
+    </div>
+    <div className="observatory-doc-preview"><MarkdownBody content={body} /></div>
+    <textarea ref={textareaRef} className="observatory-doc-input" value={body} onChange={(event) => setBody(event.target.value)} spellCheck={false} aria-label="Document body" />
+  </div>;
 }
 
 function IconButton({ label, children, onClick, danger = false, disabled = false, className = "" }: { label: string; children: React.ReactNode; onClick: () => void; danger?: boolean; disabled?: boolean; className?: string }) {
@@ -277,7 +307,7 @@ function App() {
         <small>{sidebarCollapsed ? `V${lumenVersion}` : `Version ${lumenVersion}`}</small>
       </div>
     </aside>
-    <IconButton className="sidebar-toggle" label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onClick={() => setSidebarCollapsed((value) => !value)}>{sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}</IconButton>
+    <button type="button" className="icon-button sidebar-toggle" title={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={sidebarCollapsed ? "Expand navigation" : "Collapse navigation"} onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); setSidebarCollapsed((value) => !value); }}>{sidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}</button>
     <section className="content-area">
       <header className="masthead">
         <div className="masthead-context"><strong>{context.title}</strong><span>{context.description}</span></div>
@@ -493,7 +523,6 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   const [planMarkdown, setPlanMarkdown] = useState("");
   const [baseline, setBaseline] = useState({ story: "", plan: "" });
   const [docTab, setDocTab] = useState<"story" | "plan">("story");
-  const [editing, setEditing] = useState(false);
   const [loadingList, setLoadingList] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -523,7 +552,6 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   const loadContent = useCallback(async (story: string) => {
     if (!story) return;
     setLoadingContent(true);
-    setEditing(false);
     setDocTab("story");
     try {
       const response = await request(`/api/stories/content?story=${encodeURIComponent(story)}`, project);
@@ -562,7 +590,6 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         json: { story: selected, story_markdown: storyMarkdown, plan_markdown: planMarkdown },
       });
       setBaseline({ story: storyMarkdown, plan: planMarkdown });
-      setEditing(false);
       notify(String(result.subject || "Story docs saved"), "success");
       await loadStories();
     } catch (err) {
@@ -572,6 +599,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
     }
   };
   const storyKey = text(jiraKey || selected);
+  const storyTitle = text(title, selected);
   return <div className="observatory-layout">
     <aside className="observatory-list panel">
       <div className="panel-header"><h3>Stories</h3><span className="muted">{stories.length}</span></div>
@@ -580,9 +608,15 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         {!loadingList && !stories.length ? <Empty label="No stories found in the docs repository." /> : null}
         {stories.map((item) => {
           const key = text(item.jira_key || item.story);
+          const itemTitle = text(item.title, item.story);
+          const href = String(item.jira_url || "");
           return <button className={`observatory-story ${selected === item.story ? "selected" : ""}`} key={item.story} onClick={() => selectStory(String(item.story))}>
-            <strong><span className="observatory-key">{key}</span><span className="observatory-story-title">{text(item.title, item.story)}</span></strong>
-            <StoryStatusPills business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
+            <div className="observatory-story-row">
+              {href
+                ? <a className="observatory-story-link" href={href} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></a>
+                : <span className="observatory-story-link"><span className="observatory-key">{key}</span><span className="observatory-story-title">{itemTitle}</span></span>}
+              <StoryStatusPills business={String(item.businessStatus || "draft")} technical={String(item.technicalStatus || "draft")} />
+            </div>
           </button>;
         })}
       </div>
@@ -593,12 +627,12 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
           <div>
             <div className="observatory-title-row">
               <h2>
-                {jiraUrl ? <a className="observatory-key" href={jiraUrl} target="_blank" rel="noreferrer">{storyKey} <ExternalLink size={12} /></a> : <span className="observatory-key">{storyKey}</span>}
-                <span className="observatory-heading-title">{text(title, selected)}</span>
+                {jiraUrl
+                  ? <a className="observatory-heading-link" href={jiraUrl} target="_blank" rel="noreferrer"><span className="observatory-key">{storyKey}</span><span className="observatory-heading-title">{storyTitle}</span><ExternalLink size={12} /></a>
+                  : <><span className="observatory-key">{storyKey}</span><span className="observatory-heading-title">{storyTitle}</span></>}
               </h2>
               <div className="panel-actions observatory-actions">
                 <span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved" : "Saved"}</span>
-                <button type="button" className="button" disabled={loadingContent} onClick={() => setEditing((current) => !current)}>{editing ? "Done" : "Edit"}</button>
                 <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
               </div>
             </div>
@@ -615,8 +649,8 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
             </div>
           </header>
           {docTab === "story"
-            ? <ObservatoryDocEditor value={storyMarkdown} onChange={setStoryMarkdown} editing={editing} />
-            : <ObservatoryDocEditor value={planMarkdown} onChange={setPlanMarkdown} editing={editing} />}
+            ? <ObservatoryDocEditor value={storyMarkdown} onChange={setStoryMarkdown} />
+            : <ObservatoryDocEditor value={planMarkdown} onChange={setPlanMarkdown} />}
         </section>}
       </>}
     </section>
