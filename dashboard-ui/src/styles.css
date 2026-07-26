@@ -193,7 +193,7 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .fact .story-reference,.story-reference{display:flex;align-items:baseline;flex-wrap:nowrap;gap:8px;min-width:0;max-width:100%}
 .fact .story-reference code,.story-reference code{display:inline;flex:none;margin:0;white-space:nowrap}
 .fact .story-reference-title,.story-reference-title{display:inline;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.modal-body.compact .field{display:grid;gap:6px;margin-top:12px}.modal-body.compact .field>span{color:#777780;font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}.modal-body.compact .field select{width:100%;height:36px;padding:0 10px;border:1px solid #d8d8dd;border-radius:6px;background:#fff;color:#28282e;font-size:13px}
+.modal-body.compact .field{display:grid;gap:6px;margin-top:12px;min-width:0;width:100%}.modal-body.compact .field>span{color:#777780;font-size:10px;font-weight:650;letter-spacing:.06em;text-transform:uppercase}.modal-body.compact .field select{width:100%;max-width:100%;min-width:0;height:36px;padding:0 10px;border:1px solid #d8d8dd;border-radius:6px;background:#fff;color:#28282e;font-size:13px}
 
 .modal-backdrop{animation:backdrop-enter .2s ease-out}
 .modal{animation:modal-enter .28s cubic-bezier(.23,1,.32,1)}

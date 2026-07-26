@@ -635,7 +635,7 @@ function App() {
       <div className="page-content" key={activeTab}>
         {error && <div className="status-note"><Activity size={15} />{error}</div>}
         {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
-        {data && activeTab === "scan" && <ScanView data={data} project={project} interact={interact} />}
+        {data && activeTab === "scan" && <ScanView data={data} project={project} notify={notify} reload={load} />}
         {data && activeTab === "delivery" && <DeliveryView data={data} project={project} notify={notify} reload={load} />}
         {data && activeTab === "observatory" && <ObservatoryView project={project} notify={notify} onDirtyChange={setObservatoryDirty} />}
         {data && activeTab === "repositories" && <RepositoryView data={data} interact={interact} />}
@@ -651,25 +651,89 @@ function PageIntro({ title, description, action }: { title: string; description:
   return <div className="page-intro"><div><h1>{title}</h1><p>{description}</p></div>{action}</div>;
 }
 
-function ScanView({ data, project, interact }: { data: DashboardData; project: string; interact: (path: string, json: RecordValue, message: string) => Promise<void> }) {
+function deliveryStoryOptions(availableStories: RecordValue[], current?: RecordValue) {
+  const options: Array<{ value: string; label: string }> = [];
+  const seen = new Set<string>();
+  const push = (story: string, jiraKey: string, title: string) => {
+    const value = (story || jiraKey).trim();
+    if (!value) return;
+    const aliases = [value, jiraKey, story].map((item) => item.trim().toLowerCase()).filter(Boolean);
+    if (aliases.some((alias) => seen.has(alias))) return;
+    for (const alias of aliases) seen.add(alias);
+    const key = (jiraKey || story || value).trim();
+    const name = title.trim();
+    options.push({ value, label: name ? `${key} · ${name}` : key });
+  };
+  for (const item of availableStories) {
+    push(String(item.story || ""), String(item.jira_key || ""), String(item.title || ""));
+  }
+  if (current && /failed|blocked|not_started/i.test(String(current.delivery_status || ""))) {
+    push(String(current.story_id || ""), String(current.jira_key || ""), String(current.story_title || ""));
+  }
+  return options;
+}
+
+function isDeliveryReadyStory(item: RecordValue) {
+  const business = String(item.businessStatus || "").toLowerCase();
+  const technical = String(item.technicalStatus || "").toLowerCase();
+  const delivery = String(item.deliveryStatus || "not_started").toLowerCase();
+  return business === "ready" && technical === "approved" && ["", "not_started", "blocked"].includes(delivery);
+}
+
+function ScanView({ data, project, notify, reload }: { data: DashboardData; project: string; notify: Notify; reload: () => Promise<void> }) {
   const stats = data.run_stats || {};
   const issues = data.issues || [];
   const runs = data.runs || [];
   const [ignoreCandidate, setIgnoreCandidate] = useState<RecordValue | null>(null);
   const [filter, setFilter] = useState("all");
   const [runPage, setRunPage] = useState(0);
+  const [scanStep, setScanStep] = useState<0 | 1 | 2>(0);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanError, setScanError] = useState("");
   const runPageSize = 10;
   const openIssues = issues.filter((issue: RecordValue) => ["open", "in_progress", "pr_open"].includes(String(issue.status || "").toLowerCase()));
   const filteredIssues = issues.filter((issue: RecordValue) => filter === "all" || (filter === "open" ? ["open", "in_progress", "pr_open"].includes(String(issue.status || "").toLowerCase()) : String(issue.status || "").toLowerCase() === filter));
   const counts = { all: issues.length, open: openIssues.length, ignored: issues.filter((item: RecordValue) => item.status === "ignored").length, resolved: issues.filter((item: RecordValue) => ["resolved", "accepted_risk", "false_positive"].includes(item.status)).length };
   const pageRuns = runs.slice(runPage * runPageSize, (runPage + 1) * runPageSize);
   const jumpToFindings = () => document.getElementById("tracked-findings")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const startScan = async () => {
+    setScanBusy(true);
+    setScanError("");
+    try {
+      await request("/api/scan/start", project, { method: "POST", json: {} });
+      setScanStep(0);
+      notify(`Scan started for ${project}`, "success");
+      await reload().catch(() => undefined);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to start scan";
+      setScanError(message);
+      notify(message, "error");
+    } finally {
+      setScanBusy(false);
+    }
+  };
   return <>
     <section className="metrics"><Metric label="Open findings" value={openIssues.length} onClick={jumpToFindings} /><Metric label="Successful Scan · 7d" value={stats.success_7d || 0} /><Metric label="Failed · 7d" value={stats.failed_7d || 0} /><Metric label="Lookback window" value={`${data.scan_window_days || 7}d`} /></section>
-    <Panel title="Scan History" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Started</th><th>Status</th><th>Issues</th><th>Duration</th><th>Artifacts</th></tr></thead><tbody>{pageRuns.map((run: RecordValue) => <tr key={run.id}><td>{when(run.started_at || run.finished_at)}</td><td><Badge value={run.status} /></td><td><SeverityBreakdown run={run} /></td><td>{text(run.duration)}</td><td><div className="artifact-links">{run.html && <a href={`${run.html}?project=${encodeURIComponent(project)}`} target="_blank">HTML</a>}{run.pdf && <a href={`${run.pdf}?project=${encodeURIComponent(project)}`} target="_blank">PDF</a>}{!run.html && !run.pdf && "—"}</div></td></tr>)}</tbody></table></div>{runs.length > runPageSize && <Pagination page={runPage} pageCount={Math.ceil(runs.length / runPageSize)} onChange={setRunPage} />}</Panel>
+    <Panel title="Scan History" action={<span className="panel-actions"><button type="button" className="button secondary" disabled={scanBusy} onClick={() => { setScanError(""); setScanStep(1); }}><Play size={14} />Start scan</button><span className="muted">{runs.length} runs</span></span>}><div className="table-scroll"><table><thead><tr><th>Started</th><th>Status</th><th>Issues</th><th>Duration</th><th>Artifacts</th></tr></thead><tbody>{pageRuns.map((run: RecordValue) => <tr key={run.id}><td>{when(run.started_at || run.finished_at)}</td><td><Badge value={run.status} /></td><td><SeverityBreakdown run={run} /></td><td>{text(run.duration)}</td><td><div className="artifact-links">{run.html && <a href={`${run.html}?project=${encodeURIComponent(project)}`} target="_blank">HTML</a>}{run.pdf && <a href={`${run.pdf}?project=${encodeURIComponent(project)}`} target="_blank">PDF</a>}{!run.html && !run.pdf && "—"}</div></td></tr>)}</tbody></table></div>{runs.length > runPageSize && <Pagination page={runPage} pageCount={Math.ceil(runs.length / runPageSize)} onChange={setRunPage} />}</Panel>
     <Panel title="Tracked Findings" action={<span className="muted">{filteredIssues.length} of {issues.length} records</span>}><div className="finding-filters" role="tablist">{(["all", "open", "resolved", "ignored"] as const).map((value) => <button className={filter === value ? "active" : ""} onClick={() => setFilter(value)} key={value}>{value === "all" ? "All" : titleStatus(value)} <span>{counts[value]}</span></button>)}</div><div id="tracked-findings" className="findings">{filteredIssues.length ? filteredIssues.map((issue: RecordValue) => <Finding issue={issue} onIgnore={() => setIgnoreCandidate(issue)} key={issue.id} />) : <Empty label="No findings match this status." />}</div></Panel>
-    {ignoreCandidate && <IgnoreDialog onClose={() => setIgnoreCandidate(null)} onConfirm={(reason) => { void interact("/api/issue/ignore", { issue_id: ignoreCandidate.id, reason }, "Finding ignored"); setIgnoreCandidate(null); }} />}
+    {ignoreCandidate && <IgnoreDialog onClose={() => setIgnoreCandidate(null)} onConfirm={(reason) => { void interactIgnore(project, notify, reload, ignoreCandidate.id, reason); setIgnoreCandidate(null); }} />}
+    {scanStep > 0 && <StartScanDialog project={project} step={scanStep === 1 ? 1 : 2} busy={scanBusy} error={scanError} onClose={() => { if (!scanBusy) setScanStep(0); }} onContinue={() => setScanStep(2)} onConfirm={() => void startScan()} />}
   </>;
+}
+
+async function interactIgnore(project: string, notify: Notify, reload: () => Promise<void>, issueId: unknown, reason: string) {
+  try {
+    await request("/api/issue/ignore", project, { method: "POST", json: { issue_id: issueId, reason } });
+    notify("Finding ignored", "success");
+    await reload();
+  } catch (err) {
+    notify(err instanceof Error ? err.message : "Request failed", "error");
+  }
+}
+
+function StartScanDialog({ project, step, busy, error, onClose, onContinue, onConfirm }: { project: string; step: 1 | 2; busy: boolean; error: string; onClose: () => void; onContinue: () => void; onConfirm: () => void }) {
+  const first = step === 1;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label={first ? "Start scan" : "Confirm start scan"} onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>{first ? "Start a scan?" : "Confirm scan start"}</strong><p className="modal-copy">{first ? `This will launch an auto-scan for ${project}.` : `Are you sure you want to start a scan for ${project} now? A scan agent will run against the configured repositories.`}</p>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button>{first ? <button className="button primary" disabled={busy} onClick={onContinue}>Continue</button> : <button className="button primary" disabled={busy} onClick={onConfirm}><Play size={14} />{busy ? "Starting…" : "Start scan"}</button>}</footer></section></div>;
 }
 
 function Metric({ label, value, onClick }: { label: string; value: string | number; onClick?: () => void }) { return <div className={`metric ${onClick ? "metric-action" : ""}`} onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onKeyDown={(event) => { if (onClick && (event.key === "Enter" || event.key === " ")) onClick(); }}><span>{label}</span><strong>{value}</strong></div>; }
@@ -717,22 +781,7 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [now, setNow] = useState(Date.now());
   const running = /in_progress|running/i.test(String(current.delivery_status || ""));
-  const storyOptions = (() => {
-    const options: Array<{ value: string; label: string }> = [];
-    const seen = new Set<string>();
-    const pushOption = (value: string, title = "") => {
-      const key = value.trim();
-      if (!key || seen.has(key.toLowerCase())) return;
-      seen.add(key.toLowerCase());
-      options.push({ value: key, label: title ? `${key} · ${title}` : key });
-    };
-    for (const item of availableStories) pushOption(String(item.story || item.jira_key || ""), String(item.title || ""));
-    const currentRef = String(current.story_id || current.jira_key || "").trim();
-    if (currentRef && /failed|blocked|not_started/i.test(String(current.delivery_status || ""))) {
-      pushOption(currentRef, String(current.story_title || ""));
-    }
-    return options;
-  })();
+  const storyOptions = deliveryStoryOptions(availableStories, current);
   const loadDeliveryLog = useCallback(async (runId = current.run_id || "", refresh = false) => {
     if (!refresh) setLoadingLog(true);
     try { const response = await request(`/api/delivery/log?run_id=${encodeURIComponent(runId)}`, project); setLogContent(response.content || "No log content recorded."); setLogError(""); }
@@ -817,7 +866,7 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
 }
 
 function StartDeliveryDialog({ stories, value, onChange, busy, error, onClose, onConfirm }: { stories: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Start delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Start delivery</strong><p className="modal-copy">Choose a ready story to launch.</p><label className="field"><span>Story</span><select value={value} onChange={(event) => onChange(event.target.value)} disabled={busy || stories.length === 0}>{stories.length ? stories.map((item) => <option value={item.value} key={item.value}>{item.label}</option>) : <option value="">No ready stories</option>}</select></label>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !value} onClick={onConfirm}><Play size={14} />{busy ? "Starting…" : "Start"}</button></footer></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Start delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Start delivery</strong><p className="modal-copy">Choose a ready story to launch.</p><label className="field"><span>Story</span><select value={value} onChange={(event) => onChange(event.target.value)} disabled={busy || stories.length === 0}>{stories.length ? stories.map((item) => <option value={item.value} key={item.value} title={item.label}>{item.label}</option>) : <option value="">No ready stories</option>}</select></label>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy || !value} onClick={onConfirm}><Play size={14} />{busy ? "Starting…" : "Start"}</button></footer></section></div>;
 }
 
 function RetryDeliveryDialog({ story, busy, error, onClose, onConfirm }: { story: string; busy: boolean; error: string; onClose: () => void; onConfirm: () => void }) {
@@ -848,7 +897,13 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   const [storyQuery, setStoryQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [readyOnly, setReadyOnly] = useState(false);
+  const [startOpen, setStartOpen] = useState(false);
+  const [selectedStartStory, setSelectedStartStory] = useState("");
+  const [startBusy, setStartBusy] = useState(false);
+  const [startError, setStartError] = useState("");
   const dirty = storyMarkdown !== baseline.story || planMarkdown !== baseline.plan;
+  const deliveryOptions = deliveryStoryOptions(stories.filter(isDeliveryReadyStory));
+  const canStartDelivery = deliveryOptions.length > 0;
   useEffect(() => { onDirtyChange(dirty); }, [dirty, onDirtyChange]);
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; };
@@ -877,13 +932,13 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
     setDocTab("story");
     try {
       const response = await request(`/api/stories/content?story=${encodeURIComponent(story)}`, project);
-      const nextStory = String(response.story_markdown || "");
-      const nextPlan = String(response.plan_markdown || "");
-      setTitle(String(response.title || story));
+      setTitle(String(response.title || ""));
       setJiraKey(String(response.jira_key || ""));
       setJiraUrl(String(response.jira_url || ""));
       setBusinessStatus(String(response.businessStatus || ""));
       setTechnicalStatus(String(response.technicalStatus || ""));
+      const nextStory = String(response.story_markdown || "");
+      const nextPlan = String(response.plan_markdown || "");
       setStoryMarkdown(nextStory);
       setPlanMarkdown(nextPlan);
       setBaseline({ story: nextStory, plan: nextPlan });
@@ -902,6 +957,34 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
     if (story === selected) return;
     if (dirty && !window.confirm("You have unsaved Observatory changes. Switch stories without saving?")) return;
     setSelected(story);
+  };
+  const openStartDelivery = () => {
+    setStartError("");
+    const preferred = deliveryOptions.find((item) => item.value === selected)?.value || deliveryOptions[0]?.value || "";
+    setSelectedStartStory(preferred);
+    setStartOpen(true);
+  };
+  const startDelivery = async () => {
+    const story = selectedStartStory.trim();
+    if (!story) {
+      notify("Select a story to start", "error");
+      return;
+    }
+    if (dirty && !window.confirm("You have unsaved Observatory changes. Start delivery without saving?")) return;
+    setStartBusy(true);
+    setStartError("");
+    try {
+      await request("/api/delivery/start", project, { method: "POST", json: { story } });
+      setStartOpen(false);
+      notify(`Delivery started for ${story}`, "success");
+      await loadStories();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to start delivery";
+      setStartError(message);
+      notify(message, "error");
+    } finally {
+      setStartBusy(false);
+    }
   };
   const save = async () => {
     if (!selected || !dirty) return;
@@ -963,6 +1046,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
                 : <><span className="observatory-key">{storyKey}</span><span className="observatory-heading-title">{storyTitle}</span></>}
             </h2>
             <div className="panel-actions observatory-actions">
+              {canStartDelivery && <button type="button" className="button secondary" disabled={startBusy || loadingContent} onClick={openStartDelivery}><Play size={14} />Start delivery</button>}
               <span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved" : "Saved"}</span>
               <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
             </div>
@@ -982,6 +1066,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
         </>}
       </>}
     </section>
+    {startOpen && <StartDeliveryDialog stories={deliveryOptions} value={selectedStartStory} onChange={setSelectedStartStory} busy={startBusy} error={startError} onClose={() => setStartOpen(false)} onConfirm={() => void startDelivery()} />}
   </div>;
 }
 

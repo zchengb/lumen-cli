@@ -1039,6 +1039,21 @@ class DashboardServer(ThreadingHTTPServer):
         )
         return {"story": story_ref, "started_at": utc_now(), "worktrees": cleaned, "jira_status": reset_status if jira_enabled else "unchanged"}
 
+    def start_scan(self, workspace: Path, project: str) -> dict[str, Any]:
+        lock = workspace / "state" / "run.lock"
+        if lock.exists():
+            raise RuntimeError("A scan is already active for this project")
+        env = dict(os.environ, LUMEN_HOME=self.lumen_home)
+        subprocess.Popen(
+            [self.lumen_bin, "scan", "--project", project],
+            cwd=workspace,
+            env=env,
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"ok": True, "project": project}
+
     def stop_delivery(self, workspace: Path) -> dict[str, Any]:
         lock = workspace / "locks" / "delivery-run"
         pid_path = lock / "pid"
@@ -1393,6 +1408,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 )
             if parsed.path == "/api/observability":
                 return self.respond_json(HTTPStatus.OK, {"agent_trace": self.server.update_observability(workspace, body)})
+            if parsed.path == "/api/scan/start":
+                return self.respond_json(HTTPStatus.ACCEPTED, {"scan": self.server.start_scan(workspace, project)})
             if parsed.path == "/api/delivery/retry":
                 return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace)})
             if parsed.path == "/api/delivery/start":

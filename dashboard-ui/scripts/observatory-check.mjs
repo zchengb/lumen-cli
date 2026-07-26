@@ -71,4 +71,32 @@ console.assert(shouldCommitEditorSync(true, "changed", "original") === true, "re
 console.assert(shouldCommitEditorSync(true, "same", "same") === false, "noop edit stays clean");
 console.assert(storyDateLabel("2026-07-22T08:45:45Z") === "2026-07-22", "story date day");
 console.assert(storyDateLabel("nope") === "", "invalid story date");
+
+function deliveryStoryOptions(availableStories, current) {
+  const options = [];
+  const seen = new Set();
+  const push = (story, jiraKey, title) => {
+    const value = String(story || jiraKey || "").trim();
+    if (!value) return;
+    const aliases = [value, jiraKey, story].map((item) => String(item || "").trim().toLowerCase()).filter(Boolean);
+    if (aliases.some((alias) => seen.has(alias))) return;
+    for (const alias of aliases) seen.add(alias);
+    const key = String(jiraKey || story || value).trim();
+    const name = String(title || "").trim();
+    options.push({ value, label: name ? `${key} · ${name}` : key });
+  };
+  for (const item of availableStories || []) push(item.story || "", item.jira_key || "", item.title || "");
+  if (current && /failed|blocked|not_started/i.test(String(current.delivery_status || ""))) {
+    push(current.story_id || "", current.jira_key || "", current.story_title || "");
+  }
+  return options;
+}
+
+const deliveryOptions = deliveryStoryOptions(
+  [{ story: "MBPAS-1400-pkg-03-trigger-based-5-birthday-greeting", jira_key: "MBPAS-1400", title: "Birthday Greeting" }],
+  { story_id: "MBPAS-1400", jira_key: "MBPAS-1400", story_title: "Birthday Greeting", delivery_status: "blocked" },
+);
+console.assert(deliveryOptions.length === 1, "dedupes slug and jira key");
+console.assert(deliveryOptions[0].label === "MBPAS-1400 · Birthday Greeting", "uses jira key in label");
+console.assert(deliveryOptions[0].value === "MBPAS-1400-pkg-03-trigger-based-5-birthday-greeting", "keeps slug value");
 console.log("observatory-check ok");
