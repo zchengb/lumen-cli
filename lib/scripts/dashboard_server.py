@@ -776,6 +776,19 @@ def story_date_value(metadata: dict[str, Any]) -> str:
     return ""
 
 
+def story_created_at(story_dir: Path, metadata: dict[str, Any]) -> str:
+    for key in ("createdAt", "jiraImportedAt", "jiraPublishedAt"):
+        value = str(metadata.get(key) or "").strip()
+        if value:
+            return value
+    try:
+        stat = story_dir.stat()
+        stamp = getattr(stat, "st_birthtime", None) or stat.st_ctime
+        return datetime.fromtimestamp(float(stamp), timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except OSError:
+        return str(metadata.get("updatedAt") or "").strip()
+
+
 def story_assignee_name(docs_dir: Path, metadata: dict[str, Any], story_dir: Path | None = None) -> str:
     direct = str(metadata.get("jiraAssignee") or metadata.get("assignee") or "").strip()
     if direct:
@@ -816,8 +829,9 @@ def list_observatory_stories(workspace: Path) -> list[dict[str, Any]]:
     if not stories.is_dir():
         return []
     result: list[dict[str, Any]] = []
-    for story_dir in sorted(item for item in stories.iterdir() if item.is_dir()):
+    for story_dir in (item for item in stories.iterdir() if item.is_dir()):
         metadata = read_delivery_json(story_dir / "metadata.json", {})
+        created = story_created_at(story_dir, metadata)
         result.append(
             {
                 "story": story_dir.name,
@@ -827,10 +841,12 @@ def list_observatory_stories(workspace: Path) -> list[dict[str, Any]]:
                 "businessStatus": str(metadata.get("businessStatus") or ""),
                 "technicalStatus": str(metadata.get("technicalStatus") or ""),
                 "deliveryStatus": str(metadata.get("deliveryStatus") or "not_started"),
+                "createdAt": created,
                 "updatedAt": story_date_value(metadata),
                 "assignee": story_assignee_name(docs_dir, metadata, story_dir),
             }
         )
+    result.sort(key=lambda item: (str(item.get("createdAt") or ""), str(item.get("story") or "")), reverse=True)
     return result
 
 

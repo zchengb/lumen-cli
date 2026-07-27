@@ -72,6 +72,12 @@ console.assert(shouldCommitEditorSync(true, "same", "same") === false, "noop edi
 console.assert(storyDateLabel("2026-07-22T08:45:45Z") === "2026-07-22", "story date day");
 console.assert(storyDateLabel("nope") === "", "invalid story date");
 
+function shouldOpenMarkdownLink(event) {
+  return !event.shiftKey && !event.metaKey && !event.altKey && (event.button === undefined || event.button === 0);
+}
+console.assert(shouldOpenMarkdownLink({}) === true, "plain click opens link");
+console.assert(shouldOpenMarkdownLink({ shiftKey: true }) === false, "shift click keeps caret");
+
 function deliveryStoryOptions(availableStories, current) {
   const options = [];
   const seen = new Set();

@@ -438,6 +438,20 @@ function shouldCommitEditorSync(edited: boolean, nextBody: string, currentBody: 
   return edited && nextBody !== currentBody;
 }
 
+function linkElementFromSelection(root: HTMLElement | null): HTMLAnchorElement | null {
+  const selection = window.getSelection();
+  if (!root || !selection?.anchorNode) return null;
+  const node = selection.anchorNode;
+  const element = node instanceof Element ? node : node.parentElement;
+  const anchor = element?.closest("a");
+  if (!(anchor instanceof HTMLAnchorElement) || !root.contains(anchor)) return null;
+  return anchor;
+}
+
+function shouldOpenMarkdownLink(event: { shiftKey?: boolean; metaKey?: boolean; altKey?: boolean; button?: number }) {
+  return !event.shiftKey && !event.metaKey && !event.altKey && (event.button === undefined || event.button === 0);
+}
+
 function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
   const { frontmatter, body } = splitFrontmatter(value);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -446,6 +460,7 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
   const bodyRef = useRef(body);
   const turndownRef = useRef(createObservatoryTurndown());
   const [fullscreen, setFullscreen] = useState<{ kind: "html" | "img"; value: string; alt?: string } | null>(null);
+  const [docFullscreen, setDocFullscreen] = useState(false);
   bodyRef.current = body;
   const setBody = (nextBody: string) => onChange(joinFrontmatter(frontmatter, nextBody));
   const syncFromDom = () => {
@@ -455,16 +470,19 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
     if (!shouldCommitEditorSync(editedRef.current, nextBody, bodyRef.current)) return;
     setBody(nextBody);
   };
+  const markAnchors = (root: HTMLElement) => {
+    root.querySelectorAll("a[href]").forEach((anchor) => {
+      anchor.setAttribute("target", "_blank");
+      anchor.setAttribute("rel", "noreferrer noopener");
+    });
+  };
   const paint = useCallback(async (markdown: string) => {
     const root = editorRef.current;
     if (!root) return;
     editedRef.current = false;
     root.innerHTML = markdownToEditableHtml(markdown);
     decorateCodeBlocks(root);
-    root.querySelectorAll("a[href]").forEach((anchor) => {
-      anchor.setAttribute("target", "_blank");
-      anchor.setAttribute("rel", "noreferrer noopener");
-    });
+    markAnchors(root);
     const maximizeIcon = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="m21 3-7 7"/><path d="m3 21 7-7"/><path d="M9 21H3v-6"/></svg>`;
     root.querySelectorAll<HTMLButtonElement>("[data-mm-fullscreen]").forEach((button) => {
       button.innerHTML = maximizeIcon;
@@ -501,37 +519,84 @@ function ObservatoryDocEditor({ value, onChange }: { value: string; onChange: (n
     if (focusedRef.current) return;
     void paint(body);
   }, [body, paint]);
+  useEffect(() => {
+    if (!docFullscreen) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setDocFullscreen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [docFullscreen]);
   const run = (command: string, commandValue?: string) => {
     editorRef.current?.focus();
     document.execCommand(command, false, commandValue);
     editedRef.current = true;
     syncFromDom();
+    if (editorRef.current) markAnchors(editorRef.current);
   };
-  return <div className="observatory-doc">
+  const editOrCreateLink = () => {
+    const root = editorRef.current;
+    root?.focus();
+    const existing = linkElementFromSelection(root);
+    const current = existing?.getAttribute("href") || "https://";
+    const href = window.prompt(existing ? "Edit link URL" : "Link URL", current);
+    if (href === null) return;
+    const next = href.trim();
+    if (existing) {
+      if (!next) {
+        run("unlink");
+        return;
+      }
+      existing.setAttribute("href", next);
+      existing.setAttribute("target", "_blank");
+      existing.setAttribute("rel", "noreferrer noopener");
+      editedRef.current = true;
+      syncFromDom();
+      return;
+    }
+    if (next) run("createLink", next);
+  };
+  return <div className={`observatory-doc${docFullscreen ? " observatory-doc-fullscreen" : ""}`}>
     <div className="observatory-toolbar" role="toolbar" aria-label="Formatting tools">
       <button type="button" title="Heading" onMouseDown={(event) => event.preventDefault()} onClick={() => run("formatBlock", "h2")}><Heading2 size={14} /></button>
       <button type="button" title="Bold" onMouseDown={(event) => event.preventDefault()} onClick={() => run("bold")}><Bold size={14} /></button>
       <button type="button" title="Italic" onMouseDown={(event) => event.preventDefault()} onClick={() => run("italic")}><Italic size={14} /></button>
-      <button type="button" title="Link" onMouseDown={(event) => event.preventDefault()} onClick={() => {
-        const href = window.prompt("Link URL", "https://");
-        if (href) run("createLink", href);
-      }}><Link2 size={14} /></button>
+      <button type="button" title="Link — Shift+click a link to place the caret, then edit" onMouseDown={(event) => event.preventDefault()} onClick={editOrCreateLink}><Link2 size={14} /></button>
       <button type="button" title="List" onMouseDown={(event) => event.preventDefault()} onClick={() => run("insertUnorderedList")}><List size={14} /></button>
       <button type="button" title="Code" onMouseDown={(event) => event.preventDefault()} onClick={() => run("formatBlock", "pre")}><Code2 size={14} /></button>
     </div>
-    <div
-      ref={editorRef}
-      className="observatory-doc-preview markdown-content"
-      contentEditable
-      suppressContentEditableWarning
-      spellCheck={false}
-      role="textbox"
-      aria-multiline="true"
-      aria-label="Document body"
-      onFocus={() => { focusedRef.current = true; }}
-      onBlur={() => { focusedRef.current = false; syncFromDom(); }}
-      onInput={() => { editedRef.current = true; syncFromDom(); }}
-    />
+    <div className="observatory-doc-preview-wrap">
+      <button
+        type="button"
+        className="observatory-doc-fullscreen-btn"
+        title={docFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        aria-label={docFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => setDocFullscreen((value) => !value)}
+      >{docFullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button>
+      <div
+        ref={editorRef}
+        className="observatory-doc-preview markdown-content"
+        contentEditable
+        suppressContentEditableWarning
+        spellCheck={false}
+        role="textbox"
+        aria-multiline="true"
+        aria-label="Document body"
+        onFocus={() => { focusedRef.current = true; }}
+        onBlur={() => { focusedRef.current = false; syncFromDom(); }}
+        onInput={() => { editedRef.current = true; syncFromDom(); }}
+        onClick={(event) => {
+          const target = event.target as HTMLElement | null;
+          if (!target || target.closest("button")) return;
+          const anchor = target.closest("a[href]");
+          if (!(anchor instanceof HTMLAnchorElement) || !editorRef.current?.contains(anchor)) return;
+          if (!shouldOpenMarkdownLink(event)) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const href = anchor.getAttribute("href");
+          if (href) window.open(href, "_blank", "noopener,noreferrer");
+        }}
+      />
+    </div>
     {fullscreen && <FullscreenMedia label={fullscreen.kind === "img" ? (fullscreen.alt || "Image") : "Diagram"} onClose={() => setFullscreen(null)}>
       {fullscreen.kind === "img"
         ? <img src={fullscreen.value} alt={fullscreen.alt || ""} />

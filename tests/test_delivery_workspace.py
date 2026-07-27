@@ -1248,8 +1248,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             for story_dir, meta in (
-                (draft, {"jiraKey": "DRAFT-1", "title": "Draft story", "businessStatus": "draft", "technicalStatus": "draft", "deliveryStatus": "not_started", "updatedAt": "2026-07-10"}),
-                (ready, {"jiraKey": "READY-1", "title": "Ready story", "businessStatus": "ready", "technicalStatus": "approved", "deliveryStatus": "not_started", "linkedRepos": ["service"], "updatedAt": "2026-07-22T08:45:45Z", "jiraSnapshotFile": "lumen/context/READY-1/jira-import.json"}),
+                (draft, {"jiraKey": "DRAFT-1", "title": "Draft story", "businessStatus": "draft", "technicalStatus": "draft", "deliveryStatus": "not_started", "updatedAt": "2026-07-10", "jiraImportedAt": "2026-07-10T08:00:00Z"}),
+                (ready, {"jiraKey": "READY-1", "title": "Ready story", "businessStatus": "ready", "technicalStatus": "approved", "deliveryStatus": "not_started", "linkedRepos": ["service"], "updatedAt": "2026-07-22T08:45:45Z", "jiraImportedAt": "2026-07-22T08:45:45Z", "jiraSnapshotFile": "lumen/context/READY-1/jira-import.json"}),
             ):
                 story_dir.mkdir(parents=True)
                 (story_dir / "metadata.json").write_text(json.dumps(meta), encoding="utf-8")
@@ -1263,9 +1263,10 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             git(docs, "push", "-u", "origin", "main")
 
             listed = list_observatory_stories(workspace)
-            self.assertEqual({"DRAFT-1", "READY-1"}, {item["story"] for item in listed})
+            self.assertEqual(["READY-1", "DRAFT-1"], [item["story"] for item in listed])
             by_story = {item["story"]: item for item in listed}
             self.assertEqual("2026-07-10", by_story["DRAFT-1"]["updatedAt"])
+            self.assertEqual("2026-07-10T08:00:00Z", by_story["DRAFT-1"]["createdAt"])
             self.assertEqual("", by_story["DRAFT-1"]["assignee"])
             self.assertEqual("2026-07-22", by_story["READY-1"]["updatedAt"])
             self.assertEqual("Ada Lovelace", by_story["READY-1"]["assignee"])
