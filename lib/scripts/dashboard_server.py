@@ -846,7 +846,14 @@ def list_observatory_stories(workspace: Path) -> list[dict[str, Any]]:
                 "assignee": story_assignee_name(docs_dir, metadata, story_dir),
             }
         )
-    result.sort(key=lambda item: (str(item.get("createdAt") or ""), str(item.get("story") or "")), reverse=True)
+    result.sort(
+        key=lambda item: (
+            str(item.get("updatedAt") or ""),
+            str(item.get("createdAt") or ""),
+            str(item.get("story") or ""),
+        ),
+        reverse=True,
+    )
     return result
 
 

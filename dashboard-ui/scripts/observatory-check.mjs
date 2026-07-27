@@ -78,6 +78,21 @@ function shouldOpenMarkdownLink(event) {
 console.assert(shouldOpenMarkdownLink({}) === true, "plain click opens link");
 console.assert(shouldOpenMarkdownLink({ shiftKey: true }) === false, "shift click keeps caret");
 
+function sortStoriesByVisibleDate(items) {
+  return items.slice().sort((left, right) => {
+    const leftDate = String(left.updatedAt || left.createdAt || "");
+    const rightDate = String(right.updatedAt || right.createdAt || "");
+    if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+    return String(right.story || "").localeCompare(String(left.story || ""));
+  });
+}
+const sortedStories = sortStoriesByVisibleDate([
+  { story: "MBPAS-1331", updatedAt: "2026-07-20" },
+  { story: "MBPAS-1474", updatedAt: "2026-07-27" },
+  { story: "MBPAS-1400", updatedAt: "2026-07-25" },
+]);
+console.assert(sortedStories.map((item) => item.story).join(",") === "MBPAS-1474,MBPAS-1400,MBPAS-1331", "newest visible date first");
+
 function deliveryStoryOptions(availableStories, current) {
   const options = [];
   const seen = new Set();

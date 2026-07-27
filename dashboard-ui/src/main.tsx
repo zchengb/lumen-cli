@@ -1072,13 +1072,21 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
   };
   const storyKey = text(jiraKey || selected);
   const storyTitle = text(title, selected);
-  const visibleStories = stories.filter((item) => {
-    if (readyOnly && String(item.businessStatus || "").toLowerCase() !== "ready") return false;
-    const needle = storyQuery.trim().toLowerCase();
-    if (!needle) return true;
-    const haystack = `${item.jira_key || ""} ${item.title || ""} ${item.story || ""} ${item.assignee || ""}`.toLowerCase();
-    return haystack.includes(needle);
-  });
+  const visibleStories = stories
+    .filter((item) => {
+      if (readyOnly && String(item.businessStatus || "").toLowerCase() !== "ready") return false;
+      const needle = storyQuery.trim().toLowerCase();
+      if (!needle) return true;
+      const haystack = `${item.jira_key || ""} ${item.title || ""} ${item.story || ""} ${item.assignee || ""}`.toLowerCase();
+      return haystack.includes(needle);
+    })
+    .slice()
+    .sort((left, right) => {
+      const leftDate = String(left.updatedAt || left.createdAt || "");
+      const rightDate = String(right.updatedAt || right.createdAt || "");
+      if (leftDate !== rightDate) return rightDate.localeCompare(leftDate);
+      return String(right.story || "").localeCompare(String(left.story || ""));
+    });
   return <div className="observatory-layout">
     <aside className="observatory-list panel">
       <div className="panel-header observatory-list-header">
