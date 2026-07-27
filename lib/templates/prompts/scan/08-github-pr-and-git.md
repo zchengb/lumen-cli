@@ -47,7 +47,7 @@ Use:
 - `git log --oneline -n 20`
 - `git log --format=%s -n 20`
 
-Generate the commit message in the same style as the repository's recent history.
+Generate the commit message with the Lumen standard format below. Do not copy a human author prefix from history.
 
 Default Lumen commit subject format (use this for all delivery and automated fix commits):
 
@@ -58,13 +58,13 @@ Default Lumen commit subject format (use this for all delivery and automated fix
 Rules for this format:
 
 - Always include the `[lumen]` prefix so automated commits are easy to identify.
-- When repository history uses an author name prefix (for example `[xiaobin]`), replace it with `[lumen]` for Lumen-created commits.
+- Never use a human author prefix such as `[xiaobin]`, even when older history used one.
 - Use the JIRA key from story context, branch names, or nearby commit history for `{JIRA_NUMBER}` (for example `MBPAS-1369`).
 - If no JIRA number can be inferred, use `N/A` (for example `[lumen] #N/A feat: ...`).
 - Commit in small, incremental steps; keep each message concise and clear.
 - Example: `[lumen] #MBPAS-1369 refactor: refactor missing-contact dialog.`
 
-If the repository uses a clearly different local pattern in recent history, follow the type and description style but still use the `[lumen] #...` prefix and format above.
+Follow the type and description style of recent commits when helpful, but always keep the `[lumen] #...` prefix and format above.
 
 - Keep the subject concise.
 - Use English unless the repository history clearly uses another language.

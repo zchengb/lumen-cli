@@ -93,7 +93,7 @@
   },
   "git": {
     "branch_prefix": "auto-fix",
-    "commit_message_strategy": "match_repository_history",
+    "commit_message_strategy": "lumen_standard",
     "commit_message_prefix": "[lumen]",
     "ticket_placeholder": "#MBPAS-XXXX",
     "inspect_recent_commit_count": 20,

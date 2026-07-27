@@ -566,8 +566,15 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
     def test_repository_and_publish_configuration_persist_in_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
-            workspace = Path(temp) / "lumen"
-            repository = Path(temp) / "service"
+            root = Path(temp)
+            remote = root / "remote.git"
+            docs = root / "docs"
+            workspace = docs / "lumen"
+            repository = root / "service"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-b", "main", str(docs)], check=True, capture_output=True)
+            git(docs, "config", "user.email", "lumen@example.test")
+            git(docs, "config", "user.name", "Lumen Test")
             subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
             config = workspace / "config"
             config.mkdir(parents=True)
@@ -577,6 +584,12 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 json.dumps({"local-java-review-only": {"language": "java", "validation": "review only"}}),
                 encoding="utf-8",
             )
+            (config / "repos.json").write_text(json.dumps({"repositories": []}), encoding="utf-8")
+            (config / "workspace.json").write_text(json.dumps({"docs_repo": str(docs)}), encoding="utf-8")
+            git(docs, "add", "lumen/config")
+            git(docs, "commit", "-m", "Initialize config")
+            git(docs, "remote", "add", "origin", str(remote))
+            git(docs, "push", "-u", "origin", "main")
 
             payload = save_repositories(workspace, [{
                 "name": "service",
@@ -595,6 +608,13 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual(["./gradlew", "test"], delivery["verification"]["steps"]["service"][0]["command"])
             self.assertEqual("merge", delivery["publish"]["mode"])
             self.assertEqual("pr", common["auto_fix"]["publish_mode"])
+            log = subprocess.run(
+                ["git", "-C", str(docs), "log", "-1", "--format=%s"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual("[lumen] #N/A feat: update delivery config", log.stdout.strip())
 
     def test_auto_fix_merge_resolves_the_tracked_finding(self) -> None:
         finding = {"issue_id": "ISSUE-42", "auto_fix": {"status": "pr_open"}, "issue_status": "pr_open"}
@@ -611,20 +631,38 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             root = Path(temp)
             workspace = root / "docs" / "lumen"
             remote = root / "service.git"
+            docs_remote = root / "docs.git"
             subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "--bare", str(docs_remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-b", "main", str(root / "docs")], check=True, capture_output=True)
+            git(root / "docs", "config", "user.email", "lumen@example.test")
+            git(root / "docs", "config", "user.name", "Lumen Test")
             (workspace / "config").mkdir(parents=True)
             (workspace / "config" / "common.json").write_text("{}\n", encoding="utf-8")
             (workspace / "config" / "delivery.json").write_text("{}\n", encoding="utf-8")
+            (workspace / "config" / "repos.json").write_text(json.dumps({"repositories": []}), encoding="utf-8")
+            (workspace / "config" / "workspace.json").write_text(json.dumps({"docs_repo": str(root / "docs")}), encoding="utf-8")
             (workspace / "config" / "runtime-profiles.json").write_text(
                 json.dumps({"local-generic-review-only": {"language": "generic", "validation": "review only"}}),
                 encoding="utf-8",
             )
+            git(root / "docs", "add", "lumen/config")
+            git(root / "docs", "commit", "-m", "Initialize docs")
+            git(root / "docs", "remote", "add", "origin", str(docs_remote))
+            git(root / "docs", "push", "-u", "origin", "main")
 
             payload = clone_repository(workspace, str(remote))
 
             repository = payload["repositories"][0]
             self.assertEqual("service", repository["name"])
             self.assertTrue((root / "docs" / "repos" / "service" / ".git").exists())
+            log = subprocess.run(
+                ["git", "-C", str(root / "docs"), "log", "-1", "--format=%s"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual("[lumen] #N/A feat: update delivery config", log.stdout.strip())
 
     def test_repository_branch_options_include_local_and_remote_refs(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

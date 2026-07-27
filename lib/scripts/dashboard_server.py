@@ -35,7 +35,7 @@ from scan_launchd import install as install_scan_schedule
 from scan_launchd import remove as remove_scan_schedule
 from scan_launchd import status as scan_schedule_status
 from discover_repos import default_branch, infer_profile
-from sync_delivery_docs import commit_paths, commit_story_metadata, lumen_commit_subject
+from sync_delivery_docs import commit_dirty_config, commit_paths, commit_story_metadata, lumen_commit_subject
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -276,6 +276,13 @@ def repository_name_from_url(url: str) -> str:
     return name
 
 
+def auto_commit_delivery_config(workspace: Path, summary: str = "update delivery config") -> str:
+    docs_dir = docs_dir_for_workspace(workspace)
+    if not (docs_dir / ".git").exists():
+        return "skipped"
+    return commit_dirty_config(docs_dir, summary, push=True)
+
+
 def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
     if not isinstance(repositories, list):
         raise ValueError("Repositories must be a list")
@@ -344,6 +351,7 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
             ]
     write_json(workspace / "config" / "repos.json", {"repositories": cleaned})
     write_json(workspace / "config" / "delivery.json", delivery)
+    auto_commit_delivery_config(workspace)
     return workspace_payload(workspace)
 
 
@@ -391,6 +399,7 @@ def save_delivery_steps(workspace: Path, repository: str, commands: object) -> d
         for index, command in enumerate(parsed)
     ]
     write_json(path, config)
+    auto_commit_delivery_config(workspace)
     return workspace_payload(workspace)
 
 
@@ -406,6 +415,7 @@ def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: objec
     delivery = load_json(delivery_path, {})
     delivery.setdefault("publish", {})["mode"] = delivery_mode
     write_json(delivery_path, delivery)
+    auto_commit_delivery_config(workspace)
     return workspace_payload(workspace)
 
 
@@ -546,6 +556,7 @@ def save_feishu_notifications(workspace: Path, enabled: bool) -> dict[str, Any]:
             notifications["feishu"] = feishu
         feishu["enabled"] = enabled
         write_json(path, config)
+    auto_commit_delivery_config(workspace)
     return workspace_payload(workspace)
 
 
@@ -1206,6 +1217,7 @@ class DashboardServer(ThreadingHTTPServer):
             raise ValueError("Invalid observability configuration")
         observability["agent_trace"] = {"enabled": mode != "off", "capture_mode": mode, "retention_days": retention}
         write_json(path, config)
+        auto_commit_delivery_config(workspace)
         return observability["agent_trace"]
 
     def update_schedule(self, body: dict[str, Any], workspace: Path, project: str) -> dict[str, Any]:
@@ -1223,6 +1235,7 @@ class DashboardServer(ThreadingHTTPServer):
                 scheduled = automation.setdefault("scheduled_delivery", {})
                 scheduled["enabled"] = False
                 write_json(config_path, config)
+                auto_commit_delivery_config(workspace)
             return schedule_payload(workspace, project)
 
         if kind == "scan":
@@ -1271,6 +1284,7 @@ class DashboardServer(ThreadingHTTPServer):
                 jira["dev_done_status"] = dev_done_status
             jira["blocked_status"] = blocked_status
             write_json(config_path, config)
+            auto_commit_delivery_config(workspace)
         return schedule_payload(workspace, project)
 
 
@@ -1388,6 +1402,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     write_json(delivery_path, delivery)
                 if "feishu_notifications_enabled" in body:
                     save_feishu_notifications(workspace, bool(body.get("feishu_notifications_enabled")))
+                else:
+                    auto_commit_delivery_config(workspace)
                 return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
             if parsed.path == "/api/integration":
                 update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))

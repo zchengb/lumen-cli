@@ -29,9 +29,13 @@ def failure_text(result: subprocess.CompletedProcess[str], fallback: str) -> str
     return (result.stderr or result.stdout or fallback).strip()
 
 
-def lumen_commit_subject(ticket: str, summary: str) -> str:
+def lumen_commit_subject(ticket: str, summary: str, *, kind: str = "feat") -> str:
     key = str(ticket or "").strip().lstrip("#") or "N/A"
-    return f"[lumen] #{key} feat: {summary}"
+    change = str(kind or "feat").strip().lower() or "feat"
+    text = " ".join(str(summary or "").strip().split())
+    if not text:
+        text = "update delivery docs"
+    return f"[lumen] #{key} {change}: {text}"
 
 
 def porcelain_paths(docs_dir: Path) -> list[str]:
@@ -157,6 +161,13 @@ def commit_story_metadata(docs_dir: Path, story_ref: str = "", *, push: bool = T
     return commit_paths(context.docs_dir, [relative_metadata], subject, push=push)
 
 
+def commit_dirty_config(docs_dir: Path, summary: str = "update delivery config", *, push: bool = True) -> str:
+    _, config, _ = classify_dirty_paths(docs_dir)
+    if not config:
+        return "skipped"
+    return commit_paths(docs_dir, config, lumen_commit_subject("N/A", summary), push=push)
+
+
 def heal_lumen_owned_docs_dirt(docs_dir: Path, *, push: bool = True) -> list[str]:
     """Commit Lumen-owned dirt so delivery can proceed. Raises if unrelated files are dirty."""
     metadata, config, foreign = classify_dirty_paths(docs_dir)
@@ -171,8 +182,7 @@ def heal_lumen_owned_docs_dirt(docs_dir: Path, *, push: bool = True) -> list[str
         subject = lumen_commit_subject(ticket, f"update {ticket} delivery status")
         messages.append(commit_paths(docs_dir, [path], subject, push=push))
     if config:
-        subject = lumen_commit_subject("N/A", "update lumen workspace config")
-        messages.append(commit_paths(docs_dir, config, subject, push=push))
+        messages.append(commit_dirty_config(docs_dir, push=push))
     return messages
 
 

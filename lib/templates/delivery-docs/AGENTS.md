@@ -19,6 +19,30 @@ Each story contains:
 
 Do not create extra decision, question, change, refactor, or evidence files unless explicitly requested. Git diff, commits, PRs, JIRA comments, and Lumen logs are the default audit trail.
 
+## Docs Repository Commit Format
+
+When committing to this delivery docs repository (`stories/`, `topics/`, `standards/`, `AGENTS.md`, `lumen/config/`, and related docs), always use:
+
+```text
+[lumen] #{JIRA_KEY_OR_N/A} {chore|docs|feat|fix|refactor|style|test}: {summary}
+```
+
+Examples:
+
+```text
+[lumen] #N/A feat: update delivery config
+[lumen] #MBPAS-1400 feat: update MBPAS-1400 delivery status
+[lumen] #N/A docs: align business loop questioning rules
+```
+
+Rules:
+
+- Always use the `[lumen]` prefix. Never use a human author prefix such as `[xiaobin]`, even when older history used one.
+- Use the Story JIRA key when the change belongs to one Story; otherwise use `N/A`.
+- Prefer `feat` for Story/docs/config updates unless another type is clearly better.
+- Keep the summary short and concrete.
+- Dashboard auto-commits for config and Observatory markdown already follow this format; agent commits must match it too.
+
 ## Business Loop
 
 The Business Loop may run in Codex, Cursor, or another compatible Agent. The tool is not important; the contract is.

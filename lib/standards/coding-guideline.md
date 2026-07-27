@@ -144,11 +144,9 @@ If the repository already uses a different feature-branch convention, follow the
 
 ### Commit message format
 
-Before committing, inspect `git log --oneline -n 20` to understand recent repository history.
+Before committing, inspect `git log --oneline -n 20` only to understand the work style of recent changes.
 
-When past commits include an author name in the subject (for example `[xiaobin]`), use **`[lumen]`** as the author prefix for all delivery commits instead of a human author name.
-
-Write every commit message in this format:
+Always write Lumen-created commit subjects in this exact format, even when older history used a human author prefix such as `[xiaobin]`:
 
 ```text
 [lumen] #{JIRA_NUMBER} {chore|docs|feat|fix|refactor|style|test}: {COMMIT_MESSAGE}
@@ -159,8 +157,10 @@ Examples:
 ```text
 [lumen] #N/A feat: update user bind-car agreement content.
 [lumen] #MBPAS-1369 refactor: refactor missing-contact dialog.
+[lumen] #N/A feat: update delivery config
 ```
 
+Never replace `[lumen]` with a person name. When past commits include an author name in the subject, still use **`[lumen]`** for every Lumen or delivery-docs commit.
 Commit rules:
 
 - Commit on a feature branch only, never directly on the default branch.
