@@ -225,7 +225,14 @@ def main() -> int:
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print(f"Error: {exc}", file=__import__("sys").stderr)
         return 1
-    print(json.dumps({"story": str(story_dir), "jira_key": args.jira_key.upper()}, ensure_ascii=False))
+    metadata = load_json(story_dir / "metadata.json")
+    print(json.dumps({
+        "story": str(story_dir),
+        "jira_key": str(metadata.get("jiraKey") or args.jira_key.upper()),
+        "jira_sync_status": str(metadata.get("jiraSyncStatus") or ""),
+        "business_status": str(metadata.get("businessStatus") or ""),
+        "next": "business_loop",
+    }, ensure_ascii=False))
     return 0
 
 

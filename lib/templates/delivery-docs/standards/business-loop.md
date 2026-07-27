@@ -39,7 +39,7 @@ Use this flow when the user starts with a broad topic instead of a concrete stor
 1. Create or update `topics/<slug>.md` using `templates/topic.md`.
 2. Read the topic, existing stories, and relevant repository context under `repos/`.
 3. Build a short understanding of current system behavior before proposing story splits.
-4. Ask one progressive clarification question at a time, with options and a custom answer path.
+4. Ask the full set of high-impact clarification questions in one checklist turn, with options and a custom answer path for each.
 5. Record confirmed answers under `Progressive Clarifications`.
 6. Gradually identify candidate stories with clear goals and boundaries.
 7. Do not create story folders until the user confirms the split.
@@ -49,18 +49,18 @@ A Topic is not implementation-ready. It is a discovery container. Lumen must not
 
 ## Story Clarification Flow
 
-1. Start from draft story input or a confirmed candidate story from Topic Discovery.
+1. Start from draft story input, a confirmed candidate story from Topic Discovery, or a Story just imported from Jira.
 2. Agent reads `story.md`, `metadata.json`, related topic notes if any, and relevant repository context.
-3. Agent identifies the single highest-impact unclear point.
-4. Agent asks one progressive clarification question with options.
-5. User chooses an option or enters a custom answer.
+3. Agent identifies every remaining high-impact unclear point.
+4. Agent asks those clarifications together in one checklist turn, with options for each question.
+5. User answers the checklist in one reply, choosing options or entering custom answers.
 6. Agent records the clarified Q&A under `Clarifications`.
 7. Agent updates Acceptance Criteria and Business Rules when needed.
-8. Agent repeats only if another high-impact ambiguity remains.
+8. Agent asks a follow-up batch only if new high-impact ambiguity remains.
 9. When clear, present the Story goal, primary actor, key business rules, Acceptance Criteria summary, Out of Scope, non-blocking assumptions, and confirmation that no important TBD or high-impact question remains. Ask: `A. Confirm this Story and mark it ready`, `B. Continue refining`, or `C. Keep it as draft`.
 10. Set `businessStatus` to `ready` only after option A or equally explicit natural-language confirmation; the Agent's readiness assessment is not approval.
 11. Ask whether to create or bind a JIRA Story.
-11. If confirmed, create or bind JIRA and write the result to `metadata.json`.
+12. If confirmed, create or bind JIRA and write the result to `metadata.json`.
 
 ## Language
 
@@ -70,28 +70,35 @@ JIRA Story content created from `story.md` should use the same primary language 
 
 ## Progressive Q&A
 
-A Business Loop question must be concise and answerable. Prefer interactive Q&A if supported by the environment. Otherwise use a text menu.
+A Business Loop question must be concise and answerable. Prefer interactive Q&A if supported by the environment. Otherwise use a text checklist and ask all remaining high-impact questions together.
 
 Question format:
 
 ```text
-Question: <one focused question>
+Please answer all of the following in one reply.
+For each question, choose a letter or type your own answer.
 
-Options:
+1. Question: <focused question>
 A. <recommended option> (Recommended)
 B. <alternative option>
 C. <block/defer option when useful>
+D. Other: type a custom answer
+
+2. Question: <next focused question>
+A. ...
+B. ...
+C. ...
 D. Other: type a custom answer
 ```
 
 Rules:
 
-- Ask one question at a time.
-- Ask the question that most affects scope, architecture, or acceptance first.
-- Provide 2-4 meaningful options.
+- Ask all remaining high-impact questions in one turn unless the user asks for progressive single-question mode.
+- Ask the questions that most affect scope, architecture, or acceptance first.
+- Provide 2-4 meaningful options per question.
 - Always allow a custom answer.
 - Do not ask users to fill blank templates.
-- Record the final answer in `topics/<slug>.md` during Topic Discovery or in `story.md` during Story Clarification. Do not keep raw chat history.
+- Record the final answers in `topics/<slug>.md` during Topic Discovery or in `story.md` during Story Clarification. Do not keep raw chat history.
 
 ## JIRA Publishing
 

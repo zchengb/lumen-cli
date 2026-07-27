@@ -112,33 +112,42 @@ so that <business value>.
 
 ## Existing Jira Story Import And Consistency
 
-For an existing Jira Story, invoke the `$lumen-jira-story-import` Agent Skill. It creates the linked Story folder on first use and records the current Jira payload under `lumen/context/`. On later use it reads Jira again without overwriting `story.md`.
+For an existing Jira Story, invoke the `$lumen-jira-story-import` Agent Skill (or `lumen jira import <JIRA-KEY>`). It creates the linked Story folder on first use and records the current Jira payload under `lumen/context/`. On later use it reads Jira again without overwriting `story.md`. After import, continue directly into the Business Loop for that Story.
 
-Before every Business or Technical Loop, invoke the import Skill when `metadata.json.jiraKey` exists. If `metadata.json.jiraSyncStatus` is `changed`, the Technical Loop must ask whether to reconcile Jira changes through the Business Loop, keep the local Story, or review the difference. A Jira change invalidates the technical plan but does not silently alter the locally confirmed business status. Only a confirmed reconciliation updates `story.md`; never overwrite it silently.
+Before every Business or Technical Loop, invoke the import Skill when `metadata.json.jiraKey` exists and this turn has not already imported it. If `metadata.json.jiraSyncStatus` is `changed`, the Technical Loop must ask whether to reconcile Jira changes through the Business Loop, keep the local Story, or review the difference. A Jira change invalidates the technical plan but does not silently alter the locally confirmed business status. Only a confirmed reconciliation updates `story.md`; never overwrite it silently.
 
 ## Progressive Questioning Rule
 
-During the Business Loop, ask clarification questions progressively.
+During the Business Loop and Technical Loop, ask clarification questions in one batched checklist whenever possible.
 
 Rules:
 
-- Ask only one question at a time unless the user explicitly asks for a full checklist.
-- Ask the highest-impact unresolved question first.
+- Ask all remaining high-impact unresolved questions in one turn unless the user explicitly asks for progressive single-question mode.
+- Order questions by impact: scope, actors, rules, acceptance, failure behavior, then lower-impact details.
 - Prefer interactive Q&A when the environment supports it.
 - Each question should include 2-4 concrete options.
 - Mark one option as `Recommended` when reasonable.
 - Always allow the user to provide a custom answer.
 - Do not use blank placeholders as the primary interaction style.
-- After the user answers, update `topics/<slug>.md` under `Progressive Clarifications` during Topic Discovery, or `story.md` under `Clarifications` during Story Clarification.
-- Then decide the next best question based on the updated topic or story.
+- After the user answers, update `topics/<slug>.md` under `Progressive Clarifications` during Topic Discovery, or `story.md` under `Clarifications` during Story Clarification, and update `technical-plan.md` for technical answers.
+- Ask a follow-up batch only for newly exposed high-impact gaps.
 
-If the tool supports an interactive question UI, use it. If not, present a short text menu like:
+If the tool supports an interactive question UI, use it. If not, present a short text checklist like:
 
 ```text
-Please choose one option, or type your own answer:
+Please answer all of the following in one reply.
+For each question, choose a letter or type your own answer.
+
+1. Question: Who configures the audience filter?
 A. System configuration (Recommended)
 B. Admin page configuration
 C. Not decided yet; mark the story blocked
+D. Other: describe your answer
+
+2. Question: What happens when the source data is empty?
+A. Show an empty state (Recommended)
+B. Hide the section
+C. Block publishing
 D. Other: describe your answer
 ```
 
@@ -203,7 +212,7 @@ During the Technical Loop, the Agent should:
 1. Read `story.md`, `metadata.json`, `templates/technical-plan.md`, and the Lumen coding guideline shipped with the CLI.
 2. Inspect impacted repositories and identify real modules, endpoints, tables, jobs, Dockerfiles, build files, and tests.
 3. If the input is a broad topic, guide the user to split and select one concrete story before planning.
-4. Ask one focused technical question at a time when ambiguity affects design, scope, runtime, verification, rollout, or rollback.
+4. Ask every remaining high-impact technical question in one checklist turn when ambiguity affects design, scope, runtime, verification, rollout, or rollback.
 5. Offer concrete options for each question and allow a custom answer.
 6. Record confirmed technical decisions in `technical-plan.md`; do not leave decisions only in chat.
 7. Derive a concise, business-facing `Delivery Checklist` from confirmed Acceptance Criteria and Business Rules; do not use technical implementation language.

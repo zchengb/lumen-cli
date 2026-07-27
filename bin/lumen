@@ -397,6 +397,10 @@ Usage:
                                  templates. Use --project <slug> to target a specific workspace.
   lumen skills install --workspace <path> --platform claude|cursor|codex|all [--force]
                                  Install explicit Lumen workflow skills for a project.
+  lumen jira import <JIRA-KEY> [--project <slug>]
+                                 Import an existing Jira Story into the docs workspace.
+                                 After import, continue in the agent with the Business Loop
+                                 ($lumen-jira-story-import starts it automatically).
   lumen version                 Print the installed Lumen CLI version
   lumen help                    Show this help message
 
@@ -441,6 +445,68 @@ cmd_skills() {
       exit 1
       ;;
   esac
+}
+
+cmd_jira() {
+  local sub="${1:-}"
+  shift || true
+  case "${sub}" in
+    import) cmd_jira_import "$@" ;;
+    help|-h|--help|"")
+      cat <<'EOF'
+Usage:
+  lumen jira import <JIRA-KEY> [--project <slug>]
+                                 Import an existing Jira Story into the docs workspace.
+                                 Prints JSON with next=business_loop. In an agent session,
+                                 $lumen-jira-story-import continues into the Business Loop.
+EOF
+      ;;
+    *)
+      err "Unknown jira command: ${sub}"
+      printf 'Run: lumen jira help\n'
+      exit 1
+      ;;
+  esac
+}
+
+cmd_jira_import() {
+  local key="" filtered_args=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project|-p|--workspace)
+        filtered_args+=("$1" "${2:-}")
+        shift 2
+        ;;
+      --*)
+        err "Unknown option: $1"
+        exit 1
+        ;;
+      *)
+        if [[ -z "${key}" ]]; then
+          key="$1"
+        else
+          err "Unexpected argument: $1"
+          exit 1
+        fi
+        shift
+        ;;
+    esac
+  done
+  [[ -n "${key}" ]] || { err "Usage: lumen jira import <JIRA-KEY> [--project <slug>]"; exit 1; }
+  resolve_command_workspace "${filtered_args[@]+"${filtered_args[@]}"}"
+  local docs_dir import_py
+  if [[ -d "$(dirname "${RESOLVED_WORKSPACE}")/stories" ]]; then
+    docs_dir="$(cd "$(dirname "${RESOLVED_WORKSPACE}")" && pwd)"
+  elif [[ -d "${RESOLVED_WORKSPACE}/stories" ]]; then
+    docs_dir="${RESOLVED_WORKSPACE}"
+  else
+    err "Stories directory not found next to workspace: ${RESOLVED_WORKSPACE}"
+    exit 1
+  fi
+  import_py="${LUMEN_LIB_DIR}/import_jira_story.py"
+  [[ -f "${import_py}" ]] || { err "Jira import helper not found: ${import_py}"; exit 1; }
+  python3 "${import_py}" "${docs_dir}" "${key}"
+  printf '\nNext: continue with $lumen-business-loop for this Story (batched business clarifications).\n' >&2
 }
 
 sync_prompt_snippets() {
@@ -3275,6 +3341,7 @@ main() {
     config) cmd_config "$@" ;;
     issue) cmd_issue "$@" ;;
     skills) cmd_skills "$@" ;;
+    jira) cmd_jira "$@" ;;
     upgrade) cmd_upgrade "$@" ;;
     version|-v|--version) cmd_version ;;
     help|-h|--help) cmd_help ;;

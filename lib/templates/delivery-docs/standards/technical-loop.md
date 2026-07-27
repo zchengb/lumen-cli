@@ -70,24 +70,31 @@ Use interactive Q&A whenever the environment supports it.
 
 Rules:
 
-- Ask one focused question at a time unless the user asks for a full checklist.
-- Ask the question that most affects architecture, data model, API contract, runtime, or verification first.
-- Provide 2-4 concrete options and mark one as `Recommended` when reasonable.
+- Ask all remaining high-impact technical questions in one checklist turn unless the user asks for progressive single-question mode.
+- Ask the questions that most affect architecture, data model, API contract, runtime, or verification first.
+- Provide 2-4 concrete options per question and mark one as `Recommended` when reasonable.
 - Always allow a custom answer.
 - Prefer choices over blanks. Do not ask the user to fill an empty template field when you can offer likely options from repo context.
 - Explain the consequence of each option briefly.
-- Record the final answer in `technical-plan.md` under `Technical Clarifications` or the relevant plan section.
-- Return to the Business Loop if the answer changes business scope or Acceptance Criteria.
+- Record the final answers in `technical-plan.md` under `Technical Clarifications` or the relevant plan section.
+- Return to the Business Loop if an answer changes business scope or Acceptance Criteria.
 
 Example:
 
 ```text
-Question: Where should the low-rating aggregation job be implemented?
+Please answer all of the following in one reply.
+For each question, choose a letter or type your own answer.
 
-Options:
+1. Question: Where should the low-rating aggregation job be implemented?
 A. Existing scheduled-job module in mbpass-business (Recommended) - keeps survey aggregation close to existing domain logic.
 B. New admin-side scheduled task - faster UI-team ownership, but duplicates business-domain access.
 C. External script / operations job - lowest code change, but weak observability and deployment control.
+D. Other: describe your answer.
+
+2. Question: How should empty survey batches be handled?
+A. No-op with structured log (Recommended)
+B. Create an empty result row
+C. Fail the job
 D. Other: describe your answer.
 ```
 

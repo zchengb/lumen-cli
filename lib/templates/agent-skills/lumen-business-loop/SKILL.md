@@ -1,6 +1,6 @@
 ---
 name: lumen-business-loop
-description: Use only when explicitly asked to discover a business topic or clarify a Lumen Story. It may modify topics/<slug>.md, stories/<slug>/story.md, and that Story's metadata.json; it must not modify application source code, technical-plan.md, or start implicitly.
+description: Use when explicitly asked to discover a business topic or clarify a Lumen Story, and when continuing after `$lumen-jira-story-import`. It may modify topics/<slug>.md, stories/<slug>/story.md, and that Story's metadata.json; it must not modify application source code or technical-plan.md.
 ---
 
 <!-- Lumen managed: agent-skill -->
