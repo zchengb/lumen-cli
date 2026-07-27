@@ -771,8 +771,11 @@ function ScanView({ data, project, notify, reload }: { data: DashboardData; proj
       await reload().catch(() => undefined);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Unable to start scan";
-      setScanError(message);
-      notify(message, "error");
+      const detail = message === "Not found"
+        ? `Dashboard is still running an older version. Run \`lumen dashboard stop --project ${project}\`, then open the dashboard again.`
+        : message;
+      setScanError(detail);
+      notify(detail, "error");
     } finally {
       setScanBusy(false);
     }

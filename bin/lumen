@@ -372,7 +372,7 @@ Usage:
   lumen config set-webhook <url> [--project <slug>]
                                  Save the Feishu webhook in this workspace's .env.local
   lumen config set-cursor-api-key <key> [--project <slug>]
-                                 Save CURSOR_API_KEY in this workspace's .env.local (for scheduled scans)
+                                 Save CURSOR_API_KEY in this workspace's .env.local (for scheduled scan/delivery)
   lumen config set-gh-token <token> [--host <github-host>] [--project <slug>]
                                  Save GH_TOKEN (and optional GH_HOST) for scheduled PR creation on GHE/GitHub
   lumen config set-scan-window <days> [--project <slug>]
@@ -804,9 +804,9 @@ except Exception:
       load_env_file_if_present "${workspace}/.env.local"
     fi
     if [[ -n "${CURSOR_API_KEY:-}" ]]; then
-      ok "CURSOR_API_KEY is set for scheduled scans."
+      ok "CURSOR_API_KEY is set for scheduled scan/delivery."
     else
-      warn "CURSOR_API_KEY is not set. Scheduled scans will fail under cron."
+      warn "CURSOR_API_KEY is not set. Scheduled scan/delivery will fail under cron."
       printf '  Add it during lumen init or: lumen config set-cursor-api-key <key> --project <slug>\n'
     fi
     if [[ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]]; then
@@ -1812,7 +1812,7 @@ cmd_init() {
 Next steps:
   1. Add or clone code repositories under repos/.
   2. Edit ${LUMEN_DIR_NAME}/config/common.json to set project.display_name and execution.model.
-  3. Copy ${LUMEN_DIR_NAME}/.env.local.example to ${LUMEN_DIR_NAME}/.env.local and set FEISHU_WEBHOOK_URL and/or CURSOR_API_KEY (required for scheduled scans).
+  3. Copy ${LUMEN_DIR_NAME}/.env.local.example to ${LUMEN_DIR_NAME}/.env.local and set FEISHU_WEBHOOK_URL and/or CURSOR_API_KEY (required for scheduled scan/delivery).
   4. Optional: enable Jira sync with lumen config set-jira --enable --project-key <KEY> --project <slug>
   5. Run: lumen doctor
   6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
@@ -1900,7 +1900,7 @@ EOF
 Next steps:
   1. Work from this project root. Scan and delivery share repos/, ${LUMEN_DIR_NAME}/, and .env.local.
   2. If Jira sync is enabled, install TWG CLI and run: twg login
-  3. For scheduled scans, ensure CURSOR_API_KEY is set in ${LUMEN_DIR_NAME}/.env.local
+  3. For scheduled scan/delivery, ensure CURSOR_API_KEY is set in ${LUMEN_DIR_NAME}/.env.local
   4. Run: lumen list
   5. Run: lumen doctor
   6. Run: lumen scan --project <slug>   (see slugs with: lumen list)
@@ -2191,7 +2191,20 @@ cmd_dashboard() {
     server_pid="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('pid',''), end='')" "${server_state}" 2>/dev/null || true)"
     if [[ "${server_pid}" =~ ^[0-9]+$ ]] && kill -0 "${server_pid}" 2>/dev/null; then
       server_version="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('version',''), end='')" "${server_state}" 2>/dev/null || true)"
-      if [[ "${server_version}" != "${dashboard_version}" ]]; then
+      server_stale="$(python3 -c "
+import json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+state = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+script = Path(sys.argv[2])
+started = str(state.get('started_at') or '').strip()
+if not started or not script.is_file():
+    print('0')
+else:
+    started_at = datetime.fromisoformat(started.replace('Z', '+00:00')).timestamp()
+    print('1' if script.stat().st_mtime > started_at + 1 else '0')
+" "${server_state}" "${dashboard_server}" 2>/dev/null || echo 0)"
+      if [[ "${server_version}" != "${dashboard_version}" || "${server_stale}" == "1" ]]; then
         kill "${server_pid}" 2>/dev/null || true
         rm -f "${server_state}"
       else
@@ -2645,6 +2658,11 @@ cmd_delivery_schedule_add() {
     ok "Scheduled delivery polling for '${slug}' every ${interval} minute(s) with launchd (JIRA: ${jira_status})"
     printf 'LaunchAgent: %s\n' "${launchd_path}"
     printf 'Log file: %s\n' "${log_file}"
+    load_env_file_if_present "${workspace}/.env.local"
+    if [[ -z "${CURSOR_API_KEY:-}" ]]; then
+      warn "Scheduled deliveries need CURSOR_API_KEY in ${workspace}/.env.local"
+      printf '  Set it with: lumen config set-cursor-api-key <key> --project %s\n' "${slug}"
+    fi
     return 0
   fi
   cron_line="${cron_expr} ${cron_path} ${cron_env} LUMEN_HOME=\"${LUMEN_HOME}\" \"${lumen_bin}\" delivery schedule run --project ${slug} --jira-status \"${jira_status}\" >> \"${log_file}\" 2>&1 $(delivery_schedule_marker "${slug}")"
@@ -2654,6 +2672,11 @@ cmd_delivery_schedule_add() {
   write_crontab "${updated}"
   ok "Scheduled delivery polling for '${slug}': ${cron_expr} (JIRA: ${jira_status})"
   printf 'Log file: %s\n' "${log_file}"
+  load_env_file_if_present "${workspace}/.env.local"
+  if [[ -z "${CURSOR_API_KEY:-}" ]]; then
+    warn "Scheduled deliveries need CURSOR_API_KEY in ${workspace}/.env.local"
+    printf '  Set it with: lumen config set-cursor-api-key <key> --project %s\n' "${slug}"
+  fi
 }
 
 cmd_delivery_schedule_remove() {
