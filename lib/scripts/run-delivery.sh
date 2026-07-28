@@ -480,9 +480,6 @@ run_dry_delivery() {
 
 run_real_delivery() {
   command -v agent >/dev/null 2>&1 || fail "Cursor CLI 'agent' was not found in PATH."
-  if [[ -z "${CURSOR_API_KEY:-}" ]] && ! agent status >/dev/null 2>&1; then
-    fail "Cursor agent is not authenticated. Add CURSOR_API_KEY to ${DOCS_DIR}/.env.local."
-  fi
 
   local refresh_py="${LUMEN_LIB_DIR}/jira_sync.py"
   if [[ -f "${refresh_py}" ]] && command -v python3 >/dev/null 2>&1; then

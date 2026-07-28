@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -171,7 +172,9 @@ def main() -> int:
             command.append("--dry-run")
         print(f"Starting scheduled delivery for {jira_key}: {story_dir.name}")
         record_activity(activity_file, "started", "Scheduled delivery started.", story_id=story_dir.name, jira_key=jira_key)
-        code = subprocess.run(command, check=False).returncode
+        environment = os.environ.copy()
+        environment["LUMEN_DELIVERY_TRIGGER"] = "scheduled"
+        code = subprocess.run(command, check=False, env=environment).returncode
         record_activity(activity_file, "completed" if code == 0 else "failed", "Scheduled delivery finished." if code == 0 else f"Scheduled delivery exited with code {code}.", story_id=story_dir.name, jira_key=jira_key, exit_code=code)
         return code
 

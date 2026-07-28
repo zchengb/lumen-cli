@@ -13,6 +13,7 @@ from pathlib import Path
 from delivery_progress import docker_available
 from delivery_workspace import load_story_context, read_json, workspace_lumen_dir
 from jira_sync import refresh_twg_auth
+from workspace_config import read_cursor_api_key
 
 
 def check(command: list[str], label: str, cwd: Path | None = None) -> str:
@@ -25,6 +26,17 @@ def check(command: list[str], label: str, cwd: Path | None = None) -> str:
     return ""
 
 
+def cursor_auth_error(*, scheduled: bool, api_key: str, env_local: Path) -> str:
+    if api_key.strip():
+        return ""
+    if scheduled:
+        return (
+            "CURSOR_API_KEY is required for scheduled delivery. "
+            f"Add it to {env_local} (Cursor Settings > API Keys)."
+        )
+    return check(["agent", "status"], "Cursor authentication")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("docs_dir")
@@ -35,11 +47,14 @@ def main() -> int:
         context = load_story_context(docs_dir, args.story)
         config = read_json(workspace_lumen_dir(context.workspace_root) / "config" / "delivery.json", {})
         errors: list[str] = []
+        env_local = workspace_lumen_dir(context.workspace_root) / ".env.local"
+        cursor_api_key = str(os.environ.get("CURSOR_API_KEY") or read_cursor_api_key(context.workspace_root) or "")
+        scheduled = os.environ.get("LUMEN_DELIVERY_TRIGGER", "").strip().lower() == "scheduled"
 
         if not shutil.which("agent"):
             errors.append("Cursor CLI 'agent' is not installed")
-        elif not os.environ.get("CURSOR_API_KEY"):
-            error = check(["agent", "status"], "Cursor authentication")
+        else:
+            error = cursor_auth_error(scheduled=scheduled, api_key=cursor_api_key, env_local=env_local)
             if error:
                 errors.append(error)
 
