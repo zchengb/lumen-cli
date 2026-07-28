@@ -394,8 +394,31 @@ def ensure_feature_worktree(
                 )
             return False, f"Existing worktree is on {current_branch}; expected {branch_name}"
         repo.worktree_path = worktrees_root.resolve()
-        repo.default_branch = resolve_repo_default_branch(repo.name, repo.path, workspace_root)
-        return True, "reused story worktree"
+        base_branch = resolve_repo_default_branch(repo.name, repo.path, workspace_root)
+        repo.default_branch = base_branch
+        if str(metadata.get("baseCommit") or metadata.get("base_commit") or "").strip():
+            return True, "reused story worktree at the pinned base commit"
+        fetch = subprocess.run(
+            ["git", "-C", str(repo.path), "fetch", "origin", base_branch],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if fetch.returncode != 0:
+            return False, fetch.stderr or fetch.stdout or "failed to fetch the latest base branch"
+        update = subprocess.run(
+            ["git", "-C", str(worktrees_root), "merge", "--ff-only", f"origin/{base_branch}"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if update.returncode != 0:
+            return False, (
+                update.stderr
+                or update.stdout
+                or f"existing worktree could not fast-forward from origin/{base_branch}"
+            )
+        return True, f"reused story worktree and synced origin/{base_branch}"
 
     if worktrees_root.exists():
         return False, f"Worktree path exists but is not a git worktree: {worktrees_root}"

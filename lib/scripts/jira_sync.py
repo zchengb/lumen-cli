@@ -474,6 +474,24 @@ def jira_browse_url(key: str, payload: Any) -> Optional[str]:
     return None
 
 
+def jira_browse_url_from_config(key: str, config: dict) -> Optional[str]:
+    site = str(config.get("site", "")).strip().rstrip("/")
+    if not site:
+        auth_conf = Path.home() / ".config" / "twg" / "auth.conf"
+        try:
+            for line in auth_conf.read_text(encoding="utf-8").splitlines():
+                if line.strip().startswith("domain="):
+                    site = line.split("=", 1)[1].strip().strip('"').rstrip("/")
+                    break
+        except OSError:
+            pass
+    if not site:
+        return None
+    if not site.startswith(("https://", "http://")):
+        site = f"https://{site if '.' in site else site + '.atlassian.net'}"
+    return f"{site}/browse/{key}"
+
+
 def create_workitem(
     finding: dict,
     issue_id: str,
@@ -524,6 +542,7 @@ def create_workitem(
     key, url = parse_issue_key(output)
     if not key:
         raise RuntimeError(f"Could not parse Jira issue key from twg output: {truncate_error(output)}")
+    url = url or jira_browse_url_from_config(key, config)
 
     if sprint_id:
         assign_workitem_to_sprint(key, sprint_id, config)

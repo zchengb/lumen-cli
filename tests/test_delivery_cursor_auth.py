@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -16,6 +17,24 @@ import delivery_scheduler  # noqa: E402
 
 
 class DeliveryCursorAuthTests(unittest.TestCase):
+    def test_scheduler_fetches_but_does_not_block_on_dirty_docs_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs_dir = Path(temp)
+            completed = {
+                "status": subprocess.CompletedProcess([], 0, stdout=" M local-change.txt\n", stderr=""),
+                "fetch": subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            }
+
+            def run_git(command, **kwargs):
+                if command[3] == "status":
+                    return completed["status"]
+                if command[3] == "fetch":
+                    return completed["fetch"]
+                self.fail(f"unexpected git command: {command}")
+
+            with patch.object(delivery_scheduler.subprocess, "run", side_effect=run_git):
+                delivery_scheduler.sync_docs_checkout(docs_dir)
+
     def test_scheduled_delivery_rejects_missing_api_key_without_agent_status(self) -> None:
         with patch.object(delivery_preflight, "check") as check:
             error = delivery_preflight.cursor_auth_error(

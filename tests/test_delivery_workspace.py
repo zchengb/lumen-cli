@@ -302,6 +302,43 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         rendered = json.dumps(card)
         self.assertIn("[DEMO-42](https://example.atlassian.net/browse/DEMO-42)", rendered)
 
+    def test_archived_scan_result_keeps_jira_links_from_processed_result(self) -> None:
+        renderer = load_scan_notification_renderer()
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            results = workspace / "results"
+            results.mkdir()
+            archived = results / "scan-result-20260728-040521.json"
+            archived.write_text(
+                json.dumps(
+                    {
+                        "started_at": "2026-07-28T03:58:00Z",
+                        "findings": [{"title": "Demo", "severity": "Medium"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            renderer.sync_archived_scan_results(
+                workspace,
+                {
+                    "started_at": "2026-07-28T03:58:00Z",
+                    "findings": [
+                        {
+                            "title": "Demo",
+                            "severity": "Medium",
+                            "issue_id": "ISSUE-demo",
+                            "jira_key": "DEMO-1",
+                            "jira_url": "https://example.atlassian.net/browse/DEMO-1",
+                        }
+                    ],
+                    "report": {"status": "generated"},
+                    "jira": {"status": "synced", "created": 1},
+                },
+            )
+            result = json.loads(archived.read_text(encoding="utf-8"))
+        self.assertEqual("DEMO-1", result["findings"][0]["jira_key"])
+        self.assertEqual("ISSUE-demo", result["findings"][0]["issue_id"])
+
     def test_scan_without_findings_skips_report_artifacts(self) -> None:
         renderer = load_scan_notification_renderer()
         self.assertFalse(renderer.has_findings({"findings": []}))
@@ -1590,6 +1627,55 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertNotEqual(repo.worktree_path, second_repo.worktree_path)
             self.assertTrue(second_repo.worktree_path.is_dir())
             self.assertEqual("dirty local edit\n", (source / "README.md").read_text(encoding="utf-8"))
+
+    def test_reused_story_worktree_fast_forwards_to_latest_base_branch(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            remote = root / "remote.git"
+            source = root / "source"
+            workspace = root / "workspace"
+            subprocess.run(["git", "init", "--bare", str(remote)], check=True, capture_output=True)
+            subprocess.run(["git", "init", "-b", "main", str(source)], check=True, capture_output=True)
+            git(source, "config", "user.email", "lumen@example.test")
+            git(source, "config", "user.name", "Lumen Test")
+            (source / "README.md").write_text("base-1\n", encoding="utf-8")
+            git(source, "add", "README.md")
+            git(source, "commit", "-m", "base 1")
+            git(source, "remote", "add", "origin", str(remote))
+            git(source, "push", "-u", "origin", "main")
+
+            story_dir = root / "stories" / "DEMO-126"
+            story_dir.mkdir(parents=True)
+            metadata = {"jiraKey": "DEMO-126"}
+            target = RepoTarget(
+                "service",
+                source,
+                workspace / "lumen" / "worktrees" / "DEMO-126" / "service",
+            )
+            ok, detail = ensure_feature_worktree(
+                target,
+                "feature/DEMO-126-sync",
+                workspace,
+                metadata,
+                story_dir,
+            )
+            self.assertTrue(ok, detail)
+
+            (source / "README.md").write_text("base-2\n", encoding="utf-8")
+            git(source, "commit", "-am", "base 2")
+            git(source, "push", "origin", "main")
+
+            reused = RepoTarget("service", source, target.worktree_path)
+            ok, detail = ensure_feature_worktree(
+                reused,
+                "feature/DEMO-126-sync",
+                workspace,
+                metadata,
+                story_dir,
+            )
+            self.assertTrue(ok, detail)
+            self.assertIn("synced origin/main", detail)
+            self.assertEqual("base-2\n", (reused.worktree_path / "README.md").read_text(encoding="utf-8"))
 
     def test_story_worktree_uses_explicit_base_commit(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

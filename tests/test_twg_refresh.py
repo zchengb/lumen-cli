@@ -15,6 +15,19 @@ import jira_sync  # noqa: E402
 
 
 class TwgRefreshTests(unittest.TestCase):
+    def test_created_jira_issue_gets_browse_url_when_twg_omits_url(self) -> None:
+        finding = {"title": "Demo", "severity": "Medium", "repository": "demo", "file": "demo.py"}
+        with patch.object(jira_sync, "twg_ready", return_value=(True, "")), patch.object(
+            jira_sync, "run_twg", return_value=(0, '{"data":{"key":"DEMO-1"}}')
+        ):
+            key, url = jira_sync.create_workitem(
+                finding,
+                "ISSUE-demo",
+                {"project_key": "DEMO", "site": "example.atlassian.net"},
+            )
+        self.assertEqual("DEMO-1", key)
+        self.assertEqual("https://example.atlassian.net/browse/DEMO-1", url)
+
     def test_refresh_skips_when_scan_jira_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)

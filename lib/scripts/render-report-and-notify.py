@@ -787,6 +787,8 @@ def sync_archived_scan_results(workspace_root: Path, scan: dict) -> None:
             data["feishu"] = scan["feishu"]
         if scan.get("jira"):
             data["jira"] = scan["jira"]
+        if isinstance(scan.get("findings"), list):
+            data["findings"] = scan["findings"]
         if scan.get("finished_at"):
             data["finished_at"] = scan["finished_at"]
         write_json(path, data)

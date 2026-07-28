@@ -93,22 +93,14 @@ def current_jira_status(jira_key: str) -> str:
 
 
 def sync_docs_checkout(docs_dir: Path) -> None:
-    from sync_delivery_docs import heal_lumen_owned_docs_dirt
-
     status = subprocess.run(["git", "-C", str(docs_dir), "status", "--porcelain"], capture_output=True, text=True)
     if status.returncode != 0:
         raise RuntimeError(f"Docs directory is not a git repository: {docs_dir}")
-    if status.stdout.strip():
-        heal_lumen_owned_docs_dirt(docs_dir, push=True)
-        status = subprocess.run(["git", "-C", str(docs_dir), "status", "--porcelain"], capture_output=True, text=True)
-        if status.returncode != 0:
-            raise RuntimeError(f"Docs directory is not a git repository: {docs_dir}")
-        if status.stdout.strip():
-            raise RuntimeError("Docs workspace has uncommitted changes; scheduled delivery will not pull or run")
-        return
     fetch = subprocess.run(["git", "-C", str(docs_dir), "fetch", "origin"], capture_output=True, text=True)
     if fetch.returncode != 0:
         raise RuntimeError((fetch.stderr or fetch.stdout or "git fetch failed").strip()[-500:])
+    if status.stdout.strip():
+        return
     pull = subprocess.run(["git", "-C", str(docs_dir), "pull", "--ff-only"], capture_output=True, text=True)
     if pull.returncode != 0:
         raise RuntimeError((pull.stderr or pull.stdout or "git pull --ff-only failed").strip()[-500:])
