@@ -1,6 +1,6 @@
 ## Final Console Summary
 
-At the end, print:
+Print this exact compact summary at the end:
 
 ```text
 Scan status:
@@ -13,4 +13,4 @@ Failures:
 Skipped steps:
 ```
 
-Do not omit failures. Do not print PDF report or Feishu lines — those are only known after the wrapper script runs, which happens after your process exits.
+Include every failure. Do not print report or Feishu fields; the wrapper knows those only after the Agent exits.

@@ -1,14 +1,8 @@
-# Delivery Output Contract
+# Delivery Result
 
-Write the run result to:
+Write `<workspace-root>/lumen/results/delivery-result.json`, replacing the previous result for this run. During remediation, merge into the existing result and preserve every prior `repos_touched` entry and `commit_subject`.
 
-`<workspace-root>/lumen/results/delivery-result.json`
-
-Overwrite any previous file for this run.
-
-During verification remediation, merge updates into the existing result instead of replacing it with only the repositories you touched in that pass. Keep every prior `repos_touched` entry and `commit_subject` unless you intentionally change that repository.
-
-Schema:
+Use this shape:
 
 ```json
 {
@@ -37,12 +31,6 @@ Schema:
 }
 ```
 
-Allowed `delivery_status` values:
+Allowed `delivery_status`: `completed`, `ready_for_finalize`, `blocked`, or `failed`.
 
-- `completed` or `ready_for_finalize` — plan implemented and ready for Lumen verification
-- `blocked` — cannot proceed safely
-- `failed` — implementation attempted but failed
-
-Do not create commits, push branches, or create PRs. Do not hallucinate PR URLs, test results, or commit SHAs. Leave `verification_results` as `[]`; Lumen fills verification, commit, and PR fields after its verification stage succeeds.
-
-Leave `feishu` and `jira` out of the file. The Lumen wrapper fills those after your run.
+Do not invent PR URLs, commit SHAs, test results, Jira fields, or Feishu fields. Leave `verification_results` empty. Omit `feishu` and `jira`; the wrapper fills external metadata after verification.

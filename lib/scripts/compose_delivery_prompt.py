@@ -14,7 +14,7 @@ from delivery_workspace import (
     read_json,
     workspace_lumen_dir,
 )
-from visual_delivery import repo_config_entry, repos_config, visual_auth_env_name, visual_contract
+from visual_delivery import repo_config_entry, repos_config, visual_contract
 
 
 def lumen_home() -> Path:
@@ -232,13 +232,11 @@ def agent_quick_login_block(context: StoryContext) -> str:
         if runtime.get("base_url"):
             lines.append(f"- Base URL: `{runtime['base_url']}`")
         login_path = str(runtime.get("auth_login_path", "")).strip()
-        login_field = str(runtime.get("auth_login_field", "wiw")).strip() or "wiw"
         if platform == "web" and login_path:
             base = str(runtime.get("base_url", "")).rstrip("/")
             lines.append(
-                f"- Quick login: Lumen performs `POST {base}{login_path}` inside the managed browser context"
+                f"- Quick login: Lumen performs `POST {base}{login_path}` inside the managed browser context; use the prepared session"
             )
-            lines.append(f"- Credential source: environment variable `{visual_auth_env_name(repo.name, runtime)}` (value is never exposed to the Agent)")
         notes = str(runtime.get("agent_auth_notes", "")).strip()
         if notes:
             lines.append(f"- Notes: {notes}")
@@ -246,7 +244,7 @@ def agent_quick_login_block(context: StoryContext) -> str:
             sections.append("\n".join(lines))
     if not sections:
         return ""
-    return "# Quick Login\n\nLumen prepares authentication before the implementation Agent starts. Do not request, print, or copy credentials, cookies, storage-state contents, or tokens.\n\n" + "\n\n".join(sections)
+    return "# Quick Login\n\nLumen authenticates the local session before the Agent starts. Use that session; never request, print, or copy credentials, cookies, storage state, or tokens.\n\n" + "\n\n".join(sections)
 
 
 def authenticated_web_session_block(context: StoryContext) -> str:
@@ -331,22 +329,9 @@ def visual_state_matrix_block(context: StoryContext) -> str:
 def visual_iteration_block(context: StoryContext) -> str:
     if not has_ui_runtime(context):
         return ""
-    return """# Visual Iteration
+    return """# Visual QA
 
-Visual QA is agent-owned. Use the prepared `# Authenticated Web Session` when present, inspect each Visual State Matrix row in a real browser or device, and fix visual defects before handoff. Lumen does not run automated screenshot comparison during delivery verification.
-
-## Hard visual completion gate
-
-Do not finalize because a component exists or lint passes. First inspect the page shell, content container, and at least two nearby existing sibling components. Record their bounding boxes and computed styles as alignment anchors. Then verify the full relevant screen at the same viewport, font-ready state, scroll position, and animation state:
-
-- page shell, content width, section rhythm, control alignment, typography hierarchy, tokens, borders, icons, and viewport behavior agree with the existing page;
-- each new control aligns with same-page siblings by left/right edge, baseline, indentation, gap, height, and computed font metrics;
-- full-screen and focused screenshots cover the important settled states; overlays are captured separately and are closed for settled-state evidence;
-- dynamic content stays inside its container, expands or scrolls intentionally, and never overlaps titles, controls, sticky regions, footers, or the next section;
-- long text, empty/loading/error data, disabled/focus states, keyboard behavior, and viewport edges are tested when applicable;
-- a component-only screenshot, fixed-height overflow, unmeasured “close enough” result, or screenshot with an open overlay is a failure.
-
-If any whole-screen geometry or interaction assertion fails, fix it and rerun the affected states before `ready_for_finalize`. Record the measured page anchors, sibling comparisons, screenshots, and failed assertions in `delivery-result.json`.
+Use the prepared session and every row in the Visual State Matrix. Read `05-visual-delivery.md` before inspecting UI; it is the single visual acceptance checklist. Compare the whole screen with the existing shell, sibling controls, approved design context, and reference images. Fix defects before `ready_for_finalize`, and record screenshots, measured anchors, comparisons, and blockers in `delivery-result.json`.
 """
 
 

@@ -785,7 +785,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("REQUIRED", prompt)
             self.assertIn("# Visual State Matrix (verify every row)", prompt)
             self.assertIn("Dealer | Disabled", prompt)
-            self.assertIn("# Hard visual completion gate", prompt)
+            self.assertIn("# Visual QA", prompt)
+            self.assertIn("05-visual-delivery.md", prompt)
             self.assertNotIn("# Implementation Rules", prompt.split("# Delivery Context")[0])
 
     def test_generic_ui_delivery_prompt_applies_without_visual_contract(self) -> None:
@@ -1052,7 +1053,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("# Quick Login", prompt)
             self.assertIn("POST http://127.0.0.1:3000/oauth-proxy-api/auth/admin/fake", prompt)
             self.assertNotIn("TEST-WIW", prompt)
-            self.assertIn("LUMEN_VISUAL_AUTH_DIGITAL_PLATFORM_ADMIN", prompt)
+            self.assertNotIn("LUMEN_VISUAL_AUTH_DIGITAL_PLATFORM_ADMIN", prompt)
 
     def test_remediation_attempt_archives_previous_failures(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

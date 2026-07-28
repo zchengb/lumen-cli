@@ -1,53 +1,15 @@
-## Finding Requirements
+## Findings And Auto-Fix
 
-Every reported finding must include:
+Report only findings with code evidence, a realistic trigger, and concrete impact. Each finding needs:
 
-- Short title.
-- Severity (per the severity guideline).
-- Repository.
-- Impact.
-- Trigger scenario.
-- File path with exact line range.
-- Code snippet.
-- Suggestion.
-- Root cause (why the bug exists).
-- PR URL only when a High finding was fixed and a PR was actually created by the post-scan step (leave empty when you finish your run).
+- short `title` and `severity`;
+- `repository`, `file`, exact `line_range`, and redacted `code_snippet`;
+- `impact`, `trigger`, `root_cause`, and `suggestion`;
+- `validation: "Skipped: lightweight review-only mode"`;
+- `pr_url: null` unless post-scan has created the real PR.
 
-A valid finding must have code evidence, concrete impact, and a realistic trigger.
+Avoid vague claims such as “might be risky”, “could be refactored”, or “potential bug” without evidence.
 
-Avoid vague findings such as:
+Create a local auto-fix commit only when the finding is confirmed High, the trigger is realistic, the fix is minimal and low risk, the worktree was clean, and that repository allows auto-fix/PR creation. Add focused tests when practical, but do not run project validation in review-only mode.
 
-- "This might be risky."
-- "Consider improving code quality."
-- "Potential bug without trigger."
-- "Could be refactored."
-- "Maybe unsafe."
-
-## Automated Fix And PR Policy
-
-Create a local auto-fix commit only when all conditions are true:
-
-- The finding is confirmed.
-- Severity is High.
-- The trigger scenario is realistic.
-- The fix is safe, minimal, and low risk.
-- The change is limited to the affected behavior.
-- The repository worktree is clean before the fix.
-- Local validation is skipped by review-only policy and this limitation is clearly documented.
-- The repository config allows auto-fix and PR creation.
-
-Do not create fixes for Medium findings, Low findings, speculative findings, style-only changes, broad refactors, risky rewrites, or issues requiring product decisions.
-
-For each qualifying High finding:
-
-1. Create a branch in the worktree.
-2. Apply the smallest safe fix.
-3. Add or update focused tests when practical.
-4. Do not run local validation commands.
-5. Record validation as `Skipped: lightweight review-only mode`.
-6. Inspect local Git config and recent commit history.
-7. Commit the change on the new `auto-fix/<repo-name>/<short-finding-slug>` branch using a repository-consistent commit message.
-8. Record `auto_fix` metadata on the finding (see output contract). Do not push the branch or run `gh`.
-9. Leave `pr_url` empty. The wrapper script pushes the branch and opens the GitHub PR after your run exits.
-
-If any step fails, record the exact failure reason in `auto_fix.status` / `auto_fix.error`. Do not hallucinate success.
+For each qualifying fix: create the auto-fix branch, edit only the affected behavior, inspect Git identity/history, commit with the Lumen format, record `auto_fix`, and leave pushing/PR creation to post-scan. If any step fails, record `auto_fix.status: failed` and the exact error.
