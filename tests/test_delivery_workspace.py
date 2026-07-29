@@ -32,10 +32,10 @@ from delivery_workspace import (  # noqa: E402
     validate_story_gates,
 )
 from render_delivery_dashboard import render  # noqa: E402
-from init_delivery_docs import init_docs  # noqa: E402
+from init_delivery_docs import init_docs, sync_guidance  # noqa: E402
 from install_agent_skills import install as install_agent_skills  # noqa: E402
 from sync_workspace_repositories import sync as sync_scan_repositories  # noqa: E402
-from delivery_scheduler import current_jira_status, story_candidates  # noqa: E402
+from delivery_scheduler import current_jira_status, normalize_statuses, story_candidates  # noqa: E402
 from delivery_launchd import interval_minutes_from_cron  # noqa: E402
 from scan_launchd import launchd_schedule_from_cron  # noqa: E402
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees  # noqa: E402
@@ -104,6 +104,25 @@ def git(path: Path, *args: str) -> None:
 
 
 class DeliveryWorkspaceTests(unittest.TestCase):
+    def test_sync_guidance_refreshes_loop_docs_and_keeps_story_data(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "README.md").write_text("# Old Docs\n", encoding="utf-8")
+            (root / "AGENTS.md").write_text("old agent guide\n", encoding="utf-8")
+            (root / "standards" / "development-loop.md").parent.mkdir(parents=True)
+            (root / "standards" / "development-loop.md").write_text("old development loop\n", encoding="utf-8")
+            story = root / "stories" / "MBPAS-1" / "story.md"
+            story.parent.mkdir(parents=True)
+            story.write_text("user story\n", encoding="utf-8")
+
+            sync_guidance(root, "Example Docs", root / "backup")
+
+            self.assertIn("# Example Docs", (root / "README.md").read_text(encoding="utf-8"))
+            self.assertIn("# Example Docs Agent Guide", (root / "AGENTS.md").read_text(encoding="utf-8"))
+            self.assertIn("lumen delivery run", (root / "standards" / "development-loop.md").read_text(encoding="utf-8"))
+            self.assertEqual("user story\n", story.read_text(encoding="utf-8"))
+            self.assertEqual("# Old Docs\n", (root / "backup" / "README.md").read_text(encoding="utf-8"))
+
     def test_delivery_failure_discards_previous_run_identity_and_outputs(self) -> None:
         writer = load_delivery_failure_writer()
         renderer = load_delivery_notification_renderer()
@@ -757,7 +776,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         scan_manifest = json.loads(
             (REPO_ROOT / "lib" / "templates" / "prompts" / "scan" / "manifest.json").read_text(encoding="utf-8")
         )
-        self.assertIn("# Delivery Agent Role", delivery_prompt)
+        self.assertIn("# Delivery Agent", delivery_prompt)
         self.assertIn("# Delivery Prompt Catalog", delivery_prompt)
         self.assertNotIn("# Implementation Rules", delivery_prompt)
         scan_files = [
@@ -856,7 +875,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
             self.assertIn("05-visual-delivery.md", prompt)
             self.assertIn("Mandatory whole-screen rendered UI inspection checklist", prompt)
-            self.assertIn("# Hard visual completion gate", prompt)
+        self.assertIn("# Visual QA", prompt)
 
     def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1423,8 +1442,10 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
         original_ready = delivery_scheduler.twg_ready
         original_run = delivery_scheduler.run_twg
+        original_refresh = delivery_scheduler.refresh_twg_auth
         try:
             delivery_scheduler.twg_ready = lambda: (True, "")
+            delivery_scheduler.refresh_twg_auth = lambda force=True: (True, "")
             delivery_scheduler.run_twg = lambda _args: (
                 0,
                 json.dumps({"data": [{"key": "MBPAS-100", "status": {"name": "Ready for Dev"}}]}),
@@ -1432,7 +1453,13 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("Ready for Dev", current_jira_status("MBPAS-100"))
         finally:
             delivery_scheduler.twg_ready = original_ready
+            delivery_scheduler.refresh_twg_auth = original_refresh
             delivery_scheduler.run_twg = original_run
+
+    def test_delivery_statuses_support_multiple_values_and_legacy_csv(self) -> None:
+        self.assertEqual(["To Do", "Backlog", "In Progress"], normalize_statuses(["To Do", "Backlog", "In Progress"]))
+        self.assertEqual(["To Do", "Backlog"], normalize_statuses("To Do,Backlog", ()))
+        self.assertEqual(["To Do"], normalize_statuses(["To Do", "to do"], ()))
 
     def test_launchd_interval_accepts_every_n_minutes_cron(self) -> None:
         self.assertEqual(5, interval_minutes_from_cron("*/5 * * * *"))
@@ -1934,6 +1961,9 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertTrue((workspace / "AGENTS.md").is_file())
             self.assertFalse((workspace / "stories" / "mini-web-welcome").exists())
             self.assertTrue((workspace / "lumen" / "config" / "delivery.json").is_file())
+            self.assertTrue((workspace / "lumen" / "config" / "delivery.example.json").is_file())
+            ignore = (workspace / ".gitignore").read_text(encoding="utf-8")
+            self.assertIn("lumen/config/delivery.json", ignore)
 
     def test_agent_skills_install_is_project_scoped_and_preserves_unmanaged_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

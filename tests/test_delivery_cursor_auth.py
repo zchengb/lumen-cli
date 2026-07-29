@@ -88,7 +88,7 @@ class DeliveryCursorAuthTests(unittest.TestCase):
             activity_file = docs_dir / "activity.jsonl"
             with (
                 patch.object(delivery_scheduler, "sync_docs_checkout"),
-                patch.object(delivery_scheduler, "current_jira_status", return_value="Ready for Dev"),
+                patch.object(delivery_scheduler, "current_jira_status", return_value="Backlog"),
                 patch.object(delivery_scheduler.shutil, "which", return_value="/usr/local/bin/lumen"),
                 patch.object(delivery_scheduler.subprocess, "run") as run,
             ):
@@ -104,6 +104,10 @@ class DeliveryCursorAuthTests(unittest.TestCase):
                         "lumen",
                         "--activity-file",
                         str(activity_file),
+                        "--jira-status",
+                        "To Do",
+                        "--jira-status",
+                        "Backlog",
                     ],
                 ):
                     result = delivery_scheduler.main()

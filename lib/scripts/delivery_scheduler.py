@@ -18,6 +18,7 @@ from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, twg_ready
 
 
 MAX_ACTIVITY_EVENTS = 200
+DEFAULT_ELIGIBLE_JIRA_STATUSES = ("To Do", "Backlog", "In Progress")
 
 
 def utc_now() -> str:
@@ -42,6 +43,23 @@ def record_activity(path: Path, outcome: str, message: str, **fields: Any) -> No
 
 def normalized(value: Any) -> str:
     return str(value or "").strip().casefold()
+
+
+def normalize_statuses(value: Any, fallback: tuple[str, ...] = DEFAULT_ELIGIBLE_JIRA_STATUSES) -> list[str]:
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    statuses: list[str] = []
+    for item in values:
+        for part in str(item or "").split(","):
+            status = part.strip()
+            if status and normalized(status) not in {normalized(existing) for existing in statuses}:
+                statuses.append(status)
+    return statuses or list(fallback)
+
+
+def eligible_jira_statuses(config: dict[str, Any]) -> list[str]:
+    automation = config.get("automation") if isinstance(config.get("automation"), dict) else {}
+    scheduled = automation.get("scheduled_delivery") if isinstance(automation.get("scheduled_delivery"), dict) else {}
+    return normalize_statuses(scheduled.get("eligible_jira_statuses") or scheduled.get("required_jira_status"))
 
 
 def story_candidates(docs_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
@@ -113,7 +131,7 @@ def delivery_lock_exists(docs_dir: Path) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--docs-dir", required=True)
-    parser.add_argument("--jira-status", default="Ready for Dev")
+    parser.add_argument("--jira-status", action="append", dest="jira_statuses", default=None)
     parser.add_argument("--lumen-bin", default="lumen")
     parser.add_argument("--activity-file")
     parser.add_argument("--dry-run", action="store_true")
@@ -137,7 +155,8 @@ def main() -> int:
         record_activity(activity_file, "skipped", message, reason="workspace_unavailable")
         return 0
 
-    expected_status = normalized(args.jira_status)
+    expected_statuses = normalize_statuses(args.jira_statuses)
+    expected_status_set = {normalized(status) for status in expected_statuses}
     for story_dir, metadata in story_candidates(docs_dir):
         jira_key = str(metadata.get("jiraKey")).strip()
         try:
@@ -147,10 +166,10 @@ def main() -> int:
             print(message)
             record_activity(activity_file, "skipped", message, story_id=story_dir.name, jira_key=jira_key, reason="jira_unavailable")
             return 0
-        if normalized(status) != expected_status:
-            message = f"JIRA status is '{status}', expected '{args.jira_status}'."
+        if normalized(status) not in expected_status_set:
+            message = f"JIRA status is '{status}', expected one of: {', '.join(expected_statuses)}."
             print(f"Skipped {jira_key}: {message}")
-            record_activity(activity_file, "skipped", message, story_id=story_dir.name, jira_key=jira_key, jira_status=status, expected_jira_status=args.jira_status, reason="jira_status_mismatch")
+            record_activity(activity_file, "skipped", message, story_id=story_dir.name, jira_key=jira_key, jira_status=status, expected_jira_statuses=expected_statuses, reason="jira_status_mismatch")
             continue
 
         lumen_bin = shutil.which(args.lumen_bin) if "/" not in args.lumen_bin else args.lumen_bin

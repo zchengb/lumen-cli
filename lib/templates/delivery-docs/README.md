@@ -30,6 +30,8 @@ This repository stores lightweight Lumen Delivery documents for business explora
 
 Configure repositories in `<docs-repo>/lumen/config/workspace.json`. Cloned code lives under `repos/` and is ignored by the docs repository git history.
 
+Runtime settings in `lumen/config/common.json` and `lumen/config/delivery.json` are local workspace configuration and are intentionally ignored by Git. Lumen keeps shareable defaults in the bundled templates and writes local changes to those runtime files, so frequent Dashboard updates do not create configuration commits.
+
 ## Structure
 
 ```text

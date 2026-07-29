@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "execution": {
-    "model": "composer-2.5",
+    "model": "cursor-grok-4.5-medium",
     "sandbox": "disabled",
     "approve_mcps": false
   },
@@ -29,7 +29,8 @@
     "cleanup_worktrees_on_success": true,
     "scheduled_delivery": {
       "enabled": false,
-      "required_jira_status": "Ready for Dev"
+      "eligible_jira_statuses": ["To Do", "Backlog", "In Progress"],
+      "required_jira_status": "To Do"
     }
   },
   "verification": {

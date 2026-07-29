@@ -10,19 +10,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from delivery_workspace import load_story_context
+from delivery_workspace import load_story_context, workspace_lumen_dir
+from git_sync import clear_conflict, run_git, save_conflict
 
 METADATA_PATH = re.compile(r"^stories/[^/]+/metadata\.json$")
 CONFIG_PATH = re.compile(r"^lumen/config/.+\.json$")
-
-
-def run_git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(repo), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
 
 
 def failure_text(result: subprocess.CompletedProcess[str], fallback: str) -> str:
@@ -88,7 +80,7 @@ def current_branch(docs_dir: Path) -> str:
     return name
 
 
-def integrate_remote_and_push(docs_dir: Path, branch_name: str) -> str:
+def integrate_remote_and_push(docs_dir: Path, branch_name: str, subject: str = "") -> str:
     """Rebase onto remote updates when needed, then push. Raises on conflict."""
     fetch = run_git(docs_dir, "fetch", "origin", branch_name)
     if fetch.returncode != 0:
@@ -97,6 +89,7 @@ def integrate_remote_and_push(docs_dir: Path, branch_name: str) -> str:
         pushed = run_git(docs_dir, "push", "-u", "origin", f"HEAD:{branch_name}")
         if pushed.returncode != 0:
             raise RuntimeError(failure_text(pushed, f"git push failed after fetch error: {detail}"))
+        clear_conflict(workspace_lumen_dir(docs_dir) / "state")
         return "pushed"
 
     remote_ref = f"origin/{branch_name}"
@@ -104,6 +97,7 @@ def integrate_remote_and_push(docs_dir: Path, branch_name: str) -> str:
         pushed = run_git(docs_dir, "push", "-u", "origin", f"HEAD:{branch_name}")
         if pushed.returncode != 0:
             raise RuntimeError(failure_text(pushed, "git push failed"))
+        clear_conflict(workspace_lumen_dir(docs_dir) / "state")
         return "pushed"
 
     counts = run_git(docs_dir, "rev-list", "--left-right", "--count", f"HEAD...{remote_ref}")
@@ -116,15 +110,36 @@ def integrate_remote_and_push(docs_dir: Path, branch_name: str) -> str:
         rebase = run_git(docs_dir, "rebase", remote_ref)
         if rebase.returncode != 0:
             run_git(docs_dir, "rebase", "--abort")
+            save_conflict(
+                workspace_lumen_dir(docs_dir) / "state",
+                repo=docs_dir,
+                branch=branch_name,
+                remote_oid=run_git(docs_dir, "rev-parse", remote_ref).stdout.strip(),
+                local_oid=run_git(docs_dir, "rev-parse", "HEAD").stdout.strip(),
+                reason="Remote docs updates conflict with local Lumen changes.",
+                subject=subject,
+            )
             raise RuntimeError(
                 "Remote docs branch has updates that conflict with local Lumen commits; "
-                "resolve the docs repository manually, then retry"
+                "resolve it from the Dashboard before retrying"
             )
     if ahead == 0 and behind == 0:
+        clear_conflict(workspace_lumen_dir(docs_dir) / "state")
         return "up to date"
     pushed = run_git(docs_dir, "push", "origin", f"HEAD:{branch_name}")
     if pushed.returncode != 0:
+        if "non-fast-forward" in failure_text(pushed, "").lower() or "rejected" in failure_text(pushed, "").lower():
+            save_conflict(
+                workspace_lumen_dir(docs_dir) / "state",
+                repo=docs_dir,
+                branch=branch_name,
+                remote_oid=run_git(docs_dir, "rev-parse", remote_ref).stdout.strip(),
+                local_oid=run_git(docs_dir, "rev-parse", "HEAD").stdout.strip(),
+                reason="Remote docs updates arrived while Lumen was publishing.",
+                subject=subject,
+            )
         raise RuntimeError(failure_text(pushed, "git push failed"))
+    clear_conflict(workspace_lumen_dir(docs_dir) / "state")
     return "rebased and pushed" if behind > 0 else "pushed"
 
 
@@ -143,22 +158,25 @@ def commit_paths(docs_dir: Path, paths: list[str], subject: str, *, push: bool =
     if not push:
         return f"committed: {sha} {subject}"
     branch_name = current_branch(docs_dir)
-    sync = integrate_remote_and_push(docs_dir, branch_name)
+    sync = integrate_remote_and_push(docs_dir, branch_name, subject)
     return f"committed: {sha} {subject} ({sync})"
 
 
-def commit_story_metadata(docs_dir: Path, story_ref: str = "", *, push: bool = True) -> str:
+def commit_story_metadata(docs_dir: Path, story_ref: str = "", *, push: bool = True, include_config: bool = False) -> str:
     context = load_story_context(docs_dir, story_ref, validate_gates=False)
     relative_metadata = str(context.metadata_path.relative_to(context.docs_dir))
     changed = run_git(context.docs_dir, "diff", "--quiet", "--", relative_metadata)
     staged = run_git(context.docs_dir, "diff", "--cached", "--quiet", "--", relative_metadata)
-    if changed.returncode == 0 and staged.returncode == 0:
+    _, config_paths, _ = classify_dirty_paths(context.docs_dir) if include_config else ([], [], [])
+    metadata_changed = changed.returncode != 0 or staged.returncode != 0
+    if not metadata_changed and not config_paths:
         return "skipped: metadata.json has no delivery changes"
     if changed.returncode not in {0, 1} or staged.returncode not in {0, 1}:
         raise RuntimeError("Unable to inspect docs metadata change")
     story_key = str(context.metadata.get("jiraKey") or context.metadata.get("storyId") or context.story_dir.name)
     subject = lumen_commit_subject(story_key, f"update {story_key} delivery status")
-    return commit_paths(context.docs_dir, [relative_metadata], subject, push=push)
+    paths = ([relative_metadata] if metadata_changed else []) + config_paths
+    return commit_paths(context.docs_dir, paths, subject, push=push)
 
 
 def commit_dirty_config(docs_dir: Path, summary: str = "update delivery config", *, push: bool = True) -> str:
@@ -191,6 +209,7 @@ def main() -> int:
     parser.add_argument("docs_dir")
     parser.add_argument("--story", default="")
     parser.add_argument("--heal", action="store_true", help="Commit all Lumen-owned dirty docs paths")
+    parser.add_argument("--include-config", action="store_true", help="Include Lumen config changes with the Story metadata commit")
     args = parser.parse_args()
 
     try:
@@ -203,7 +222,7 @@ def main() -> int:
                 for message in messages:
                     print(message)
             return 0
-        print(commit_story_metadata(docs_dir, args.story))
+        print(commit_story_metadata(docs_dir, args.story, include_config=args.include_config))
         return 0
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)

@@ -136,7 +136,7 @@ sync_delivery_docs_metadata() {
   local sync_py="${LUMEN_LIB_DIR}/sync_delivery_docs.py"
   [[ -f "${sync_py}" ]] || return 0
   set +e
-  python3 "${sync_py}" "${DOCS_DIR}" --story "${STORY_REF}" | tee -a "${LOG_FILE}"
+  python3 "${sync_py}" "${DOCS_DIR}" --story "${STORY_REF}" --include-config | tee -a "${LOG_FILE}"
   local sync_exit=${PIPESTATUS[0]}
   set -e
   if [[ "${sync_exit}" -ne 0 ]]; then
@@ -199,7 +199,7 @@ except Exception:
 }
 
 MODEL="${CURSOR_AGENT_MODEL:-$(model_from_config)}"
-MODEL="${MODEL:-composer-2.5}"
+MODEL="${MODEL:-cursor-grok-4.5-medium}"
 SANDBOX_MODE="${CURSOR_AGENT_SANDBOX:-disabled}"
 OUTPUT_FORMAT="${CURSOR_AGENT_OUTPUT_FORMAT:-stream-json}"
 STREAM_PARTIAL="${CURSOR_AGENT_STREAM_PARTIAL:-1}"

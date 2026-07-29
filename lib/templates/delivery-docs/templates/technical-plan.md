@@ -1,250 +1,187 @@
 # Technical Plan: <Story Title>
 
-## Plan Profile
+## 1. Scope & DC Checklist
 
-Recommended or selected profile: `Standard`
+Plan profile: `Light` / `Standard` / `Complex`
 
-Reason: TBD
+### Goal
 
-## Goal
+Describe the technical outcome in one or two sentences.
 
-Describe the technical outcome and map it to Acceptance Criteria from `story.md`.
+### Acceptance Criteria Mapping
 
 | Acceptance Criterion | Technical outcome |
 |---|---|
 | AC1 | TBD |
 
-## DC Checklist
+### In Scope
 
-Prepare a concise BA/QA/Developer walkthrough for confirming the delivered Story end to end. Derive each item from confirmed Acceptance Criteria, Business Rules, relevant JIRA context, and inspected repository behavior. Include material data/sync/configuration prerequisites, primary flow, combinations, persistence/read-back, boundary/no-change behavior, and permissions when relevant. Each item must be one short, observable result; do not list code edits, shell commands, or generic test tasks.
+- TBD
+
+### Out of Scope
+
+- TBD
+
+### DC Checklist
+
+Write short, observable BA/QA/Developer checks derived from the confirmed Story, business rules, repository behavior, and relevant Jira context. Cover prerequisites, the primary flow, important combinations, persistence/read-back, boundaries/no-change behavior, permissions, and UI states when relevant. Do not list code edits, shell commands, or generic test tasks.
 
 - [ ] TBD
 
-## Business Flow Diagram (Optional)
+## 2. Baseline & Decisions
 
-Add a Mermaid flowchart only when cross-system flow, scheduled or asynchronous processing, state transitions, or complex filtering is material to understanding the business flow. Omit this section's diagram for a simple local change.
+### Repository Evidence
 
-## Technical Clarifications
+Record only facts that support a decision. Prefer `repository/path → symbol` and a short explanation over pasted code.
 
-Record confirmed answers from progressive technical Q&A. Do not keep important decisions only in chat.
+| Repository evidence | Current behavior | Decision supported |
+|---|---|---|
+| `repository/path → symbol` | TBD | TBD |
 
-| Question | Confirmed answer | Impact on plan |
+### Confirmed Decisions
+
+Record decisions confirmed in Technical Loop. If a decision changes business behavior, return to Business Loop instead of changing `story.md` here.
+
+| Question / decision | Confirmed answer | Impact |
 |---|---|---|
 | TBD | TBD | TBD |
 
-## Repository Evidence
+### Preconditions & Assumptions
 
-Include only evidence that materially supports a technical decision. Prefer a repository path and symbol over pasted code.
-
-| Technical decision | Repository evidence | What it proves |
+| Item | Evidence / owner | Handling if false |
 |---|---|---|
-| TBD | `repository/path → symbol` | TBD |
+| Base branch, dependency Story, data source, or environment | TBD | TBD |
 
-## Domain Concept And Naming Contract
+## 3. Design & Architecture
 
-This is an implementation contract, not a brainstorming list. Reuse the established model when the Story term means the same thing. Do not create a parallel concept, table, class, enum, API field, method, or variable merely because the Story uses a different label.
+Describe the end-to-end behavior, module placement, data hand-off, and failure boundaries. Reuse existing architecture; do not introduce a parallel layering approach.
 
-| Business term in Story | Existing concept / evidence in repository | Relationship | Canonical implementation names | Explicitly not a separate concept |
-|---|---|---|---|---|
-| TBD | File, API, table, or recent refactor | Same / specialization / new | Class, method, field, property, and key variable names | TBD |
+### End-to-End Flow
 
-## Impacted Repositories
+For `Complex`, this flowchart is required. For `Standard`, include it when there is a cross-module, cross-service, scheduled, asynchronous, stateful, or filtering flow. `Light` may omit it.
 
-| Repository | Role in this delivery | Change summary | Runtime / verification level |
-|---|---|---|---|
-| TBD | TBD | TBD | TBD |
-
-## Architecture And Module Placement
-
-Describe where the change belongs in each repository and why.
-
-```text
-Example:
-mbpass-admin -> controller validation + request mapping
-mbpass-business -> application service + repository query
+```mermaid
+flowchart TB
+    Entry["Entry point"] --> Application["Application / use case"]
+    Application --> Domain["Domain decision"]
+    Domain --> Data["Data / external integration"]
+    Data --> Result["Observable result"]
 ```
 
-## Implementation Interaction / Class Diagram
+Show success, failure, retry/fallback, and important state transitions in the diagram when they affect delivery behavior.
 
-Required for a non-trivial behavior, data-model, or multi-class change. Show existing and changed classes/components, their entry methods, and the data hand-off. For a simple local change, state why it is not required.
+### Components & Class Diagram
+
+For `Complex`, this diagram is required. Show existing and changed components/classes, entry methods, important parameters, and data hand-off. Use a component diagram instead when classes would obscure a cross-service flow.
 
 ```mermaid
 classDiagram
     class ExistingEntryPoint {
-        +existingMethod(request)
+        +existingMethod(request) Result
     }
-    class ExistingApplicationService {
-        +handle(existingModel)
+    class ChangedApplicationService {
+        +handle(request) Result
     }
-    ExistingEntryPoint --> ExistingApplicationService : calls
+    class ExistingRepository {
+        +query(criteria) Data
+    }
+    ExistingEntryPoint --> ChangedApplicationService : calls
+    ChangedApplicationService --> ExistingRepository : reads/writes
 ```
 
-## Method, Property, And Variable Contract
+### Module Placement & Conventions
 
-List every changed or new public method, API property, persistence field, DTO property, and semantic local variable that could otherwise be confused with an existing concept. Reuse existing names where the concept is unchanged.
+| Repository | Module / layer | Existing pattern to reuse | New or changed component |
+|---|---|---|---|
+| TBD | TBD | `repository/path → symbol` | TBD |
 
-| Location | Identifier | Kind | Type / shape | Meaning and relationship to existing model |
+### Visual Delivery Contract (UI Stories Only)
+
+For Figma-backed UI, inspect every referenced node with Figma MCP and record the reproducible design snapshot and approved reference. Keep runtime, authentication, state matrix, component mapping, responsive/accessibility rules, and visual comparison thresholds here.
+
+| Screen / state | Figma node | Design snapshot | Reference | Runtime / stable marker |
 |---|---|---|---|---|
-| `path/to/File` | `existingMethod` | method | `(ExistingType) -> Result` | TBD |
+| TBD | TBD | `assets/TBD.design.md` | `assets/TBD.png` | TBD |
 
-## Repository Conventions And Architecture Guards
+## 4. Change Contract & Implementation
 
-Document the conventions observed in each impacted repository. Existing repository patterns and guard tests are authoritative; do not create a parallel layering approach for this story.
+This section combines naming, API, data, permission, integration, file-level change, and implementation details. Include every item that changes or could be misunderstood; write `No impact` with a reason when a contract is not affected.
 
-| Repository | Existing layers / module boundary | Existing style to follow | Architecture guard test / rule | Delivery action |
+### Identifier Contract
+
+Before approval, list every new or changed method, API property, persistence field, DTO property, UI state, and semantic local/query variable involved in the implementation. Reuse existing names when the concept is unchanged.
+
+| Location | Identifier | Kind | Type / shape | Meaning / relationship |
 |---|---|---|---|---|
-| TBD | TBD | TBD | TBD or `None found` | TBD |
+| `path/to/File` | `methodOrVariable` | method / field / state / variable | TBD | TBD |
 
-## API And Contract Changes
+### API & Caller Contract
 
-### New or changed endpoints
-
-| Method | Path | Repository | Auth / permission | Request | Response | Compatibility notes |
-|---|---|---|---|---|---|---|
-| TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-
-### Caller impact
-
-- TBD or `None`
-
-### Breaking changes
-
-- TBD or `None`
-
-## Data Model And Migration Plan
-
-Do not introduce database foreign keys. Use application-level relationship validation and ordinary indexes where required by the query or lifecycle.
-
-| Repository | Table / field / migration | Change | Backward compatible | Rollback |
-|---|---|---|---|---|
-| TBD | TBD | TBD | TBD | TBD |
-
-## Permission And Data Scope
-
-Complete this section whenever the change reads or mutates data, exposes an endpoint, runs a job, or changes an integration. Reuse the repository's existing authorization and audit conventions.
-
-| Surface | Actor / caller | Permission / role | Tenant, dealer, or ownership scope | Audit / logging | Verification |
+| Method | Path / event | Request / input | Response / output | Auth / scope | Compatibility |
 |---|---|---|---|---|---|
-| TBD or `No permission impact` | TBD | TBD | TBD | TBD | TBD |
+| TBD | TBD | TBD | TBD | TBD | TBD |
 
-## Integration And Failure Handling
+### Data, Configuration & Integration Contract
 
-| Integration point | Change | Failure behavior | Retry / fallback |
+| Area | Location / key | Change | Failure / retry | Migration / rollback |
+|---|---|---|---|---|
+| Data model | TBD | TBD | TBD | TBD |
+| Permission / data scope | TBD | TBD | TBD | TBD |
+| Configuration / secrets | TBD | TBD | TBD | TBD |
+| External integration | TBD | TBD | TBD | TBD |
+
+Do not introduce database foreign keys unless the repository standard explicitly requires them. Use existing authorization, audit, migration, and integration conventions.
+
+### File-Level Change Plan
+
+| Repository | File / module | Change | Depends on |
+|---|---|---|---|
+| TBD | `path/to/File` | TBD | TBD |
+
+### Implementation Steps
+
+1. Repository, file/module, concrete change, and expected result.
+2. Repository, file/module, concrete change, and expected result.
+3. Persistence/API/integration wiring and failure behavior.
+4. Verification and delivery boundary.
+
+Steps must be executable without guessing and must follow dependency order.
+
+## 5. Verification, Performance & Delivery
+
+### Verification Matrix
+
+| AC / area | Scenario | Existing capability / command or manual check | Expected result |
+|---|---|---|---|
+| AC1 | Main flow | TBD | TBD |
+| Boundary | Empty / invalid / no-change case | TBD | TBD |
+| Regression | Existing behavior | TBD | TBD |
+
+Include focused compile/syntax, static/architecture, unit, integration, migration, UI interaction, and visual checks only when applicable and supported by the repository.
+
+### Performance Assessment
+
+Required for any query, collection, batch, API, asynchronous job, scheduled flow, integration, or large UI list. For a simple local change, state `No material performance impact` and explain why.
+
+| Dimension | Evidence / assumption | Design response | Verification |
+|---|---|---|---|
+| Data volume and growth | Current rows, payload size, or list cardinality | Index / pagination / batching / cache / no change | Query plan, benchmark, or focused test |
+| Frequency and concurrency | Calls per request, job schedule, concurrent users | Rate limit / idempotency / queue / no change | Load or timing check |
+| Latency / timeout | Existing SLO, timeout, or user expectation | Query shape / async boundary / fallback | Timing or integration check |
+| Resource usage | Memory, CPU, network, connection pool | Bound result / stream / limit / no change | Runtime observation |
+
+Never invent precise performance numbers. If scale or SLO is unknown and could change the design, ask it in Technical Loop and keep the plan draft until resolved or explicitly recorded as an owner-approved assumption.
+
+### Risks, Rollback & Release
+
+| Risk | Impact | Mitigation | Rollback / release order |
 |---|---|---|---|
 | TBD | TBD | TBD | TBD |
 
-## Configuration And Secrets
+Include observability/support diagnostics and runtime profiles here only when they affect execution or support. Do not create separate empty sections.
 
-| Repository | Key / file | Change | Default | Secret handling |
-|---|---|---|---|---|
-| TBD | TBD | TBD | TBD | TBD |
-
-## File-Level Change Plan
-
-### <repository-name>
-
-| File | Change |
-|---|---|
-| TBD | TBD |
-
-## Implementation Steps
-
-1. Step 1 - repository, files, and expected result.
-2. Step 2 - repository, files, and expected result.
-3. Step 3 - verification and PR boundary.
-
-Each step must be concrete enough for the Development Loop to execute without guessing.
-
-## Verification Plan
-
-Plan tests based on the actual repository setup. Include unit tests, integration tests, and architecture guards only when the repository already supports them or the story explicitly requires adding them. App/PHP/frontend projects default to syntax/type/lint and explicitly allowed focused tests; do not plan heavy environment-dependent builds by default.
-
-| Level | Repository | Existing capability / guard discovered | Command or manual check | Expected result | Notes |
-|---|---|---|---|---|---|
-| Compile / syntax | TBD | TBD | TBD | TBD | TBD |
-| Static / architecture | TBD | TBD | TBD | TBD | TBD |
-| Unit | TBD | TBD | TBD | TBD | TBD |
-| Integration | TBD | TBD | TBD | TBD | TBD |
-
-## Runtime Profiles
-
-| Repository | Dockerfile / profile source | Java / Node / PHP version | Commands allowed | Commands skipped |
-|---|---|---|---|---|
-| TBD | TBD | TBD | TBD | TBD |
-
-<!-- Remove these comment markers for a UI Story, then complete every cell.
-
-## Visual Delivery Contract
-
-Omit this section for non-UI Stories. A UI plan cannot be approved while any required cell remains `TBD`.
-
-### Design Source
-
-For each Figma-backed screen, use Figma MCP during Technical Loop to read the referenced node, then commit a concise, human-readable design-context snapshot under this Story's `assets/` directory. The snapshot records the node URL/ID, capture time, layout, typography, spacing, colors, component variants, and relevant states. It is the reproducible implementation input; the approved reference image remains the visual-comparison evidence.
-
-| Screen | Figma file | Node ID | Design context snapshot | Approved reference |
-|---|---|---|---|---|
-| TBD | TBD | TBD | `assets/TBD.design.md` | `assets/TBD.png` |
-
-### Runtime
-
-| Property | Value |
-|---|---|
-| Repository | TBD |
-| Runtime profile | TBD |
-| Platform | TBD |
-| Device | TBD |
-| Navigation | TBD |
-| Authentication | TBD |
-
-### Visual State Matrix
-
-| Screen | State | Fixture | Reference | Stable marker |
-|---|---|---|---|---|
-| TBD | Default | TBD | `assets/TBD.png` | TBD |
-
-### Figma-to-Code Component Mapping
-
-| Figma component | Existing implementation | Delivery action |
-|---|---|---|
-| TBD | TBD | Reuse / Extend / Create local Story component |
-
-### Platform Rules
-
-- Reuse existing tokens and styling conventions.
-- Settle animations and mask only explicitly approved dynamic areas.
-- Preserve accessibility, responsive behavior, and platform safe areas.
-
-### Visual Verification
-
-| Screen | State | Comparison | Maximum difference |
-|---|---|---|---|
-| TBD | Default | Full content area | `1%` |
-
+<!-- Profile rules:
+- Light: use Scope, Baseline & Decisions, Change Contract, and Verification. Diagrams and full identifier inventory are optional.
+- Standard: use all five sections; include diagrams and contracts when the change needs them.
+- Complex: use all five sections; end-to-end flowchart, component/class diagram, full identifier contract, performance assessment, and rollback/release order are mandatory.
 -->
-
-## Observability And Support
-
-| Area | Plan |
-|---|---|
-| Logs | TBD |
-| Metrics / audit | TBD |
-| Support diagnostics | TBD |
-
-## Rollback / Release Notes
-
-- TBD or `Not required`
-
-## Risks
-
-| Risk | Impact | Mitigation |
-|---|---|---|
-| TBD | TBD | TBD |
-
-## Refactoring Notes
-
-Only record refactoring here when it affects architecture, public API behavior, or team-level understanding.
-
-## Out Of Scope
-
-- TBD

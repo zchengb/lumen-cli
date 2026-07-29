@@ -1,5 +1,8 @@
 tmp/*
 !tmp/.gitkeep
+config/common.json
+config/delivery.json
+config/*.local.json
 logs/
 results/
 reports/

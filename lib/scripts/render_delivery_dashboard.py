@@ -60,7 +60,7 @@ def render(workspace_root: Path) -> tuple[Path, Path]:
         "current": current,
         "runs": runs,
         "config": {
-            "model": delivery_config.get("execution", {}).get("model", "composer-2.5"),
+            "model": delivery_config.get("execution", {}).get("model", "cursor-grok-4.5-medium"),
             "jira_enabled": delivery_config.get("jira", {}).get("enabled", False),
             "docker_mode": delivery_config.get("verification", {}).get("docker", {}).get("mode", "host_testcontainers"),
         },

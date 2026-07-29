@@ -62,7 +62,7 @@ notify_system() {
 }
 
 MODEL="${CURSOR_AGENT_MODEL:-$(model_from_config)}"
-MODEL="${MODEL:-composer-2.5}"
+MODEL="${MODEL:-cursor-grok-4.5-medium}"
 SANDBOX_MODE="${CURSOR_AGENT_SANDBOX:-disabled}"
 OUTPUT_FORMAT="${CURSOR_AGENT_OUTPUT_FORMAT:-stream-json}"
 STREAM_PARTIAL="${CURSOR_AGENT_STREAM_PARTIAL:-1}"

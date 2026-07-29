@@ -66,12 +66,18 @@ const tabContext: Record<Tab, { title: string; description: string }> = {
 const cursorModelOptions = [
   { label: "Auto", value: "auto" },
   { label: "Composer 2.5", value: "composer-2.5" },
-  { label: "Grok 4.5", value: "grok-4.5" },
+  { label: "Cursor Grok 4.5 Medium", value: "cursor-grok-4.5-medium" },
   { label: "Sonnet 4.5", value: "sonnet-4.5" },
   { label: "GPT-5.1 Codex", value: "gpt-5.1-codex" }
 ];
+const customModelOption = "__custom__";
 
 function text(value: unknown, fallback = "—") { return value === undefined || value === null || value === "" ? fallback : String(value); }
+function modelValue(value: unknown, fallback = "cursor-grok-4.5-medium") {
+  const normalized = String(value ?? "").trim();
+  return normalized || fallback;
+}
+function trimmedModelValue(value: unknown) { return String(value ?? "").trim(); }
 function when(value: unknown) {
   if (!value) return "—";
   const date = new Date(String(value));
@@ -626,6 +632,7 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [observatoryDirty, setObservatoryDirty] = useState(false);
+  const [gitConflict, setGitConflict] = useState<RecordValue | null>(null);
   const notify = useCallback<Notify>((message, tone = "info") => setNotice({ message, tone }), []);
 
   const load = async () => {
@@ -633,6 +640,8 @@ function App() {
     try {
       const next = await request("/api/state", project);
       setData(next);
+      const conflict = next.interactive?.workspace?.git_sync_conflict;
+      setGitConflict(conflict && typeof conflict === "object" && ["repo", "branch", "remote_oid", "local_oid"].every((key) => String(conflict[key] || "").trim()) ? conflict : null);
       setLastUpdated(new Date());
       if (!project && next.interactive?.project) setProject(next.interactive.project);
       setError("");
@@ -708,8 +717,27 @@ function App() {
         {data && activeTab === "settings" && <SettingsView data={data} project={project} notify={notify} onDirtyChange={setSettingsDirty} reload={load} />}
       </div>
     </section>
+    {gitConflict && <GitSyncConflictDialog conflict={gitConflict} project={project} notify={notify} onClose={() => setGitConflict(null)} onResolved={load} />}
     {notice && <div className={`toast toast-${notice.tone}`} role="status">{notice.tone === "success" ? <CircleCheck size={16} /> : notice.tone === "error" ? <CircleAlert size={16} /> : <CircleDot size={16} />}<span>{notice.message}</span></div>}
   </main>;
+}
+
+function GitSyncConflictDialog({ conflict, project, notify, onClose, onResolved }: { conflict: RecordValue; project: string; notify: Notify; onClose: () => void; onResolved: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const overwrite = async () => {
+    setBusy(true); setError("");
+    try {
+      await request("/api/git-sync/force", project, { method: "POST", json: {} });
+      notify("Remote branch overwritten with the local Lumen commit", "success");
+      onClose();
+      await onResolved();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to overwrite the remote branch";
+      setError(message);
+    } finally { setBusy(false); }
+  };
+  return <div className="modal-backdrop" role="presentation"><section className="modal git-sync-conflict-modal" role="dialog" aria-modal="true" aria-label="Git sync conflict"><div className="modal-body compact"><strong>Remote updates need your decision</strong><p className="modal-copy">Lumen committed local workspace changes, but the remote {conflict.branch || "branch"} changed before the push. Review the remote changes before choosing whether to overwrite them.</p><div className="git-sync-conflict-details"><span>Repository</span><code>{conflict.repo || "Workspace"}</code><span>Local commit</span><code>{conflict.local_oid || "—"}</code></div>{error && <p className="git-sync-error" role="alert">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Later</button><button className="button danger" disabled={busy} onClick={() => void overwrite()}>{busy ? "Overwriting…" : "Overwrite remote"}</button></footer></section></div>;
 }
 
 function PageIntro({ title, description, action }: { title: string; description: string; action?: React.ReactNode }) {
@@ -1310,6 +1338,28 @@ function Field({ label, help, children }: { label: string; help?: React.ReactNod
   return <label className="field"><span className="field-label">{label}{help && <HelpTip>{help}</HelpTip>}</span>{children}</label>;
 }
 
+function ModelField({ label, value, onChange, markDirty }: { label: string; value: string; onChange: (value: string) => void; markDirty: () => void }) {
+  const normalizedValue = trimmedModelValue(value);
+  const isPreset = cursorModelOptions.some((model) => model.value === normalizedValue);
+  const [customOpen, setCustomOpen] = useState(false);
+  const openCustom = () => setCustomOpen(true);
+  return <Field label={label} help="Choose a preset, or select Custom and enter a model ID supported by Cursor. Lumen does not validate custom model availability.">
+    <select value={isPreset ? normalizedValue : customModelOption} onChange={(event) => { if (event.target.value === customModelOption) openCustom(); else { onChange(event.target.value); markDirty(); } }}>
+      {cursorModelOptions.map((model) => <option value={model.value} key={model.value}>{model.label}</option>)}
+      <option value={customModelOption}>Custom Cursor model ID…</option>
+    </select>
+    {!isPreset && <button type="button" className="custom-model-edit" onClick={openCustom}>Edit custom model</button>}
+    {customOpen && <CustomModelDialog label={label} value={value} onClose={() => setCustomOpen(false)} onConfirm={(model) => { onChange(model); markDirty(); setCustomOpen(false); }} />}
+  </Field>;
+}
+
+function CustomModelDialog({ label, value, onClose, onConfirm }: { label: string; value: string; onClose: () => void; onConfirm: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  const confirm = () => { const model = draft.trim(); if (model) onConfirm(model); };
+  useEffect(() => { const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); }; window.addEventListener("keydown", onKeyDown); return () => window.removeEventListener("keydown", onKeyDown); }, [onClose]);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal custom-model-modal" role="dialog" aria-modal="true" aria-labelledby="custom-model-title" onMouseDown={(event) => event.stopPropagation()}><div className="custom-model-header"><strong id="custom-model-title">Enter a custom Cursor model</strong><p>{label} · Use a model ID supported by Cursor.</p></div><div className="modal-body compact"><Field label="Cursor model ID"><input autoFocus value={draft} placeholder="e.g. cursor-grok-4.5-medium" aria-label="Custom Cursor model ID" onChange={(event) => setDraft(event.target.value)} /></Field><p className="modal-copy">Lumen does not validate model availability. The value will be used on the next run.</p></div><footer><button type="button" className="button" onClick={onClose}>Cancel</button><button type="button" className="button primary" disabled={!draft.trim()} onClick={confirm}>Confirm</button></footer></section></div>;
+}
+
 function VisualRuntimeEditor({ runtime, onChange }: { runtime: RecordValue; onChange: (patch: RecordValue) => void }) {
   const platform = String(runtime.platform || "web");
   return <section className="repository-runtime">
@@ -1377,13 +1427,13 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [scanCron, setScanCron] = useState(String(schedules.scan?.cron || "0 12 * * 1-5"));
   const [scanEnabled, setScanEnabled] = useState(Boolean(schedules.scan));
   const [deliveryInterval, setDeliveryInterval] = useState(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60)));
-  const [deliveryStatus, setDeliveryStatus] = useState(String(schedules.delivery?.jira_status || ""));
+  const [eligibleStatuses, setEligibleStatuses] = useState<string[]>(Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean));
   const [inDevStatus, setInDevStatus] = useState(String(schedules.delivery?.in_dev_status || ""));
   const [devDoneStatus, setDevDoneStatus] = useState(String(schedules.delivery?.dev_done_status || ""));
   const [blockedStatus, setBlockedStatus] = useState(String(schedules.delivery?.blocked_status || "Block"));
   const [deliveryEnabled, setDeliveryEnabled] = useState(Boolean(schedules.delivery?.enabled));
-  const [scanModel, setScanModel] = useState(String(workspace.models?.scan || "composer-2.5"));
-  const [deliveryModel, setDeliveryModel] = useState(String(workspace.models?.delivery || "composer-2.5"));
+  const [scanModel, setScanModel] = useState(modelValue(workspace.models?.scan));
+  const [deliveryModel, setDeliveryModel] = useState(modelValue(workspace.models?.delivery));
   const [workflowStatuses, setWorkflowStatuses] = useState<string[]>([]);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [changedSecrets, setChangedSecrets] = useState<Record<string, string>>({});
@@ -1393,7 +1443,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
   useEffect(() => { void request("/api/delivery/status-options", project).then((response) => setWorkflowStatuses(Array.isArray(response.options) ? response.options.map(String) : [])).catch(() => setWorkflowStatuses([])); }, [project]);
-  useEffect(() => { setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setDeliveryStatus(String(schedules.delivery?.jira_status || "")); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setScanModel(String(workspace.models?.scan || "composer-2.5")); setDeliveryModel(String(workspace.models?.delivery || "composer-2.5")); setFeishuEnabled(workspace.feishu_notifications_enabled !== false); setSecrets({}); setChangedSecrets({}); setDirty(false); onDirtyChange(false); }, [project]);
+  useEffect(() => { setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setEligibleStatuses(Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean)); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setScanModel(modelValue(workspace.models?.scan)); setDeliveryModel(modelValue(workspace.models?.delivery)); setFeishuEnabled(workspace.feishu_notifications_enabled !== false); setSecrets({}); setChangedSecrets({}); setDirty(false); onDirtyChange(false); }, [project]);
   useEffect(() => { setScanPublishMode(String(workspace.publish?.scan || "pr")); setDeliveryPublishMode(String(workspace.publish?.delivery || "pr")); }, [workspace.publish?.scan, workspace.publish?.delivery]);
   useEffect(() => { setFeishuEnabled(workspace.feishu_notifications_enabled !== false); }, [workspace.feishu_notifications_enabled]);
   useEffect(() => { const warn = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [dirty]);
@@ -1401,13 +1451,14 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const reveal = async (name: string) => { try { const result = await getSecret(name); setSecrets((current) => ({ ...current, [name]: result })); notify("Integration value revealed", "success"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to reveal value", "error"); } };
   const copy = async (name: string) => { try { const result = await getSecret(name); await navigator.clipboard.writeText(result); notify("Integration value copied", "success"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to copy value", "error"); } };
   const configured = workspace.configured_integrations || [];
-  const statusOptions = Array.from(new Set([...workflowStatuses, deliveryStatus, inDevStatus, devDoneStatus].filter(Boolean)));
+  const statusOptions = Array.from(new Set(["To Do", "Backlog", "In Progress", ...workflowStatuses, ...eligibleStatuses, inDevStatus, devDoneStatus].filter(Boolean)));
   const saveAll = async () => {
     try {
+      if (!scanModel.trim() || !deliveryModel.trim()) throw new Error("Choose a preset or enter a Cursor-supported model ID for both workflows.");
       await Promise.all([
-        request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel, delivery_model: deliveryModel, feishu_notifications_enabled: feishuEnabled } }),
+        request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel.trim(), delivery_model: deliveryModel.trim(), feishu_notifications_enabled: feishuEnabled } }),
         request("/api/schedule", project, { method: "POST", json: scanEnabled ? { kind: "scan", action: "save", cron: scanCron } : { kind: "scan", action: "remove" } }),
-        request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_status: deliveryStatus, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }),
+        request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_statuses: eligibleStatuses, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }),
         request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode } }),
         ...Object.entries(changedSecrets).map(([key, value]) => request("/api/integration", project, { method: "POST", json: { key, value } }))
       ]);
@@ -1417,9 +1468,9 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   return <div className="settings-stack">
     <Panel title="Automation Schedules">
       <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Scan</h4></div></div><p>{text(schedules.scan?.description, "No recurring scan is configured.")}</p></div><div className="settings-control wide"><div className="form-grid compact scan-settings-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 0, width: "100%" }}><Field label="Lookback, days"><input type="number" min="1" max="365" value={scanWindow} onChange={(event) => { setScanWindow(event.target.value); markDirty(); }} /></Field><Field label="Five-field cron"><input value={scanCron} onChange={(event) => { setScanCron(event.target.value); markDirty(); }} /></Field></div></div><div className="settings-toggle"><ScheduleToggle enabled={scanEnabled} onChange={(enabled) => { setScanEnabled(enabled); markDirty(); }} /></div></div>
-      <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Delivery</h4></div></div><p>{deliveryEnabled ? `Polling every ${deliveryInterval} minute(s).` : "Delivery polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => { setDeliveryInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA status"><select value={deliveryStatus} onChange={(event) => { setDeliveryStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when started"><select value={inDevStatus} onChange={(event) => { setInDevStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={devDoneStatus} onChange={(event) => { setDevDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when failed"><select value={blockedStatus} onChange={(event) => { setBlockedStatus(event.target.value); markDirty(); }}>{Array.from(new Set([...statusOptions, "Block"])).map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">On failure, Lumen moves the Jira card to the selected Block status and adds a Needs attention comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={deliveryEnabled} onChange={(enabled) => { setDeliveryEnabled(enabled); markDirty(); }} /></div></div>
+      <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Delivery</h4></div></div><p>{deliveryEnabled ? `Polling every ${deliveryInterval} minute(s).` : "Delivery polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => { setDeliveryInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA statuses" help="Select every Jira status that may start Auto Delivery. The Story must also be Business Ready, Technical Approved, and not already running."><select className="status-multi-select" multiple size={Math.min(Math.max(statusOptions.length, 3), 6)} value={eligibleStatuses} onChange={(event) => { setEligibleStatuses(Array.from(event.target.selectedOptions, (option) => option.value)); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when started"><select value={inDevStatus} onChange={(event) => { setInDevStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={devDoneStatus} onChange={(event) => { setDevDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when failed"><select value={blockedStatus} onChange={(event) => { setBlockedStatus(event.target.value); markDirty(); }}>{Array.from(new Set([...statusOptions, "Block"])).map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">Select To Do, Backlog, In Progress, or any other eligible Jira status. On failure, Lumen moves the Jira card to the selected Block status and adds a Needs attention comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={deliveryEnabled} onChange={(enabled) => { setDeliveryEnabled(enabled); markDirty(); }} /></div></div>
     </Panel>
-    <Panel title="Execution Models"><div className="settings-section"><div className="settings-copy"><h4>Cursor model</h4><p>Choose a preset or type any custom Cursor model ID. Each workflow reads its selected model on the next run.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan model"><input list="cursor-model-options" value={scanModel} onChange={(event) => { setScanModel(event.target.value); markDirty(); }} placeholder="Choose or type a model" /></Field><Field label="Auto Delivery model"><input list="cursor-model-options" value={deliveryModel} onChange={(event) => { setDeliveryModel(event.target.value); markDirty(); }} placeholder="Choose or type a model" /></Field></div><datalist id="cursor-model-options">{cursorModelOptions.map((model) => <option value={model.value} label={model.label} key={model.value} />)}</datalist></div></div></Panel>
+    <Panel title="Execution Models"><div className="settings-section"><div className="settings-copy"><h4>Cursor model</h4><p>Choose a preset or enter a custom Cursor model ID. Custom values must be supported by Cursor; Lumen does not validate model availability.</p></div><div className="settings-control wide"><div className="form-grid compact"><ModelField label="Auto Scan model" value={scanModel} onChange={setScanModel} markDirty={markDirty} /><ModelField label="Auto Delivery model" value={deliveryModel} onChange={setDeliveryModel} markDirty={markDirty} /></div></div></div></Panel>
     <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>Direct push uses the repository credentials already configured for Git; PR and Merge use GitHub CLI.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option><option value="direct">Push directly to main branch</option></select></Field></div></div></div></Panel>
     <Panel title="Notifications"><div className="settings-section"><div className="settings-copy"><h4>Feishu notifications</h4><p>Control whether Scan and Delivery post cards to the configured Feishu webhook. The webhook URL still lives under Variable Keys.</p></div><div className="settings-toggle"><ScheduleToggle enabled={feishuEnabled} onChange={(enabled) => { setFeishuEnabled(enabled); markDirty(); }} /></div></div></Panel>
     <Panel title="Variable Keys" action={<span className="muted">Stored only in this workspace</span>}><div className="settings-section"><div className="settings-copy"><h4>Available keys</h4><p>Reveal a value to inspect it, or enter a replacement directly. Values are saved without display quotes.</p></div><div className="settings-control wide"><div className="secret-list">{configured.length ? configured.map((name: string) => { const value = changedSecrets[name] ?? secrets[name] ?? ""; return <div className="secret-row" key={name}><code>{name}</code><input type={secrets[name] || changedSecrets[name] !== undefined ? "text" : "password"} value={value} placeholder="Reveal or enter a replacement value" aria-label={`Value for ${name}`} onChange={(event) => { const next = event.target.value; setChangedSecrets((current) => ({ ...current, [name]: next })); markDirty(); }} /><div><IconButton label="Reveal value" onClick={() => void reveal(name)}>{secrets[name] ? <EyeOff size={15} /> : <Eye size={15} />}</IconButton><IconButton label="Copy value" onClick={() => void copy(name)}><Copy size={15} /></IconButton></div></div>; }) : <Empty label="No local integration keys configured." />}</div></div></div></Panel>

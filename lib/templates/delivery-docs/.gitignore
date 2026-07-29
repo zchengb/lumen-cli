@@ -8,3 +8,10 @@
 
 repos/*/
 !repos/.gitkeep
+
+# Runtime configuration stays local; the CLI templates remain shareable.
+lumen/config/common.json
+lumen/config/delivery.json
+lumen/config/*.local.json
+!lumen/config/common.example.json
+!lumen/config/delivery.example.json

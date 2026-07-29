@@ -11,7 +11,7 @@
   },
   "execution": {
     "mode": "lightweight_review_only",
-    "model": "composer-2.5",
+    "model": "cursor-grok-4.5-medium",
     "scan_window_days": 7,
     "run_project_commands": false,
     "validation_policy": "skip_all_local_validation_commands",

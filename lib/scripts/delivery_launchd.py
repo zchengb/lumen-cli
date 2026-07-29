@@ -52,6 +52,8 @@ def install(args: argparse.Namespace) -> int:
         "LUMEN_HOME": args.lumen_home,
         "AGENT_CLI_CREDENTIAL_STORE": "file",
     }
+    raw_statuses = getattr(args, "jira_statuses", None) or [getattr(args, "jira_status", "")]
+    jira_statuses = [status.strip() for value in raw_statuses for status in str(value or "").split(",") if status.strip()]
     payload = {
         "Label": label,
         "ProgramArguments": [
@@ -61,8 +63,6 @@ def install(args: argparse.Namespace) -> int:
             "run",
             "--project",
             args.project,
-            "--jira-status",
-            args.jira_status,
         ],
         "EnvironmentVariables": environment,
         "StartInterval": interval * 60,
@@ -71,6 +71,8 @@ def install(args: argparse.Namespace) -> int:
         "ProcessType": "Background",
         "RunAtLoad": False,
     }
+    for status in jira_statuses:
+        payload["ProgramArguments"].extend(["--jira-status", status])
     path.write_bytes(plistlib.dumps(payload, fmt=plistlib.FMT_XML, sort_keys=False))
     domain = f"gui/{os.getuid()}"
     launchctl("bootout", domain, str(path))
@@ -104,13 +106,14 @@ def status(args: argparse.Namespace) -> int:
     except (OSError, ValueError, plistlib.InvalidFileException):
         interval = 0
     arguments = payload.get("ProgramArguments") if isinstance(payload, dict) else []
-    jira_status = ""
+    jira_statuses: list[str] = []
     if isinstance(arguments, list):
-        try:
-            jira_status = str(arguments[arguments.index("--jira-status") + 1])
-        except (ValueError, IndexError):
-            pass
-    print(json.dumps({"path": str(path), "interval_seconds": interval, "jira_status": jira_status}))
+        for index, argument in enumerate(arguments[:-1]):
+            if argument == "--jira-status":
+                value = str(arguments[index + 1]).strip()
+                if value:
+                    jira_statuses.append(value)
+    print(json.dumps({"path": str(path), "interval_seconds": interval, "jira_status": jira_statuses[0] if jira_statuses else "", "jira_statuses": jira_statuses}))
     return 0
 
 
@@ -120,7 +123,7 @@ def main() -> int:
     add = subparsers.add_parser("add")
     add.add_argument("--project", required=True)
     add.add_argument("--cron", required=True)
-    add.add_argument("--jira-status", required=True)
+    add.add_argument("--jira-status", action="append", dest="jira_statuses", required=True)
     add.add_argument("--lumen-bin", required=True)
     add.add_argument("--lumen-home", required=True)
     add.add_argument("--path", required=True)

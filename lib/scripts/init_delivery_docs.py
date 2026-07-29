@@ -35,6 +35,25 @@ def copy_rendered(src: Path, dest: Path, values: dict[str, str], force: bool, me
         shutil.copy2(src, dest)
 
 
+def sync_guidance(target: Path, project_name: str, backup_dir: Path | None = None) -> None:
+    src_root = template_root()
+    values = {"PROJECT_NAME": project_name or target.name}
+    for relative in ("AGENTS.md", "README.md", "standards/business-loop.md", "standards/development-loop.md", "standards/technical-loop.md"):
+        source = src_root / relative
+        destination = target / relative
+        if not source.is_file():
+            continue
+        content = render_text(source.read_text(encoding="utf-8"), values)
+        if destination.is_file() and destination.read_text(encoding="utf-8") == content:
+            continue
+        if destination.exists() and backup_dir is not None:
+            backup = backup_dir / relative
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(destination, backup)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(content, encoding="utf-8")
+
+
 def init_docs(
     target: Path,
     project_name: str,
@@ -72,6 +91,16 @@ def init_docs(
         dest = target / rel
         copy_rendered(src, dest, values, force, merge)
 
+    delivery_template = src_root / "lumen" / "config" / "delivery.json"
+    if delivery_template.is_file():
+        copy_rendered(
+            delivery_template,
+            target / "lumen" / "config" / "delivery.example.json",
+            values,
+            force,
+            merge,
+        )
+
     for keep_dir in [
         target / "topics",
         target / "stories",
@@ -100,12 +129,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Initialize Lumen workspace delivery assets.")
     parser.add_argument("--target", required=True)
     parser.add_argument("--project-name", default="Delivery Docs")
+    parser.add_argument("--sync-guidance", action="store_true", help="Refresh root loop guidance without touching Stories or config")
+    parser.add_argument("--backup-dir", default="")
     parser.add_argument("--example-key", default="DEMO-001")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--merge", action="store_true", help="Add missing delivery files without overwriting an existing workspace")
     parser.add_argument("--no-example", action="store_true", help="Do not create the example Story")
     args = parser.parse_args()
     try:
+        if args.sync_guidance:
+            sync_guidance(Path(args.target).expanduser().resolve(), args.project_name, Path(args.backup_dir).expanduser() if args.backup_dir else None)
+            print(f"✓ Refreshed loop guidance: {args.target}")
+            return 0
         init_docs(
             Path(args.target),
             args.project_name,

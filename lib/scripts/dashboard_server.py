@@ -35,7 +35,9 @@ from scan_launchd import install as install_scan_schedule
 from scan_launchd import remove as remove_scan_schedule
 from scan_launchd import status as scan_schedule_status
 from discover_repos import default_branch, infer_profile
+from delivery_scheduler import DEFAULT_ELIGIBLE_JIRA_STATUSES, eligible_jira_statuses, normalize_statuses
 from sync_delivery_docs import commit_dirty_config, commit_paths, commit_story_metadata, lumen_commit_subject
+from git_sync import force_push_conflict, read_conflict
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -132,7 +134,11 @@ def schedule_payload(workspace: Path, project: str) -> dict[str, Any]:
     if delivery_raw is None:
         delivery_raw = {"enabled": False}
     delivery_raw.setdefault("enabled", True)
-    delivery_raw["jira_status"] = delivery_raw.get("jira_status") or scheduled.get("required_jira_status", "")
+    configured_statuses = eligible_jira_statuses(delivery_config)
+    scheduled_statuses = scheduled.get("eligible_jira_statuses") or scheduled.get("required_jira_status")
+    runtime_statuses = normalize_statuses(scheduled_statuses or delivery_raw.get("jira_statuses") or delivery_raw.get("jira_status"), tuple(configured_statuses or DEFAULT_ELIGIBLE_JIRA_STATUSES))
+    delivery_raw["jira_statuses"] = runtime_statuses
+    delivery_raw["jira_status"] = runtime_statuses[0] if runtime_statuses else ""
     delivery_raw["in_dev_status"] = jira.get("in_dev_status", "")
     delivery_raw["dev_done_status"] = jira.get("dev_done_status", "")
     delivery_raw["blocked_status"] = jira.get("blocked_status", "Block")
@@ -233,6 +239,9 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         entry["delivery_steps"] = steps.get(str(entry.get("name", "")), [])
         entry["branches"] = repository_branches(Path(str(entry.get("path", ""))), str(entry.get("default_branch", "main")))
         enriched_repositories.append(entry)
+    git_conflict = read_conflict(workspace / "state")
+    if not all(str(git_conflict.get(key) or "").strip() for key in ("repo", "branch", "remote_oid", "local_oid")):
+        git_conflict = None
     return {
         "path": str(workspace),
         "scan_window_days": (common.get("execution") or {}).get("scan_window_days", 7),
@@ -244,10 +253,11 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
             "delivery": str(((delivery_config.get("publish") or {}).get("mode") or "pr")),
         },
         "models": {
-            "scan": str((common.get("execution") or {}).get("model") or "composer-2.5"),
-            "delivery": str((delivery_config.get("execution") or {}).get("model") or "composer-2.5"),
+            "scan": str((common.get("execution") or {}).get("model") or "cursor-grok-4.5-medium").strip(),
+            "delivery": str((delivery_config.get("execution") or {}).get("model") or "cursor-grok-4.5-medium").strip(),
         },
         "feishu_notifications_enabled": feishu_notifications_enabled(workspace),
+        "git_sync_conflict": git_conflict,
     }
 
 
@@ -1280,14 +1290,18 @@ class DashboardServer(ThreadingHTTPServer):
             interval = int(body.get("interval_minutes", 0))
             if interval < 1:
                 raise ValueError("Delivery interval must be at least one minute")
-            jira_status = str(body.get("jira_status", "Ready for Dev")).strip() or "Ready for Dev"
+            raw_jira_statuses = body.get("jira_statuses", body.get("jira_status"))
+            jira_statuses = normalize_statuses(raw_jira_statuses, ())
+            if not jira_statuses:
+                raise ValueError("Select at least one eligible JIRA status")
+            jira_status = jira_statuses[0]
             in_dev_status = str(body.get("in_dev_status", "")).strip()
             dev_done_status = str(body.get("dev_done_status", "")).strip()
             blocked_status = str(body.get("blocked_status", "Block")).strip() or "Block"
             args = argparse.Namespace(
                 project=project,
                 cron=f"*/{interval} * * * *",
-                jira_status=jira_status,
+                jira_statuses=jira_statuses,
                 lumen_bin=self.lumen_bin,
                 lumen_home=self.lumen_home,
                 path=os.environ.get("PATH", ""),
@@ -1299,7 +1313,7 @@ class DashboardServer(ThreadingHTTPServer):
             config = load_json(config_path, {})
             automation = config.setdefault("automation", {})
             scheduled = automation.setdefault("scheduled_delivery", {})
-            scheduled.update({"enabled": True, "required_jira_status": jira_status})
+            scheduled.update({"enabled": True, "eligible_jira_statuses": jira_statuses, "required_jira_status": jira_status})
             jira = config.setdefault("jira", {})
             if in_dev_status:
                 jira["in_dev_status"] = in_dev_status
@@ -1431,6 +1445,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/integration":
                 update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))
                 return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
+            if parsed.path == "/api/git-sync/force":
+                commit = force_push_conflict(workspace / "state")
+                return self.respond_json(HTTPStatus.OK, {"ok": True, "commit": commit, "workspace": workspace_payload(workspace)})
             if parsed.path == "/api/repositories":
                 return self.respond_json(HTTPStatus.OK, {"workspace": save_repositories(workspace, body.get("repositories"))})
             if parsed.path == "/api/repositories/clone":

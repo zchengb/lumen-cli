@@ -349,7 +349,7 @@ Usage:
   lumen schedule scan add [--project <slug>] [--cron "<cron-expr>"] [--dry-run]
                                  Schedule recurring code scans
   lumen schedule delivery add --project <slug> --every 5m
-                                 Poll approved Stories and start JIRA Ready for Dev deliveries
+                                 Poll approved Stories and start deliveries for eligible JIRA statuses
                                  Aliases: lumen scan schedule ..., lumen delivery schedule ...
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
@@ -582,6 +582,7 @@ sync_workspace_templates() {
   stamp="$(date -u '+%Y%m%d-%H%M%S')"
   local backup_dir="${workspace}/config/.template-backups/${stamp}"
   mkdir -p "${backup_dir}"
+  local docs_root="$(dirname "${workspace}")"
 
   local file
   for file in runtime-profiles.json feishu-card-template.json; do
@@ -593,6 +594,45 @@ sync_workspace_templates() {
     fi
   done
 
+  if [[ -f "${LUMEN_TEMPLATES_DIR}/config/common.json" ]]; then
+    cp "${LUMEN_TEMPLATES_DIR}/config/common.json" "${workspace}/config/common.example.json"
+  fi
+  if [[ -f "${LUMEN_TEMPLATES_DIR}/delivery-docs/lumen/config/delivery.json" ]]; then
+    cp "${LUMEN_TEMPLATES_DIR}/delivery-docs/lumen/config/delivery.json" "${workspace}/config/delivery.example.json"
+  fi
+
+  ensure_local_config_ignore() {
+    local ignore_file="$1"
+    shift
+    [[ -f "${ignore_file}" ]] || return 0
+    local pattern
+    for pattern in "$@"; do
+      if ! grep -Fqx "${pattern}" "${ignore_file}" 2>/dev/null; then
+        printf '%s\n' "${pattern}" >> "${ignore_file}"
+      fi
+    done
+  }
+  ensure_local_config_ignore "${workspace}/.gitignore" \
+    "config/common.json" "config/delivery.json" "config/*.local.json"
+  ensure_local_config_ignore "${docs_root}/.gitignore" \
+    "lumen/config/common.json" "lumen/config/delivery.json" "lumen/config/*.local.json" \
+    "!lumen/config/common.example.json" "!lumen/config/delivery.example.json"
+
+  if git -C "${docs_root}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    local workspace_rel="${workspace#${docs_root}/}"
+    local runtime_config
+    for runtime_config in common.json delivery.json; do
+      local tracked_path="${workspace_rel}/config/${runtime_config}"
+      if git -C "${docs_root}" ls-files --error-unmatch -- "${tracked_path}" >/dev/null 2>&1; then
+        if git -C "${docs_root}" rm --cached --quiet -- "${tracked_path}"; then
+          ok "Moved local runtime config out of Git tracking: ${tracked_path}"
+        else
+          warn "Could not remove ${tracked_path} from Git tracking; local file was preserved."
+        fi
+      fi
+    done
+  fi
+
   if [[ -d "${workspace}/prompts" ]]; then
     mkdir -p "${backup_dir}/prompts"
     cp -R "${workspace}/prompts/." "${backup_dir}/prompts/"
@@ -603,6 +643,20 @@ sync_workspace_templates() {
   migrate_legacy_scan_prompts "${workspace}" "${backup_dir}"
   sync_prompt_snippets "${workspace}"
   sync_delivery_prompt_snippets "${workspace}"
+
+  local project_name=""
+  if [[ -f "${docs_root}/README.md" ]]; then
+    project_name="$(sed -n '1s/^# //p' "${docs_root}/README.md")"
+  fi
+  local guidance_py="${LUMEN_LIB_DIR}/init_delivery_docs.py"
+  if [[ -f "${guidance_py}" ]]; then
+    python3 "${guidance_py}" --target "${docs_root}" --project-name "${project_name:-$(basename "${docs_root}")}" \
+      --sync-guidance --backup-dir "${backup_dir}/guidance"
+  fi
+  local skills_py="${LUMEN_LIB_DIR}/install_agent_skills.py"
+  if [[ -f "${skills_py}" ]]; then
+    python3 "${skills_py}" --workspace "${docs_root}" --platform all
+  fi
 
   if [[ -f "${workspace}/dashboard.html" ]]; then
     cp "${workspace}/dashboard.html" "${backup_dir}/dashboard.html"
@@ -1756,6 +1810,7 @@ cmd_init() {
   mkdir -p "${lumen_dir}/config" "${lumen_dir}/prompts" "${lumen_dir}/tmp" "${lumen_dir}/worktrees" \
     "${lumen_dir}/reports" "${lumen_dir}/results" "${lumen_dir}/logs" "${lumen_dir}/state"
 
+  cp "${LUMEN_TEMPLATES_DIR}/config/common.json" "${lumen_dir}/config/common.example.json"
   cp "${LUMEN_TEMPLATES_DIR}/config/common.json" "${lumen_dir}/config/common.json"
   cp "${LUMEN_TEMPLATES_DIR}/config/repos.example.json" "${lumen_dir}/config/repos.example.json"
   cp "${LUMEN_TEMPLATES_DIR}/config/runtime-profiles.json" "${lumen_dir}/config/runtime-profiles.json"
@@ -1829,9 +1884,9 @@ EOF
   workspace_root="${target}/repos"
   printf 'Code repositories: %s\n' "${workspace_root}"
   scan_window="$(prompt "Scan window in days" "7")"
-  model="$(prompt_menu "Cursor model to use for scans" "composer-2.5" "cursor-grok-4.5-medium" "sonnet-4.5" "gpt-5.1-codex" "custom")"
+  model="$(prompt_menu "Cursor model to use for scans" "cursor-grok-4.5-medium" "composer-2.5" "sonnet-4.5" "gpt-5.1-codex" "custom")"
   if [[ "${model}" == "custom" ]]; then
-    model="$(prompt "Enter the exact Cursor model name" "composer-2.5")"
+    model="$(prompt "Enter the exact Cursor model name" "cursor-grok-4.5-medium")"
   fi
   webhook="$(prompt "Feishu webhook URL (leave blank to skip notifications)" "")"
   cursor_api_key="$(prompt_secret "Cursor API key from Dashboard > API Keys")"
@@ -1851,7 +1906,7 @@ EOF
   local common_json="${lumen_dir}/config/common.json"
   sed -i.bak "s/\"display_name\": \"\"/\"display_name\": \"$(sed_escape_replacement "${display_name}")\"/" "${common_json}"
   sed -i.bak "s#\"workspace_root\": \"\"#\"workspace_root\": \"$(sed_escape_replacement "${workspace_root}")\"#" "${common_json}"
-  sed -i.bak "s/\"model\": \"composer-2.5\"/\"model\": \"$(sed_escape_replacement "${model}")\"/" "${common_json}"
+  sed -i.bak "s/\"model\": \"cursor-grok-4.5-medium\"/\"model\": \"$(sed_escape_replacement "${model}")\"/" "${common_json}"
   sed -i.bak "s/\"scan_window_days\": 7/\"scan_window_days\": ${scan_window:-7}/" "${common_json}"
   rm -f "${common_json}.bak"
 
@@ -2585,7 +2640,7 @@ delivery_docs_dir_for_project() {
 }
 
 cmd_delivery_schedule_run() {
-  local slug="" jira_status="Ready for Dev" dry_run="0"
+  local slug="" jira_status="To Do,Backlog,In Progress" dry_run="0"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project) slug="${2:-}"; shift 2 ;;
@@ -2594,7 +2649,7 @@ cmd_delivery_schedule_run() {
       *) err "Unknown argument: $1"; exit 1 ;;
     esac
   done
-  [[ -n "${slug}" ]] || { err "Usage: lumen delivery schedule run --project <slug> [--jira-status <status>]"; exit 1; }
+  [[ -n "${slug}" ]] || { err "Usage: lumen delivery schedule run --project <slug> [--jira-status <status>[,<status>...]]"; exit 1; }
   local docs_dir workspace scheduler_py activity_file scheduler_log dry_flag=""
   docs_dir="$(delivery_docs_dir_for_project "${slug}")" || { err "Project not found: ${slug}"; exit 1; }
   workspace="${docs_dir}/${LUMEN_DIR_NAME}"
@@ -2614,7 +2669,7 @@ cmd_delivery_schedule_run() {
 }
 
 cmd_delivery_schedule_add() {
-  local slug="" cron_expr="" every="" jira_status="Ready for Dev"
+  local slug="" cron_expr="" every="" jira_status="To Do,Backlog,In Progress"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project) slug="${2:-}"; shift 2 ;;
@@ -2629,9 +2684,9 @@ cmd_delivery_schedule_add() {
     [[ "${every}" =~ ^[1-9][0-9]*m$ ]] || { err "--every must be an interval such as 5m."; exit 1; }
     cron_expr="*/${every%m} * * * *"
   fi
-  [[ -n "${slug}" && -n "${cron_expr}" ]] || { err "Usage: lumen schedule delivery add --project <slug> --every 5m [--jira-status <status>]"; exit 1; }
+  [[ -n "${slug}" && -n "${cron_expr}" ]] || { err "Usage: lumen schedule delivery add --project <slug> --every 5m [--jira-status <status>[,<status>...]]"; exit 1; }
   is_valid_cron_expr "${cron_expr}" || { err "Invalid cron expression: ${cron_expr}"; exit 1; }
-  [[ "${jira_status}" =~ ^[A-Za-z0-9[:space:]_-]+$ ]] || { err "JIRA status may only contain letters, numbers, spaces, underscores, and hyphens."; exit 1; }
+  [[ "${jira_status}" =~ ^[A-Za-z0-9[:space:]_,-]+$ ]] || { err "JIRA status may only contain letters, numbers, spaces, underscores, commas, and hyphens."; exit 1; }
   command -v crontab >/dev/null 2>&1 || { err "'crontab' is not available on this system."; exit 1; }
 
   local docs_dir workspace lumen_bin log_file cron_path cron_env cron_line existing filtered updated
@@ -2746,7 +2801,7 @@ cmd_delivery_schedule() {
     run) cmd_delivery_schedule_run "$@" ;;
     *)
       printf 'Usage:\n'
-      printf '  lumen schedule delivery add --project <slug> --every 5m [--jira-status "Ready for Dev"]\n'
+      printf '  lumen schedule delivery add --project <slug> --every 5m [--jira-status "To Do,Backlog,In Progress"]\n'
       printf '  lumen schedule delivery remove --project <slug>\n'
       printf '  lumen schedule delivery list\n'
       ;;
