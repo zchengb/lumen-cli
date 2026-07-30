@@ -97,11 +97,45 @@ classDiagram
 
 ### Visual Delivery Contract (UI Stories Only)
 
-For Figma-backed UI, inspect every referenced node with Figma MCP and record the reproducible design snapshot and approved reference. Keep runtime, authentication, state matrix, component mapping, responsive/accessibility rules, and visual comparison thresholds here.
+For Figma-backed UI, inspect every referenced node with Figma MCP and record reproducible inputs. Every state in the matrix must have a fixture, approved reference, stable marker, and verification expectation before approval.
 
-| Screen / state | Figma node | Design snapshot | Reference | Runtime / stable marker |
+#### Runtime
+
+| Property | Value |
+|---|---|
+| Repository | TBD |
+| Runtime profile | TBD |
+| Platform | web / react-native |
+| Navigation | `/path` |
+| Authentication | TBD |
+
+#### Design Source
+
+| Screen | Figma file | Node ID | Design context snapshot | Approved reference |
 |---|---|---|---|---|
-| TBD | TBD | `assets/TBD.design.md` | `assets/TBD.png` | TBD |
+| TBD | `https://www.figma.com/design/...` | `123:456` | `assets/TBD.design.md` | `assets/TBD.png` |
+
+#### Visual State Matrix
+
+| Screen | State | Fixture | Reference | Stable marker | Maestro flow | Navigation | Viewport |
+|---|---|---|---|---|---|---|---|
+| TBD | Default | fixture name | `assets/TBD.png` | `data-testid` / native marker | optional | optional state path | optional `1440x900` |
+
+#### Visual Verification
+
+| Screen | State | Comparison | Maximum difference |
+|---|---|---|---|
+| TBD | Default | Full content area | `1%` / `N/A` with reason |
+
+#### Figma-to-Code Component Mapping
+
+| Figma component | Existing implementation | Delivery action |
+|---|---|---|
+| TBD | `path/to/component` | Reuse / extend / create |
+
+#### Platform Rules
+
+- State responsive, accessibility, overflow, loading, empty, error, and data-volume boundaries that affect this UI.
 
 ## 4. Change Contract & Implementation
 

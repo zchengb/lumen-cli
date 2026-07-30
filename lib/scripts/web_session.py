@@ -18,6 +18,7 @@ from typing import Any
 from delivery_workspace import load_story_context, read_json, workspace_lumen_dir, write_json
 from visual_delivery import (
     dependencies_installed,
+    local_runtime_port_in_use,
     redact,
     repos_config,
     resolve_visual_auth_credential,
@@ -120,6 +121,9 @@ def start_one(workspace_root: Path, context: Any, repo: Any, config: dict[str, A
     worktree = repo.worktree_path.resolve()
     if not worktree.is_dir():
         raise FileNotFoundError(f"Story worktree does not exist: {worktree}")
+    ready_url = str(runtime.get("ready_url", runtime.get("base_url", "")))
+    if local_runtime_port_in_use(ready_url):
+        raise EnvironmentError(f"configured local runtime port is already in use: {ready_url}")
     if not dependencies_installed(worktree, runtime):
         command = str(runtime.get("install_command", "")).strip()
         if not command:
@@ -142,7 +146,7 @@ def start_one(workspace_root: Path, context: Any, repo: Any, config: dict[str, A
         text=True,
     )
     try:
-        wait_ready(str(runtime.get("ready_url", runtime.get("base_url", ""))), int(runtime.get("ready_timeout_seconds", 90)), runtime_process)
+        wait_ready(ready_url, int(runtime.get("ready_timeout_seconds", 90)), runtime_process, inherited_env)
     except Exception:
         if runtime_process.poll() is None:
             os.killpg(runtime_process.pid, signal.SIGTERM)

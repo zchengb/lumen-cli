@@ -198,11 +198,29 @@ except Exception:
   fi
 }
 
+execution_seconds() {
+  local key="$1" fallback="$2"
+  [[ -f "${DELIVERY_CONFIG}" ]] || { printf '%s' "${fallback}"; return; }
+  python3 - "${DELIVERY_CONFIG}" "${key}" "${fallback}" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        value = int(json.load(handle).get("execution", {}).get(sys.argv[2], sys.argv[3]))
+    print(max(1, value), end="")
+except Exception:
+    print(sys.argv[3], end="")
+PY
+}
+
 MODEL="${CURSOR_AGENT_MODEL:-$(model_from_config)}"
 MODEL="${MODEL:-cursor-grok-4.5-medium}"
 SANDBOX_MODE="${CURSOR_AGENT_SANDBOX:-disabled}"
 OUTPUT_FORMAT="${CURSOR_AGENT_OUTPUT_FORMAT:-stream-json}"
 STREAM_PARTIAL="${CURSOR_AGENT_STREAM_PARTIAL:-1}"
+AGENT_TIMEOUT_SECONDS="${CURSOR_AGENT_TIMEOUT_SECONDS:-$(execution_seconds agent_timeout_seconds 5400)}"
+AGENT_IDLE_TIMEOUT_SECONDS="${CURSOR_AGENT_IDLE_TIMEOUT_SECONDS:-$(execution_seconds agent_idle_timeout_seconds 900)}"
 
 figma_mcp_approved() {
   [[ -f "${DELIVERY_CONFIG}" ]] || return 1
@@ -358,7 +376,7 @@ run_delivery_agent() {
       --workspace-root "${WORKSPACE_ROOT}" --docs-dir "${DOCS_DIR}" --story "${STORY_REF}" \
       --run-id "${RUN_ID}" --stage "${stage}" --attempt "${attempt}" \
       --provider cursor-cli --model "${MODEL}" --output-format "${OUTPUT_FORMAT}" --sandbox "${SANDBOX_MODE}" \
-      --lumen-version "${lumen_version}" --provider-version "${provider_version}" --timeout 3600 \
+      --lumen-version "${lumen_version}" --provider-version "${provider_version}" --timeout "${AGENT_TIMEOUT_SECONDS}" --idle-timeout "${AGENT_IDLE_TIMEOUT_SECONDS}" \
       -- agent "${agent_args[@]}" \
       < <(printf '%s' "${prompt}") > >(tee -a "${LOG_FILE}") 2> >(tee -a "${LOG_FILE}" >&2)
     local agent_exit=$?

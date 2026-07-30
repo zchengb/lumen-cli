@@ -3,7 +3,9 @@
   "execution": {
     "model": "cursor-grok-4.5-medium",
     "sandbox": "disabled",
-    "approve_mcps": false
+    "approve_mcps": false,
+    "agent_timeout_seconds": 5400,
+    "agent_idle_timeout_seconds": 900
   },
   "jira": {
     "enabled": true,

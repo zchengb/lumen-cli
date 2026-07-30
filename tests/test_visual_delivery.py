@@ -101,6 +101,18 @@ class VisualDeliveryTests(unittest.TestCase):
             wait_ready("https://localhost:3000", 1)
         self.assertIsNotNone(request.call_args.kwargs["context"])
 
+    def test_readiness_retries_socket_timeouts(self) -> None:
+        import socket
+        import urllib.request
+        from unittest.mock import patch
+
+        with patch.object(urllib.request, "urlopen", side_effect=socket.timeout("timed out")) as request, \
+             patch("visual_delivery.time.monotonic", side_effect=[0, 0, 2]), \
+             patch("visual_delivery.time.sleep"):
+            with self.assertRaisesRegex(TimeoutError, "readiness URL did not respond"):
+                wait_ready("http://127.0.0.1:3000", 1)
+        self.assertEqual(1, request.call_count)
+
     def test_contract_is_optional_and_validates_ui_plan(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "technical-plan.md"
@@ -114,6 +126,20 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertEqual("maestro/today.yaml", contract["scenarios"][0]["maestro_flow"])
             self.assertEqual(["Today"], [item["screen"] for item in matching_scenarios(contract, "Today", "Default")])
             self.assertEqual([], matching_scenarios(contract, "Missing", "Default"))
+
+    def test_contract_accepts_nested_visual_headings_and_state_navigation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "technical-plan.md"
+            nested = PLAN.replace("## Visual Delivery Contract", "### Visual Delivery Contract")
+            for heading in ("Design Source", "Runtime", "Visual State Matrix", "Figma-to-Code Component Mapping", "Platform Rules", "Visual Verification"):
+                nested = nested.replace(f"### {heading}", f"#### {heading}")
+            nested = nested.replace("| Screen | State | Fixture | Reference | Stable marker | Maestro flow |", "| Screen | State | Fixture | Reference | Stable marker | Maestro flow | Navigation | Viewport |")
+            nested = nested.replace("| Today | Default | today-default | `assets/today.png` | today-screen | `maestro/today.yaml` |", "| Today | Default | today-default | `assets/today.png` | today-screen | `maestro/today.yaml` | /today/empty | 1280x720 |")
+            path.write_text(nested, encoding="utf-8")
+            contract = visual_contract(path) or {}
+            self.assertEqual([], validate_contract(contract))
+            self.assertEqual("/today/empty", contract["scenarios"][0]["navigation"])
+            self.assertEqual("1280x720", contract["scenarios"][0]["viewport"])
 
     def test_figma_contract_requires_a_committed_design_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

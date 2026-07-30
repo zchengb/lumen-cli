@@ -47,7 +47,7 @@ class AgentTraceTest(unittest.TestCase):
         return type("Args", (), {
             "workspace_root": str(root), "docs_dir": str(root), "story": "DEMO-1", "run_id": "20260719-120000",
             "stage": stage, "attempt": attempt, "provider": "fake", "model": "test", "output_format": "stream-json",
-            "sandbox": "workspace-write", "lumen_version": "test", "provider_version": "test", "timeout": 5,
+            "sandbox": "workspace-write", "lumen_version": "test", "provider_version": "test", "timeout": 5, "idle_timeout": 0,
             "command": command,
         })()
 
@@ -163,6 +163,21 @@ emit({'type':'result','request_id':'r-1','duration_ms':12,'duration_api_ms':8,'r
             self.assertTrue((agents / "remediation-001" / "result.json").is_file())
             self.assertTrue((agents / "remediation-002" / "result.json").is_file())
             self.assertEqual("timed_out", json.loads((agents / "implementation-001" / "result.json").read_text())["status"])
+
+    def test_idle_timeout_stops_a_silent_agent_before_total_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.workspace(root, "metadata")
+            args = self.args(root, [sys.executable, "-c", "import time; print('working', flush=True); time.sleep(3)"])
+            args.timeout, args.idle_timeout = 5, 1
+            old_stdin = sys.stdin
+            try:
+                sys.stdin = type("Input", (), {"read": lambda _self: "idle"})()
+                self.assertEqual(124, run_agent(args))
+            finally:
+                sys.stdin = old_stdin
+            result = json.loads((root / "lumen" / "results" / "agent-traces" / "20260719-120000" / "agents" / "implementation-001" / "result.json").read_text())
+            self.assertEqual("idle_timed_out", result["status"])
 
     def test_dashboard_caps_large_evidence_and_settings_preserve_config(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

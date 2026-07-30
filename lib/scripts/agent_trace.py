@@ -373,6 +373,8 @@ def run_agent(args: argparse.Namespace) -> int:
     formatter = ScanLogFormatter() if args.output_format == "stream-json" else None
     process = subprocess.Popen([*args.command, prompt], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     process_started_mono = time.monotonic()
+    last_activity_mono = process_started_mono
+    last_activity_lock = threading.Lock()
     interrupted = False
 
     def terminate(signum: int, _frame: Any) -> None:
@@ -399,9 +401,15 @@ def run_agent(args: argparse.Namespace) -> int:
             return "[REDACTED PRIVATE KEY]\n"
         return redactor.text(raw)
 
+    def mark_activity() -> None:
+        nonlocal last_activity_mono
+        with last_activity_lock:
+            last_activity_mono = time.monotonic()
+
     def read_stdout() -> None:
         assert process.stdout is not None
         for raw in process.stdout:
+            mark_activity()
             clean = redact_stream(raw)
             if config["capture_mode"] == "full":
                 stdout_log.write(clean); stdout_log.flush()
@@ -418,6 +426,7 @@ def run_agent(args: argparse.Namespace) -> int:
     def read_stderr() -> None:
         assert process.stderr is not None
         for raw in process.stderr:
+            mark_activity()
             clean = redact_stream(raw, stderr=True)
             if config["capture_mode"] == "full":
                 stderr_log.write(clean); stderr_log.flush()
@@ -427,10 +436,23 @@ def run_agent(args: argparse.Namespace) -> int:
     threads = [threading.Thread(target=read_stdout), threading.Thread(target=read_stderr)]
     for thread in threads: thread.start()
     timed_out = False
-    try:
-        exit_code = process.wait(timeout=args.timeout or None)
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    idle_timed_out = False
+    while True:
+        try:
+            exit_code = process.wait(timeout=0.25)
+            break
+        except subprocess.TimeoutExpired:
+            now = time.monotonic()
+            with last_activity_lock:
+                idle_for = now - last_activity_mono
+            if args.idle_timeout and idle_for >= args.idle_timeout:
+                idle_timed_out = True
+                normalizer.emit("agent.process.idle_timeout", now, idle_timeout_seconds=args.idle_timeout, idle_duration_ms=round(idle_for * 1000))
+                break
+            if args.timeout and now - process_started_mono >= args.timeout:
+                timed_out = True
+                break
+    if timed_out or idle_timed_out:
         process.terminate()
         try: process.wait(timeout=5)
         except subprocess.TimeoutExpired: process.kill(); process.wait()
@@ -446,7 +468,7 @@ def run_agent(args: argparse.Namespace) -> int:
     write_json(invocation / "changed-files.json", changes)
     if config["capture_mode"] == "full":
         (invocation / "final-output.md").write_text(redactor.text(normalizer.final_output), encoding="utf-8")
-    status = "timed_out" if timed_out else "interrupted" if interrupted else "succeeded" if exit_code == 0 else "failed"
+    status = "idle_timed_out" if idle_timed_out else "timed_out" if timed_out else "interrupted" if interrupted else "succeeded" if exit_code == 0 else "failed"
     normalizer.emit("agent.process.completed" if exit_code == 0 else "agent.process.interrupted" if interrupted else "agent.process.failed", ended_mono, exit_code=exit_code)
     result = {
         "schema_version": SCHEMA_VERSION, "trace_id": args.run_id, "invocation_id": invocation_id, "stage": args.stage, "attempt": args.attempt,
@@ -457,7 +479,7 @@ def run_agent(args: argparse.Namespace) -> int:
         "result_parsing_ms": round(normalizer.parse_duration_ns / 1_000_000),
         "time_to_first_event_ms": round((normalizer.first_event - started_mono) * 1000) if normalizer.first_event else None,
         "time_to_first_output_ms": round((normalizer.first_output - started_mono) * 1000) if normalizer.first_output else None,
-        "exit_reason": status, "trace_completeness": "partial" if normalizer.parse_warnings else "full", "capture_mode": config["capture_mode"],
+        "exit_reason": status, "idle_timeout_seconds": args.idle_timeout, "trace_completeness": "partial" if normalizer.parse_warnings else "full", "capture_mode": config["capture_mode"],
         "tool_calls": normalizer.tool_calls, "files_changed": len(changes["files"]),
         "tool_summary": sorted(normalizer.tool_summary.values(), key=lambda item: (-item["total_duration_ms"], item["name"])),
         "usage": {"requests": None, "input_tokens": None, "output_tokens": None, "cached_tokens": None, "reasoning_tokens": None, "estimated_cost": None, "source": "not_available"},
@@ -529,7 +551,8 @@ def main() -> int:
     for name in ("workspace-root", "docs-dir", "story", "run-id", "stage", "provider", "model", "output-format", "sandbox", "lumen-version", "provider-version"):
         run.add_argument(f"--{name}", required=name in {"workspace-root", "docs-dir", "run-id", "stage"}, default="")
     run.add_argument("--attempt", type=int, default=1)
-    run.add_argument("--timeout", type=int, default=3600)
+    run.add_argument("--timeout", type=int, default=5400)
+    run.add_argument("--idle-timeout", type=int, default=900)
     run.add_argument("command", nargs=argparse.REMAINDER)
     check = sub.add_parser("doctor"); check.add_argument("--workspace-root", required=True)
     span = sub.add_parser("span")

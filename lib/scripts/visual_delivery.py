@@ -11,10 +11,12 @@ import re
 import shlex
 import shutil
 import signal
+import socket
 import ssl
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -48,13 +50,26 @@ FAILURE_CATEGORIES = {
 
 def visual_section(text: str) -> str:
     text = re.sub(r"(?s)<!--.*?-->", "", text)
-    match = re.search(r"(?ms)^## Visual Delivery Contract\s*$\n(.*?)(?=^## (?!#)|\Z)", text)
-    return match.group(1).strip() if match else ""
+    return heading_section(text, "Visual Delivery Contract")
 
 
 def subsection(text: str, title: str) -> str:
-    match = re.search(rf"(?ms)^### {re.escape(title)}\s*$\n(.*?)(?=^### |\Z)", text)
-    return match.group(1).strip() if match else ""
+    return heading_section(text, title)
+
+
+def heading_section(text: str, title: str) -> str:
+    headings = list(re.finditer(r"(?m)^(#{1,6})\s+(.+?)\s*$", text))
+    for index, heading in enumerate(headings):
+        if heading.group(2).strip() != title:
+            continue
+        level = len(heading.group(1))
+        end = len(text)
+        for following in headings[index + 1:]:
+            if len(following.group(1)) <= level:
+                end = following.start()
+                break
+        return text[heading.end():end].strip()
+    return ""
 
 
 def markdown_table(text: str) -> list[dict[str, str]]:
@@ -105,6 +120,8 @@ def visual_contract(path: Path) -> dict[str, Any] | None:
                 "reference": row.get("Reference", ""),
                 "stable_marker": row.get("Stable marker", ""),
                 "maestro_flow": row.get("Maestro flow", ""),
+                "navigation": row.get("Navigation", ""),
+                "viewport": row.get("Viewport", ""),
                 "comparison": check.get("Comparison", "Full content area"),
                 "maximum_difference_ratio": ratio,
                 "maximum_difference": threshold,
@@ -257,6 +274,19 @@ def resolve_visual_fixture_file(
         if resolved.is_file():
             return resolved
     return (workspace_root / candidate).resolve()
+
+
+def local_runtime_port_in_use(url: str) -> bool:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    if host not in {"localhost", "127.0.0.1", "::1"}:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        with socket.create_connection((host, port), timeout=0.2):
+            return True
+    except OSError:
+        return False
 
 
 def visual_auth_env_name(repository: str, runtime: dict[str, Any]) -> str:
@@ -620,10 +650,14 @@ def doctor(workspace_root: Path) -> int:
 
 
 def run_owned(command: str, cwd: Path, env: dict[str, str], processes: list[subprocess.Popen[str]], runtime: dict[str, Any] | None = None) -> subprocess.Popen[str]:
+    fd, log_path = tempfile.mkstemp(prefix="lumen-runtime-", suffix=".log")
+    log = os.fdopen(fd, "w", encoding="utf-8")
     process = subprocess.Popen(
-        runtime_command(cwd, runtime, command) if runtime else shlex.split(command), cwd=cwd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        runtime_command(cwd, runtime, command) if runtime else shlex.split(command), cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT,
         text=True, start_new_session=True,
     )
+    process._lumen_runtime_log = log  # type: ignore[attr-defined]
+    process._lumen_runtime_log_path = Path(log_path)  # type: ignore[attr-defined]
     processes.append(process)
     return process
 
@@ -657,20 +691,32 @@ def ensure_ios_app(repo: Path, runtime: dict[str, Any], env: dict[str, str]) -> 
         raise EnvironmentError(redact((deployed.stderr or deployed.stdout).strip(), env))
 
 
-def wait_ready(url: str, timeout: int, process: subprocess.Popen[str] | None = None) -> None:
+def runtime_log_tail(process: subprocess.Popen[str], env: dict[str, str]) -> str:
+    log = getattr(process, "_lumen_runtime_log", None)
+    path = getattr(process, "_lumen_runtime_log_path", None)
+    if log:
+        log.flush()
+    if not isinstance(path, Path) or not path.is_file():
+        return ""
+    return redact(path.read_text(encoding="utf-8", errors="ignore"), env)[-1000:].strip()
+
+
+def wait_ready(url: str, timeout: int, process: subprocess.Popen[str] | None = None, env: dict[str, str] | None = None) -> None:
     parsed = urllib.parse.urlparse(url)
     context = ssl._create_unverified_context() if parsed.scheme == "https" and parsed.hostname in {"localhost", "127.0.0.1", "::1"} else None
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process and process.poll() is not None:
-            raise RuntimeError("configured runtime process exited before readiness")
+            detail = runtime_log_tail(process, env or {})
+            raise RuntimeError(f"configured runtime process exited before readiness{': ' + detail if detail else ''}")
         try:
             with urllib.request.urlopen(url, timeout=2, context=context) as response:
                 if response.status < 500:
                     return
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError, socket.timeout):
             time.sleep(0.5)
-    raise TimeoutError(f"readiness URL did not respond within {timeout}s: {url}")
+    detail = runtime_log_tail(process, env or {}) if process else ""
+    raise TimeoutError(f"readiness URL did not respond within {timeout}s: {url}{': ' + detail if detail else ''}")
 
 
 def web_capture(repo: Path, runtime: dict[str, Any], scenario: dict[str, Any], actual: Path, env: dict[str, str], fixture_file: Path | None = None) -> None:
@@ -684,7 +730,9 @@ def web_capture(repo: Path, runtime: dict[str, Any], scenario: dict[str, Any], a
         raise PermissionError(
             f"storage state from {state_env} is unavailable; run visual verification after runtime startup prepares auth"
         )
-    viewport = runtime.get("viewport") if isinstance(runtime.get("viewport"), dict) else {"width": 1280, "height": 720}
+    viewport = dict(runtime.get("viewport") or {}) if isinstance(runtime.get("viewport"), dict) else {"width": 1280, "height": 720}
+    if match := re.fullmatch(r"\s*(\d+)\s*[x×]\s*(\d+)\s*", str(scenario.get("viewport", ""))):
+        viewport = {"width": int(match.group(1)), "height": int(match.group(2))}
     script = """
 const { chromium } = require('playwright');
 (async () => { const [url,out,marker,storage,width,height,cdpUrl,testIdAttribute] = process.argv.slice(1);
@@ -815,6 +863,12 @@ def execute(
                         try: os.killpg(process.pid, signal.SIGKILL)
                         except ProcessLookupError: pass
                         process.wait()
+            log = getattr(process, "_lumen_runtime_log", None)
+            if log:
+                log.close()
+            path = getattr(process, "_lumen_runtime_log_path", None)
+            if isinstance(path, Path):
+                path.unlink(missing_ok=True)
     atexit.register(cleanup)
     results: list[dict[str, Any]] = []
     evidence = workspace_lumen_dir(context.workspace_root) / "results" / "visual" / time.strftime("%Y%m%d-%H%M%S", time.gmtime())
@@ -831,14 +885,17 @@ def execute(
                 run_owned(fixture_start, repo_target.worktree_path, env, processes)
             platform = str(runtime.get("platform", ""))
             if platform == "web":
+                ready_url = str(runtime.get("ready_url", ""))
+                if local_runtime_port_in_use(ready_url):
+                    raise EnvironmentError(f"configured local runtime port is already in use: {ready_url}")
                 server = run_owned(str(runtime.get("start_command", "")), repo_target.worktree_path, env, processes, runtime)
-                wait_ready(str(runtime.get("ready_url", "")), int(runtime.get("ready_timeout_seconds", 60)), server)
+                wait_ready(ready_url, int(runtime.get("ready_timeout_seconds", 60)), server, env)
                 if str(runtime.get("auth_strategy", "")).strip().casefold() in {"playwright-storage-state", "storage-state", "login-endpoint", "fake-login"}:
                     prepare_web_auth_storage(repo_target.worktree_path, runtime, env, evidence / "web-auth-storage.json")
             elif platform == "react-native":
                 ensure_ios_app(repo_target.worktree_path, runtime, env)
                 metro = run_owned(str(runtime.get("metro_command", "")), repo_target.worktree_path, env, processes, runtime)
-                wait_ready(str(runtime.get("ready_url", "http://127.0.0.1:8081/status")), int(runtime.get("ready_timeout_seconds", 120)), metro)
+                wait_ready(str(runtime.get("ready_url", "http://127.0.0.1:8081/status")), int(runtime.get("ready_timeout_seconds", 120)), metro, env)
             else:
                 raise EnvironmentError(f"unsupported visual platform: {platform}")
     except PermissionError as exc:
@@ -852,7 +909,8 @@ def execute(
 
     for index, scenario in enumerate(scenarios, 1):
         scenario = dict(scenario)
-        scenario.update({"repository": repo_name, "platform": runtime_contract.get("platform", runtime.get("platform", "")), "navigation": runtime_contract.get("navigation", "")})
+        scenario.update({"repository": repo_name, "platform": runtime_contract.get("platform", runtime.get("platform", ""))})
+        scenario.setdefault("navigation", runtime_contract.get("navigation", ""))
         stem = re.sub(r"[^a-z0-9]+", "-", f"{scenario['screen']}-{scenario['state']}".lower()).strip("-") or f"scenario-{index}"
         reference = context.story_dir / str(scenario.get("reference", ""))
         expected, actual, diff = evidence / f"{stem}-expected.png", evidence / f"{stem}-actual.png", evidence / f"{stem}-diff.png"
