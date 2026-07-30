@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1455,6 +1456,71 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             delivery_scheduler.twg_ready = original_ready
             delivery_scheduler.refresh_twg_auth = original_refresh
             delivery_scheduler.run_twg = original_run
+
+    def test_scheduler_reads_status_field_from_twg_workitem(self) -> None:
+        import delivery_scheduler
+
+        original_ready = delivery_scheduler.twg_ready
+        original_run = delivery_scheduler.run_twg
+        original_refresh = delivery_scheduler.refresh_twg_auth
+        try:
+            delivery_scheduler.twg_ready = lambda: (True, "")
+            delivery_scheduler.refresh_twg_auth = lambda force=True: (True, "")
+            delivery_scheduler.run_twg = lambda _args: (
+                0,
+                json.dumps({"data": [{"key": "MBPAS-1491", "fields": {"status": {"name": "In Progress"}}}]}),
+            )
+            self.assertEqual("In Progress", current_jira_status("MBPAS-1491"))
+        finally:
+            delivery_scheduler.twg_ready = original_ready
+            delivery_scheduler.refresh_twg_auth = original_refresh
+            delivery_scheduler.run_twg = original_run
+
+    def test_schedule_cli_forwards_all_jira_statuses(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lumen_home = root / "lumen-home"
+            scripts = lumen_home / "lib" / "scripts"
+            scripts.mkdir(parents=True)
+            shutil.copy2(REPO_ROOT / "lib" / "scripts" / "projects_registry.py", scripts / "projects_registry.py")
+
+            docs = root / "docs"
+            (docs / "lumen" / "config").mkdir(parents=True)
+            (docs / "lumen" / "config" / "common.json").write_text(json.dumps({"project": {"display_name": "Demo"}}), encoding="utf-8")
+            (lumen_home / "projects.json").write_text(json.dumps({"projects": [{"slug": "demo", "workspace": str(docs / "lumen")}]}) + "\n", encoding="utf-8")
+
+            captured = root / "scheduler-args.json"
+            (scripts / "delivery_scheduler.py").write_text(
+                "import json, os, sys\nfrom pathlib import Path\nPath(os.environ['CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n",
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    "bash",
+                    str(REPO_ROOT / "bin" / "lumen"),
+                    "delivery",
+                    "schedule",
+                    "run",
+                    "--project",
+                    "demo",
+                    "--jira-status",
+                    "Backlog",
+                    "--jira-status",
+                    "To Do",
+                    "--jira-status",
+                    "In Progress",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "LUMEN_HOME": str(lumen_home), "CAPTURE": str(captured)},
+            )
+            self.assertEqual(0, completed.returncode, completed.stderr or completed.stdout)
+            args = json.loads(captured.read_text(encoding="utf-8"))
+            self.assertEqual(
+                ["Backlog", "To Do", "In Progress"],
+                [args[index + 1] for index, value in enumerate(args) if value == "--jira-status"],
+            )
 
     def test_delivery_statuses_support_multiple_values_and_legacy_csv(self) -> None:
         self.assertEqual(["To Do", "Backlog", "In Progress"], normalize_statuses(["To Do", "Backlog", "In Progress"]))

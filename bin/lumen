@@ -2640,16 +2640,20 @@ delivery_docs_dir_for_project() {
 }
 
 cmd_delivery_schedule_run() {
-  local slug="" jira_status="To Do,Backlog,In Progress" dry_run="0"
+  local slug="" dry_run="0" jira_status_seen="0"
+  local jira_statuses=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --project) slug="${2:-}"; shift 2 ;;
-      --jira-status) jira_status="${2:-}"; shift 2 ;;
+      --jira-status) jira_statuses+=("${2:-}"); jira_status_seen="1"; shift 2 ;;
       --dry-run) dry_run="1"; shift ;;
       *) err "Unknown argument: $1"; exit 1 ;;
     esac
   done
   [[ -n "${slug}" ]] || { err "Usage: lumen delivery schedule run --project <slug> [--jira-status <status>[,<status>...]]"; exit 1; }
+  if [[ "${jira_status_seen}" == "0" ]]; then
+    jira_statuses=("To Do,Backlog,In Progress")
+  fi
   local docs_dir workspace scheduler_py activity_file scheduler_log dry_flag=""
   docs_dir="$(delivery_docs_dir_for_project "${slug}")" || { err "Project not found: ${slug}"; exit 1; }
   workspace="${docs_dir}/${LUMEN_DIR_NAME}"
@@ -2665,7 +2669,13 @@ cmd_delivery_schedule_run() {
   scheduler_py="${LUMEN_HOME}/lib/scripts/delivery_scheduler.py"
   [[ -f "${scheduler_py}" ]] || { err "Delivery scheduler not found: ${scheduler_py}"; exit 1; }
   [[ "${dry_run}" == "1" ]] && dry_flag="--dry-run"
-  python3 "${scheduler_py}" --docs-dir "${docs_dir}" --jira-status "${jira_status}" --lumen-bin "${LUMEN_CLI_BIN}" --activity-file "${activity_file}" ${dry_flag}
+  local scheduler_args=("${scheduler_py}" --docs-dir "${docs_dir}" --lumen-bin "${LUMEN_CLI_BIN}" --activity-file "${activity_file}")
+  local status
+  for status in "${jira_statuses[@]}"; do
+    scheduler_args+=(--jira-status "${status}")
+  done
+  [[ -n "${dry_flag}" ]] && scheduler_args+=("${dry_flag}")
+  python3 "${scheduler_args[@]}"
 }
 
 cmd_delivery_schedule_add() {

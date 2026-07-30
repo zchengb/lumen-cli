@@ -94,7 +94,7 @@ def current_jira_status(jira_key: str) -> str:
     refreshed, reason = refresh_twg_auth(force=True)
     if not refreshed:
         raise RuntimeError(reason)
-    code, output = run_twg(["jira", "workitem", "get", jira_key, "-o", "json"])
+    code, output = run_twg(["jira", "workitem", "get", jira_key, "--fields", "status", "-o", "json"])
     if code != 0:
         raise RuntimeError((output or f"Unable to read JIRA {jira_key}").strip()[-500:])
     payload = parse_twg_json(output) or {}
@@ -105,6 +105,9 @@ def current_jira_status(jira_key: str) -> str:
         item = data["items"][0]
         data = item.get("data", item) if isinstance(item, dict) else {}
     status = data.get("status") if isinstance(data, dict) else {}
+    if not status and isinstance(data, dict):
+        fields = data.get("fields")
+        status = fields.get("status") if isinstance(fields, dict) else {}
     if isinstance(status, dict):
         return str(status.get("name") or "").strip()
     return str(status or "").strip()
