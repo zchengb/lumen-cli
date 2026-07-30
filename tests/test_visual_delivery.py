@@ -219,6 +219,13 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertEqual("passed", payload["visual_verification"]["status"])
             self.assertNotIn("environment", json.dumps(payload).lower())
 
+    def test_visual_result_requires_review_without_a_numeric_threshold(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            result = Path(temp) / "delivery-result.json"
+            result.write_text('{"delivery_status":"ready_for_finalize"}\n', encoding="utf-8")
+            merge_visual_result(result, "web-visual", [{"repository": "app", "screen": "Today", "state": "Default", "status": "needs_review", "difference_ratio": 0.2}])
+            self.assertEqual("needs_review", json.loads(result.read_text(encoding="utf-8"))["visual_verification"]["status"])
+
     def test_visual_result_replaces_stale_results_for_the_same_repository(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             result = Path(temp) / "delivery-result.json"

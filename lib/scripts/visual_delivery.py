@@ -954,12 +954,15 @@ def execute(
                 if captured.returncode != 0: raise RuntimeError(redact((captured.stderr or captured.stdout).strip(), env))
             ratio = compare_png(expected, actual, diff)
             threshold = scenario.get("maximum_difference_ratio")
-            status = "passed" if threshold is None or ratio <= threshold else "failed"
+            status = "needs_review" if threshold is None else "passed" if ratio <= threshold else "failed"
             result = {**scenario, "expected": str(expected), "actual": str(actual), "diff": str(diff), "difference_ratio": ratio, "status": status}
             result["stages"] = {key: "passed" for key in ("environment", "runtime", "authentication", "fixture", "navigation", "stability", "capture", "visual_comparison", "cleanup")}
             if status == "failed":
                 result["failure_category"] = "visual_difference"
                 result["stages"]["visual_comparison"] = "failed"
+            elif status == "needs_review":
+                result["summary"] = "Screenshot captured; no numerical visual threshold is configured."
+                result["stages"]["visual_comparison"] = "needs_review"
             results.append(result)
         except PermissionError as exc: results.append(stage_result("authentication_failed", str(exc), scenario))
         except ChildProcessError as exc: results.append(stage_result("fixture_failed", str(exc), scenario))
@@ -979,7 +982,7 @@ def execute(
 
 def merge_visual_result(result_path: Path, profile: str, results: list[dict[str, Any]]) -> None:
     payload = read_json(result_path, {})
-    status = "passed" if results and all(item.get("status") == "passed" for item in results) else "failed"
+    status = "passed" if results and all(item.get("status") == "passed" for item in results) else "needs_review" if results and all(item.get("status") in {"passed", "needs_review"} for item in results) else "failed"
     payload["visual_verification"] = {"status": status, "runtime_profile": profile, "results": results}
     repositories = {str(item.get("repository", "")) for item in results}
     verification = [
