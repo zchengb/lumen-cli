@@ -24,7 +24,7 @@ const FULLSCREEN_ZOOM_MAX = 3;
 const FULLSCREEN_ZOOM_STEP = 0.25;
 
 type RecordValue = Record<string, any>;
-type Tab = "scan" | "delivery" | "observatory" | "repositories" | "prompts" | "settings";
+type Tab = "scan" | "delivery" | "patch" | "observatory" | "repositories" | "prompts" | "settings";
 type NoticeTone = "success" | "error" | "info";
 type Notice = { message: string; tone: NoticeTone };
 type Notify = (message: string, tone?: NoticeTone) => void;
@@ -38,16 +38,18 @@ interface DashboardData extends RecordValue {
     enabled?: boolean;
     project?: string;
     projects?: Array<{ name: string; slug: string }>;
-    prompts?: Array<{ mode: "scan" | "delivery"; path: string }>;
-    schedules?: { scan?: RecordValue | null; delivery?: RecordValue | null };
+    prompts?: Array<{ mode: "scan" | "delivery" | "patch"; path: string }>;
+    schedules?: { scan?: RecordValue | null; delivery?: RecordValue | null; patch?: RecordValue | null };
     workspace?: RecordValue;
   };
   delivery?: { current?: RecordValue; runs?: RecordValue[]; available_stories?: RecordValue[]; scheduler_activity?: RecordValue[]; scheduler_log_available?: boolean; config?: RecordValue };
+  patch?: { current?: RecordValue; runs?: RecordValue[]; scheduler_activity?: RecordValue[]; scheduler_log_available?: boolean; config?: RecordValue };
 }
 
 const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
   { id: "scan", label: "AUTO SCAN", icon: ScanSearch },
   { id: "delivery", label: "AUTO DELIVERY", icon: Truck },
+  { id: "patch", label: "AUTO PATCH", icon: Code2 },
   { id: "observatory", label: "OBSERVATORY", icon: Eye },
   { id: "repositories", label: "REPOSITORY", icon: FolderGit2 },
   { id: "prompts", label: "WORKFLOW", icon: Workflow },
@@ -57,6 +59,7 @@ const tabItems: Array<{ id: Tab; label: string; icon: typeof ScanSearch }> = [
 const tabContext: Record<Tab, { title: string; description: string }> = {
   scan: { title: "AUTO SCAN", description: "Review history and manage tracked findings." },
   delivery: { title: "AUTO DELIVERY", description: "Story execution, verification, and pull request delivery." },
+  patch: { title: "AUTO PATCH", description: "Jira Task and Bug capture, focused fixes, and safe handoff." },
   observatory: { title: "OBSERVATORY", description: "Browse and edit story briefs and technical plans." },
   repositories: { title: "REPOSITORY", description: "Local repositories, scan profiles, and delivery verification commands." },
   prompts: { title: "WORKFLOW", description: "The prompts, scripts, control points, and recovery paths behind each local automation." },
@@ -711,6 +714,7 @@ function App() {
         {!data && loading ? <div className="loading-state"><LoaderCircle size={22} className="spin" /> Loading local workspace state…</div> : null}
         {data && activeTab === "scan" && <ScanView data={data} project={project} notify={notify} reload={load} />}
         {data && activeTab === "delivery" && <DeliveryView data={data} project={project} notify={notify} reload={load} />}
+        {data && activeTab === "patch" && <PatchView data={data} project={project} notify={notify} reload={load} />}
         {data && activeTab === "observatory" && <ObservatoryView project={project} notify={notify} onDirtyChange={setObservatoryDirty} />}
         {data && activeTab === "repositories" && <RepositoryView data={data} interact={interact} />}
         {data && activeTab === "prompts" && <PromptsView data={data} project={project} interact={interact} notify={notify} />}
@@ -959,6 +963,59 @@ function DeliveryView({ data, project, notify, reload }: { data: DashboardData; 
     {startStep > 0 && <StartDeliveryDialog stories={storyOptions} value={selectedStory} onChange={setSelectedStory} step={startStep === 1 ? 1 : 2} busy={actionBusy} error={actionError} onClose={() => { if (!actionBusy) setStartStep(0); }} onContinue={() => setStartStep(2)} onConfirm={() => void start()} />}
     {deleteCandidate && <DeleteHistoryDialog run={deleteCandidate} busy={Boolean(deletingHistoryId)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void removeHistory()} />}
   </>;
+}
+
+function PatchView({ data, project, notify, reload }: { data: DashboardData; project: string; notify: Notify; reload: () => Promise<void> }) {
+  const patch = data.patch || {};
+  const current = patch.current || {};
+  const runs = patch.runs || [];
+  const activity = patch.scheduler_activity || [];
+  const running = Boolean(current.active) || /in_progress|running/i.test(String(current.patch_status || ""));
+  const [log, setLog] = useState("");
+  const [logError, setLogError] = useState("");
+  const [logOpen, setLogOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const loadLog = async (runId = String(current.run_id || "")) => {
+    setLogOpen(true); setLog(""); setLogError("");
+    try { const response = await request(`/api/patch/log?run_id=${encodeURIComponent(runId)}`, project); setLog(response.content || "No log content recorded."); }
+    catch (err) { setLogError(err instanceof Error ? err.message : "Unable to load Auto Patch log"); }
+  };
+  const start = async () => {
+    setBusy(true);
+    try { await request("/api/patch/start", project, { method: "POST", json: {} }); notify("Auto Patch started", "success"); await reload(); }
+    catch (err) { notify(err instanceof Error ? err.message : "Unable to start Auto Patch", "error"); }
+    finally { setBusy(false); }
+  };
+  const stop = async () => {
+    setBusy(true);
+    try { await request("/api/patch/stop", project, { method: "POST", json: {} }); notify("Auto Patch stopped", "success"); await reload(); }
+    catch (err) { notify(err instanceof Error ? err.message : "Unable to stop Auto Patch", "error"); }
+    finally { setBusy(false); }
+  };
+  const checks = Array.isArray(current.self_checks) ? current.self_checks : [];
+  return <>
+    <section className="metrics">
+      <Metric label="Current card" value={text(current.jira_key, "—")} />
+      <Metric label="Status" value={titleStatus(current.patch_status || "not started")} />
+      <Metric label="Recent runs" value={runs.length} />
+      <Metric label="Blocked question" value={current.question ? "Yes" : "No"} />
+    </section>
+    <Panel title="Current Progress" action={<span className="panel-actions">{running ? <button className="button danger secondary" disabled={busy} onClick={() => void stop()}>Stop</button> : <button className="button secondary" disabled={busy} onClick={() => void start()}><Play size={14} />Run one cycle</button>}</span>}>
+      <div className="delivery-facts"><Fact label="Jira card" value={<StoryReference jiraKey={current.jira_key} title={current.jira_summary} />} /><Fact label="Status" value={<Badge value={current.patch_status || "not started"} />} /><Fact label="Branch" value={<code>{text(current.branch)}</code>} /><Fact label="Repositories" value={Array.isArray(current.repositories) ? current.repositories.map((item: RecordValue) => item.name).filter(Boolean).join(", ") || "—" : "—"} /></div>
+      {current.question && <div className="status-note"><CircleHelp size={15} />{current.question}</div>}
+      <PatchFlow phases={Array.isArray(current.stages) ? current.stages : []} />
+    </Panel>
+    <div className="two-column">
+      <Panel title="Patch Evidence"><div className="rows"><div className="info-row"><span>Summary</span><div>{text(current.summary || current.jira_summary)}</div></div><div className="info-row"><span>Self-checks</span><div>{checks.length ? `${checks.filter((item: RecordValue) => item.status === "passed").length}/${checks.length} passed` : "—"}</div></div><div className="info-row"><span>Pull requests</span><div><PrLinks items={(current.pr_urls || []).map((url: string) => ({ url, repository: "Pull request" }))} /></div></div><div className="info-row"><span>Files changed</span><div>{(current.repositories || []).flatMap((item: RecordValue) => item.files_changed || []).length || "—"}</div></div></div></Panel>
+      <Panel title="Scheduler Activity"><div className="scheduler-activity">{activity.length ? activity.map((event: RecordValue, index: number) => <article className="scheduler-event" key={`${event.at}-${index}`}><Badge value={event.outcome} /><div><strong>{text(event.jira_key || event.card, "Workspace")}</strong><p>{text(event.message)}</p></div><time>{when(event.at)}</time></article>) : <Empty label="No Auto Patch activity recorded yet." />}</div></Panel>
+    </div>
+    <Panel title="Patch History" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll"><table><thead><tr><th>Jira</th><th>Summary</th><th>Status</th><th>Repositories</th><th>Self-check</th><th>Finished</th><th>Log</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => <tr key={run.run_id}><td><code>{text(run.jira_key)}</code></td><td>{text(run.summary)}</td><td><Badge value={run.status} /></td><td>{(run.repositories || []).map((item: RecordValue) => item.name).filter(Boolean).join(", ") || "—"}</td><td>{(run.self_checks || []).length ? `${(run.self_checks || []).filter((item: RecordValue) => item.status === "passed").length}/${(run.self_checks || []).length}` : "—"}</td><td>{when(run.finished_at)}</td><td><button className="text-button" onClick={() => void loadLog(run.run_id)}>View log</button></td></tr>) : <tr><td colSpan={7}><Empty label="No Auto Patch history yet." /></td></tr>}</tbody></table></div></Panel>
+    {logOpen && <DeliveryLogDialog stage={{ label: "Auto Patch log", detail: "Recent Auto Patch agent output" }} content={log} error={logError} loading={!log && !logError} onClose={() => setLogOpen(false)} />}
+  </>;
+}
+
+function PatchFlow({ phases }: { phases: RecordValue[] }) {
+  return <div className="delivery-flow"><div className="flow-heading"><div><span className="flow-title">Patch Flow</span></div><p>Capture → screen → context → patch → publish</p></div><div className="flow-track-wrap"><span className="flow-track"><i style={{ width: `${phases.length ? Math.round(phases.filter((phase) => phase.status === "completed").length / phases.length * 100) : 0}%` }} /></span><ol className="flow-steps" style={{ "--flow-count": Math.max(phases.length, 1) } as React.CSSProperties}>{phases.map((phase, index) => { const status = String(phase.status || "pending").toLowerCase(); const state = status === "completed" ? "completed" : /in_progress|running/.test(status) ? "running" : /failed|blocked/.test(status) ? "failed" : "pending"; return <li className={`flow-step ${state}`} key={phase.id || index}><span className="flow-marker">{state === "completed" ? "✓" : index + 1}</span><span className="flow-copy"><strong>{text(phase.label)}</strong><span>{text(phase.detail || phase.status, "Pending")}</span></span></li>; })}</ol></div></div>;
 }
 
 function StartDeliveryDialog({ stories, value, onChange, step, busy, error, onClose, onContinue, onConfirm }: { stories: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void; step: 1 | 2; busy: boolean; error: string; onClose: () => void; onContinue: () => void; onConfirm: () => void }) {
@@ -1219,16 +1276,31 @@ const promptStageMeta: Record<string, { title: string; description: string; icon
   "02-workspace.md": { title: "Context", description: "Story, docs, and workspace inputs", icon: GitBranch },
   "03-implementation.md": { title: "Implementation", description: "Code changes and verification", icon: Code2 },
   "04-output-contract.md": { title: "Outcome", description: "PR, JIRA, and result record", icon: CircleCheck },
+  "03-jira-context.md": { title: "Jira context", description: "Primary, related, and keyword context", icon: Link2 },
+  "04-repository-scope.md": { title: "Repository scope", description: "Registered repository and worktree rules", icon: GitBranch },
+  "05-patch-implementation.md": { title: "Implementation", description: "Minimal Bug or copy change", icon: Code2 },
+  "06-self-check.md": { title: "Self-check", description: "Focused validation evidence", icon: CircleCheck },
+  "07-blocked-question.md": { title: "Blocked question", description: "One answerable human question", icon: CircleHelp },
+  "08-git-and-publish.md": { title: "Git handoff", description: "Agent output and publish boundaries", icon: GitBranch },
+  "09-output-contract.md": { title: "Output contract", description: "Structured patch result", icon: FileCode2 },
+  "10-secrets-and-safety.md": { title: "Safety", description: "Secrets and change boundaries", icon: ShieldCheck },
+  "11-console-summary.md": { title: "Summary", description: "Concise Agent handoff", icon: CircleCheck },
   "coding-guideline.md": { title: "Code standard", description: "Repository-level coding guidance", icon: FileCode2 }
 };
 
 function promptMeta(item: { path: string }) { return promptStageMeta[item.path] || { title: item.path.replace(/\.md$/, "").replace(/^\d+-/, ""), description: "Prompt fragment", icon: FileCode2 }; }
-function promptLayer(item: { path: string }, mode: "scan" | "delivery") {
+function promptLayer(item: { path: string }, mode: "scan" | "delivery" | "patch") {
   const path = item.path;
   if (mode === "delivery") {
     if (["01-role.md", "02-workspace.md", "coding-guideline.md"].includes(path)) return "Inputs & Governance";
     if (path === "03-implementation.md") return "Implementation";
     return "Delivery Outputs";
+  }
+  if (mode === "patch") {
+    if (["01-role-and-mission.md", "03-jira-context.md", "04-repository-scope.md", "10-secrets-and-safety.md"].includes(path)) return "Inputs & Governance";
+    if (["02-pipeline.md", "05-patch-implementation.md", "06-self-check.md"].includes(path)) return "Patch Execution";
+    if (["07-blocked-question.md", "08-git-and-publish.md"].includes(path)) return "Operational Controls";
+    return "Patch Outputs";
   }
   if (["01-role-and-mission.md", "03-configuration.md", "04-workspace-and-worktrees.md", "12-secrets-and-safety.md"].includes(path)) return "Inputs & Governance";
   if (["02-pipeline.md", "05-review-only-mode.md", "09-severity-guideline.md", "10-findings-and-auto-fix.md"].includes(path)) return "Review Execution";
@@ -1243,13 +1315,20 @@ type WorkflowColumn = {
   scripts: Array<{ name: string; description: string }>;
 };
 
-function workflowColumns(mode: "scan" | "delivery"): WorkflowColumn[] {
+function workflowColumns(mode: "scan" | "delivery" | "patch"): WorkflowColumn[] {
   if (mode === "delivery") return [
     { title: "Trigger", eyebrow: "ENTRY", layers: [], scripts: [{ name: "delivery_scheduler.py", description: "Find an approved, eligible story" }, { name: "prepare_delivery_run.py", description: "Create the run record" }] },
     { title: "Context", eyebrow: "GROUNDING", layers: ["Inputs & Governance"], scripts: [{ name: "capture_jira_context.py", description: "Read story, comments, and media" }, { name: "compose_delivery_prompt.py", description: "Assemble the agent context" }] },
     { title: "Implement", eyebrow: "AGENT", layers: ["Implementation"], scripts: [{ name: "run-delivery.sh", description: "Execute in isolated worktrees" }] },
     { title: "Verify & recover", eyebrow: "CONTROL", layers: [], scripts: [{ name: "run_delivery_verification.py", description: "Compile, test, and inspect" }, { name: "prepare_delivery_remediation.py", description: "Prepare a bounded retry" }] },
     { title: "Publish", eyebrow: "OUTCOME", layers: ["Delivery Outputs"], scripts: [{ name: "finalize_delivery.py", description: "Commit, PR, JIRA, and notification" }] }
+  ];
+  if (mode === "patch") return [
+    { title: "Capture", eyebrow: "ENTRY", layers: [], scripts: [{ name: "patch_scheduler.py", description: "Find one eligible Task or Bug" }] },
+    { title: "Context", eyebrow: "GROUNDING", layers: ["Inputs & Governance"], scripts: [{ name: "capture_patch_context.py", description: "Read the Jira story neighborhood" }, { name: "compose_patch_prompt.py", description: "Assemble bounded patch context" }] },
+    { title: "Patch", eyebrow: "AGENT", layers: ["Patch Execution"], scripts: [{ name: "run-patch.sh", description: "Run in an isolated patch worktree" }] },
+    { title: "Control", eyebrow: "SAFETY", layers: ["Operational Controls"], scripts: [{ name: "finalize_patch.py", description: "Self-check, commit, and publish" }] },
+    { title: "Outcome", eyebrow: "HANDOFF", layers: ["Patch Outputs"], scripts: [] }
   ];
   return [
     { title: "Trigger", eyebrow: "ENTRY", layers: [], scripts: [{ name: "run-scan.sh", description: "Start a scheduled or manual scan" }] },
@@ -1262,20 +1341,20 @@ function workflowColumns(mode: "scan" | "delivery"): WorkflowColumn[] {
 
 function PromptsView({ data, project, interact, notify }: { data: DashboardData; project: string; interact: (path: string, json: RecordValue, message: string) => Promise<void>; notify: Notify }) {
   const prompts = data.interactive?.prompts || [];
-  const [mode, setMode] = useState<"scan" | "delivery">("scan");
-  const [selected, setSelected] = useState<{ mode: "scan" | "delivery"; path: string } | null>(null);
+  const [mode, setMode] = useState<"scan" | "delivery" | "patch">("scan");
+  const [selected, setSelected] = useState<{ mode: "scan" | "delivery" | "patch"; path: string } | null>(null);
   const [content, setContent] = useState("");
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [fullscreen, setFullscreen] = useState(false);
   const pointer = useRef<{ id: number; x: number; y: number } | null>(null);
   const viewport = useRef<HTMLDivElement | null>(null);
   const modePrompts = prompts.filter((item) => item.mode === mode);
-  const choose = async (item: { mode: "scan" | "delivery"; path: string }) => {
+  const choose = async (item: { mode: "scan" | "delivery" | "patch"; path: string }) => {
     setSelected(item);
     try { const response = await request(`/api/prompt?mode=${encodeURIComponent(item.mode)}&path=${encodeURIComponent(item.path)}`, project); setContent(response.content); }
     catch (err) { notify(err instanceof Error ? err.message : "Unable to load prompt", "error"); }
   };
-  const switchMode = (next: "scan" | "delivery") => { setMode(next); setSelected(null); setContent(""); setView({ x: 0, y: 0, scale: 1 }); };
+  const switchMode = (next: "scan" | "delivery" | "patch") => { setMode(next); setSelected(null); setContent(""); setView({ x: 0, y: 0, scale: 1 }); };
   useEffect(() => {
     if (!fullscreen) return;
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setFullscreen(false); };
@@ -1305,8 +1384,8 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
   };
   const columns = workflowColumns(mode);
   return <>
-    <div className="workflow-mode-switch" role="tablist"><button className={mode === "scan" ? "active" : ""} onClick={() => switchMode("scan")}>Auto Scan</button><button className={mode === "delivery" ? "active" : ""} onClick={() => switchMode("delivery")}>Auto Delivery</button></div>
-    <Panel title={mode === "scan" ? "Auto Scan Workflow" : "Auto Delivery Workflow"} action={<IconButton label={fullscreen ? "Exit full screen" : "View full screen"} onClick={() => setFullscreen((value) => !value)}>{fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</IconButton>} className={`workflow-panel ${fullscreen ? "workflow-panel-fullscreen" : ""}`}>
+    <div className="workflow-mode-switch" role="tablist"><button className={mode === "scan" ? "active" : ""} onClick={() => switchMode("scan")}>Auto Scan</button><button className={mode === "delivery" ? "active" : ""} onClick={() => switchMode("delivery")}>Auto Delivery</button><button className={mode === "patch" ? "active" : ""} onClick={() => switchMode("patch")}>Auto Patch</button></div>
+    <Panel title={mode === "scan" ? "Auto Scan Workflow" : mode === "delivery" ? "Auto Delivery Workflow" : "Auto Patch Workflow"} action={<IconButton label={fullscreen ? "Exit full screen" : "View full screen"} onClick={() => setFullscreen((value) => !value)}>{fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</IconButton>} className={`workflow-panel ${fullscreen ? "workflow-panel-fullscreen" : ""}`}>
       <div ref={viewport} className="workflow-canvas workflow-viewport" onPointerDown={startPan} onPointerMove={movePan} onPointerUp={stopPan} onPointerCancel={stopPan}><div className="workflow-scale" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}><div className="workflow-columns">{columns.map((column, columnIndex) => {
         const columnPrompts = modePrompts.filter((item) => column.layers.includes(promptLayer(item, mode)));
         const nodes = [...column.scripts.map((script) => ({ kind: "script" as const, script })), ...columnPrompts.map((prompt) => ({ kind: "prompt" as const, prompt }))];
@@ -1319,15 +1398,15 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
           const isSelected = selected?.mode === item.mode && selected.path === item.path;
           return <button className={`workflow-node prompt-node ${isSelected ? "selected" : ""}`} onClick={() => void choose(item)} key={`${item.mode}/${item.path}`}><Icon size={14} /><span><strong>{meta.title}</strong><small>{meta.description}</small></span><em><b>{sequence}</b> PROMPT</em></button>;
         })}</div>{columnIndex < columns.length - 1 && <span className="workflow-connector" aria-hidden="true" />}</section>;
-      })}</div><div className="workflow-retry"><RotateCcw size={14} /><span><strong>{mode === "delivery" ? "Remediation retry" : "Safe-fix re-review"}</strong><small>{mode === "delivery" ? "Verification failure → prepare_delivery_remediation.py → implementation agent → verification" : "High-confidence finding → auto_fix_sync.py → focused validation → pull request"}</small></span></div></div></div>
+      })}</div><div className="workflow-retry"><RotateCcw size={14} /><span><strong>{mode === "delivery" ? "Remediation retry" : mode === "patch" ? "Blocked-question retry" : "Safe-fix re-review"}</strong><small>{mode === "delivery" ? "Verification failure → prepare_delivery_remediation.py → implementation agent → verification" : mode === "patch" ? "External Jira reply → capture context → rerun the complete patch flow" : "High-confidence finding → auto_fix_sync.py → focused validation → pull request"}</small></span></div></div></div>
     </Panel>
     {selected && <PromptInspectorDialog item={selected} content={content} onChange={setContent} onClose={() => { setSelected(null); setContent(""); }} onSave={() => void interact("/api/prompt", { mode: selected.mode, path: selected.path, content }, "Prompt saved")} />}
   </>;
 }
 
-function PromptInspectorDialog({ item, content, onChange, onClose, onSave }: { item: { mode: "scan" | "delivery"; path: string }; content: string; onChange: (value: string) => void; onClose: () => void; onSave: () => void }) {
+function PromptInspectorDialog({ item, content, onChange, onClose, onSave }: { item: { mode: "scan" | "delivery" | "patch"; path: string }; content: string; onChange: (value: string) => void; onClose: () => void; onSave: () => void }) {
   const meta = promptMeta(item);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : "Auto Delivery"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><MarkdownBody content={content} /></article></div></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={onSave}><Save size={14} />Save prompt</button></footer></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : item.mode === "delivery" ? "Auto Delivery" : "Auto Patch"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><MarkdownBody content={content} /></article></div></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={onSave}><Save size={14} />Save prompt</button></footer></section></div>;
 }
 
 function HelpTip({ children }: { children: React.ReactNode }) {
@@ -1458,34 +1537,43 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [devDoneStatus, setDevDoneStatus] = useState(String(schedules.delivery?.dev_done_status || ""));
   const [blockedStatus, setBlockedStatus] = useState(String(schedules.delivery?.blocked_status || "Block"));
   const [deliveryEnabled, setDeliveryEnabled] = useState(Boolean(schedules.delivery?.enabled));
+  const [patchInterval, setPatchInterval] = useState(String(Math.round((schedules.patch?.interval_seconds || 300) / 60)));
+  const [patchStatuses, setPatchStatuses] = useState<string[]>(Array.isArray(schedules.patch?.jira_statuses) ? schedules.patch.jira_statuses.map(String) : ["To Do"]);
+  const [patchStartStatus, setPatchStartStatus] = useState(String(schedules.patch?.in_progress_status || "In Progress"));
+  const [patchDoneStatus, setPatchDoneStatus] = useState(String(schedules.patch?.done_status || "Done"));
+  const [patchBlockedStatus, setPatchBlockedStatus] = useState(String(schedules.patch?.blocked_status || "Block"));
+  const [patchEnabled, setPatchEnabled] = useState(Boolean(schedules.patch?.enabled));
   const [scanModel, setScanModel] = useState(modelValue(workspace.models?.scan));
   const [deliveryModel, setDeliveryModel] = useState(modelValue(workspace.models?.delivery));
+  const [patchModel, setPatchModel] = useState(modelValue(workspace.models?.patch));
   const [workflowStatuses, setWorkflowStatuses] = useState<string[]>([]);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [changedSecrets, setChangedSecrets] = useState<Record<string, string>>({});
   const [scanPublishMode, setScanPublishMode] = useState(String(workspace.publish?.scan || "pr"));
   const [deliveryPublishMode, setDeliveryPublishMode] = useState(String(workspace.publish?.delivery || "pr"));
+  const [patchPublishMode, setPatchPublishMode] = useState(String(workspace.publish?.patch || "pr"));
   const [feishuEnabled, setFeishuEnabled] = useState(workspace.feishu_notifications_enabled !== false);
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
   useEffect(() => { void request("/api/delivery/status-options", project).then((response) => setWorkflowStatuses(Array.isArray(response.options) ? response.options.map(String) : [])).catch(() => setWorkflowStatuses([])); }, [project]);
-  useEffect(() => { setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setEligibleStatuses(Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean)); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setScanModel(modelValue(workspace.models?.scan)); setDeliveryModel(modelValue(workspace.models?.delivery)); setFeishuEnabled(workspace.feishu_notifications_enabled !== false); setSecrets({}); setChangedSecrets({}); setDirty(false); onDirtyChange(false); }, [project]);
-  useEffect(() => { setScanPublishMode(String(workspace.publish?.scan || "pr")); setDeliveryPublishMode(String(workspace.publish?.delivery || "pr")); }, [workspace.publish?.scan, workspace.publish?.delivery]);
+  useEffect(() => { setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setEligibleStatuses(Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean)); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setPatchInterval(String(Math.round((schedules.patch?.interval_seconds || 300) / 60))); setPatchStatuses(Array.isArray(schedules.patch?.jira_statuses) ? schedules.patch.jira_statuses.map(String) : ["To Do"]); setPatchStartStatus(String(schedules.patch?.in_progress_status || "In Progress")); setPatchDoneStatus(String(schedules.patch?.done_status || "Done")); setPatchBlockedStatus(String(schedules.patch?.blocked_status || "Block")); setPatchEnabled(Boolean(schedules.patch?.enabled)); setScanModel(modelValue(workspace.models?.scan)); setDeliveryModel(modelValue(workspace.models?.delivery)); setPatchModel(modelValue(workspace.models?.patch)); setFeishuEnabled(workspace.feishu_notifications_enabled !== false); setSecrets({}); setChangedSecrets({}); setDirty(false); onDirtyChange(false); }, [project]);
+  useEffect(() => { setScanPublishMode(String(workspace.publish?.scan || "pr")); setDeliveryPublishMode(String(workspace.publish?.delivery || "pr")); setPatchPublishMode(String(workspace.publish?.patch || "pr")); }, [workspace.publish?.scan, workspace.publish?.delivery, workspace.publish?.patch]);
   useEffect(() => { setFeishuEnabled(workspace.feishu_notifications_enabled !== false); }, [workspace.feishu_notifications_enabled]);
   useEffect(() => { const warn = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [dirty]);
   const getSecret = async (name: string) => { const response = await request(`/api/integration?key=${encodeURIComponent(name)}`, project); return String(response.value); };
   const reveal = async (name: string) => { try { const result = await getSecret(name); setSecrets((current) => ({ ...current, [name]: result })); notify("Integration value revealed", "success"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to reveal value", "error"); } };
   const copy = async (name: string) => { try { const result = await getSecret(name); await navigator.clipboard.writeText(result); notify("Integration value copied", "success"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to copy value", "error"); } };
   const configured = workspace.configured_integrations || [];
-  const statusOptions = Array.from(new Set(["To Do", "Backlog", "In Progress", ...workflowStatuses, ...eligibleStatuses, inDevStatus, devDoneStatus].filter(Boolean)));
+  const statusOptions = Array.from(new Set(["To Do", "Backlog", "In Progress", "Done", "Block", ...workflowStatuses, ...eligibleStatuses, ...patchStatuses, inDevStatus, devDoneStatus, patchStartStatus, patchDoneStatus, patchBlockedStatus].filter(Boolean)));
   const saveAll = async () => {
     try {
-      if (!scanModel.trim() || !deliveryModel.trim()) throw new Error("Choose a preset or enter a Cursor-supported model ID for both workflows.");
+      if (!scanModel.trim() || !deliveryModel.trim() || !patchModel.trim()) throw new Error("Choose a preset or enter a Cursor-supported model ID for all workflows.");
       await Promise.all([
-        request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel.trim(), delivery_model: deliveryModel.trim(), feishu_notifications_enabled: feishuEnabled } }),
+        request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel.trim(), delivery_model: deliveryModel.trim(), patch_model: patchModel.trim(), feishu_notifications_enabled: feishuEnabled } }),
         request("/api/schedule", project, { method: "POST", json: scanEnabled ? { kind: "scan", action: "save", cron: scanCron } : { kind: "scan", action: "remove" } }),
         request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_statuses: eligibleStatuses, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }),
-        request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode } }),
+        request("/api/schedule", project, { method: "POST", json: patchEnabled ? { kind: "patch", action: "save", interval_minutes: Number(patchInterval), jira_statuses: patchStatuses, issue_types: ["Task", "Bug"], in_progress_status: patchStartStatus, done_status: patchDoneStatus, blocked_status: patchBlockedStatus } : { kind: "patch", action: "remove" } }),
+        request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode, patch_mode: patchPublishMode } }),
         ...Object.entries(changedSecrets).map(([key, value]) => request("/api/integration", project, { method: "POST", json: { key, value } }))
       ]);
       setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved", "success"); await reload();
@@ -1495,9 +1583,10 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     <Panel title="Automation Schedules">
       <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Scan</h4></div></div><p>{text(schedules.scan?.description, "No recurring scan is configured.")}</p></div><div className="settings-control wide"><div className="form-grid compact scan-settings-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 0, width: "100%" }}><Field label="Lookback, days"><input type="number" min="1" max="365" value={scanWindow} onChange={(event) => { setScanWindow(event.target.value); markDirty(); }} /></Field><Field label="Five-field cron"><input value={scanCron} onChange={(event) => { setScanCron(event.target.value); markDirty(); }} /></Field></div></div><div className="settings-toggle"><ScheduleToggle enabled={scanEnabled} onChange={(enabled) => { setScanEnabled(enabled); markDirty(); }} /></div></div>
       <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Delivery</h4></div></div><p>{deliveryEnabled ? `Polling every ${deliveryInterval} minute(s).` : "Delivery polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => { setDeliveryInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA statuses" help="Select every Jira status that may start Auto Delivery. The Story must also be Business Ready, Technical Approved, and not already running."><StatusMultiSelect options={statusOptions} value={eligibleStatuses} onChange={setEligibleStatuses} markDirty={markDirty} /></Field><Field label="Move to when started"><select value={inDevStatus} onChange={(event) => { setInDevStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={devDoneStatus} onChange={(event) => { setDevDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when failed"><select value={blockedStatus} onChange={(event) => { setBlockedStatus(event.target.value); markDirty(); }}>{Array.from(new Set([...statusOptions, "Block"])).map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">Select To Do, Backlog, In Progress, or any other eligible Jira status. On failure, Lumen moves the Jira card to the selected Block status and adds a Needs attention comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={deliveryEnabled} onChange={(enabled) => { setDeliveryEnabled(enabled); markDirty(); }} /></div></div>
+      <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Patch</h4></div></div><p>{patchEnabled ? `Polling every ${patchInterval} minute(s) for Task and Bug cards.` : "Auto Patch polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={patchInterval} onChange={(event) => { setPatchInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA statuses"><StatusMultiSelect options={statusOptions} value={patchStatuses} onChange={setPatchStatuses} markDirty={markDirty} /></Field><Field label="Move to when started"><select value={patchStartStatus} onChange={(event) => { setPatchStartStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={patchDoneStatus} onChange={(event) => { setPatchDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when blocked"><select value={patchBlockedStatus} onChange={(event) => { setPatchBlockedStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">Only Task and Bug cards are captured. Blocked cards retry after a new external Jira comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={patchEnabled} onChange={(enabled) => { setPatchEnabled(enabled); markDirty(); }} /></div></div>
     </Panel>
-    <Panel title="Execution Models"><div className="settings-section"><div className="settings-copy"><h4>Cursor model</h4><p>Choose a preset or enter a custom Cursor model ID. Custom values must be supported by Cursor; Lumen does not validate model availability.</p></div><div className="settings-control wide"><div className="form-grid compact"><ModelField label="Auto Scan model" value={scanModel} onChange={setScanModel} markDirty={markDirty} /><ModelField label="Auto Delivery model" value={deliveryModel} onChange={setDeliveryModel} markDirty={markDirty} /></div></div></div></Panel>
-    <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>Direct push uses the repository credentials already configured for Git; PR and Merge use GitHub CLI.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option><option value="direct">Push directly to main branch</option></select></Field></div></div></div></Panel>
+    <Panel title="Execution Models"><div className="settings-section"><div className="settings-copy"><h4>Cursor model</h4><p>Choose a preset or enter a custom Cursor model ID. Custom values must be supported by Cursor; Lumen does not validate model availability.</p></div><div className="settings-control wide"><div className="form-grid compact"><ModelField label="Auto Scan model" value={scanModel} onChange={setScanModel} markDirty={markDirty} /><ModelField label="Auto Delivery model" value={deliveryModel} onChange={setDeliveryModel} markDirty={markDirty} /><ModelField label="Auto Patch model" value={patchModel} onChange={setPatchModel} markDirty={markDirty} /></div></div></div></Panel>
+    <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>Direct push uses the repository credentials already configured for Git; PR and Merge use GitHub CLI.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option><option value="direct">Push directly to main branch</option></select></Field><Field label="Auto Patch"><select value={patchPublishMode} onChange={(event) => { setPatchPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="direct">Push directly to main branch</option></select></Field></div></div></div></Panel>
     <Panel title="Notifications"><div className="settings-section"><div className="settings-copy"><h4>Feishu notifications</h4><p>Control whether Scan and Delivery post cards to the configured Feishu webhook. The webhook URL still lives under Variable Keys.</p></div><div className="settings-toggle"><ScheduleToggle enabled={feishuEnabled} onChange={(enabled) => { setFeishuEnabled(enabled); markDirty(); }} /></div></div></Panel>
     <Panel title="Variable Keys" action={<span className="muted">Stored only in this workspace</span>}><div className="settings-section"><div className="settings-copy"><h4>Available keys</h4><p>Reveal a value to inspect it, or enter a replacement directly. Values are saved without display quotes.</p></div><div className="settings-control wide"><div className="secret-list">{configured.length ? configured.map((name: string) => { const value = changedSecrets[name] ?? secrets[name] ?? ""; return <div className="secret-row" key={name}><code>{name}</code><input type={secrets[name] || changedSecrets[name] !== undefined ? "text" : "password"} value={value} placeholder="Reveal or enter a replacement value" aria-label={`Value for ${name}`} onChange={(event) => { const next = event.target.value; setChangedSecrets((current) => ({ ...current, [name]: next })); markDirty(); }} /><div><IconButton label="Reveal value" onClick={() => void reveal(name)}>{secrets[name] ? <EyeOff size={15} /> : <Eye size={15} />}</IconButton><IconButton label="Copy value" onClick={() => void copy(name)}><Copy size={15} /></IconButton></div></div>; }) : <Empty label="No local integration keys configured." />}</div></div></div></Panel>
     <footer className="settings-save-bar"><span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "You have unsaved changes" : "All changes saved"}</span><button className="button primary" disabled={!dirty} onClick={() => void saveAll()}><Save size={15} />Save changes</button></footer>

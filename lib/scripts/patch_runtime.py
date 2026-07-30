@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""Auto Patch configuration, Jira candidates, worktrees, and bounded state."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import shutil
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from delivery_workspace import (
+    discover_git_repos,
+    load_workspace_config,
+    read_json,
+    repos_container_dir,
+    resolve_repo_default_branch,
+    workspace_lumen_dir,
+    write_json,
+)
+from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, site_args, twg_ready
+
+
+DEFAULT_PATCH_STATUSES = ("To Do",)
+DEFAULT_PATCH_TYPES = ("Task", "Bug")
+PATCH_PHASES = (
+    ("capture", "Capture"),
+    ("screen", "Initial screening"),
+    ("context", "Jira context"),
+    ("repository", "Repository mapping"),
+    ("agent", "Patch agent"),
+    ("self_check", "Self-check"),
+    ("publish", "Publish"),
+    ("jira_notify", "Jira & Feishu"),
+)
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def patch_dir(workspace: Path) -> Path:
+    return workspace_lumen_dir(workspace) / "patch"
+
+
+def results_dir(workspace: Path) -> Path:
+    return workspace_lumen_dir(workspace) / "results"
+
+
+def logs_dir(workspace: Path) -> Path:
+    return workspace_lumen_dir(workspace) / "logs" / "patch"
+
+
+def history_dir(workspace: Path) -> Path:
+    return workspace_lumen_dir(workspace) / "history" / "patch"
+
+
+def progress_path(workspace: Path) -> Path:
+    return results_dir(workspace) / "patch-progress.json"
+
+
+def result_path(workspace: Path) -> Path:
+    return results_dir(workspace) / "patch-result.json"
+
+
+def registry_path(workspace: Path) -> Path:
+    return workspace_lumen_dir(workspace) / "state" / "patch-registry.json"
+
+
+def load_delivery_config(workspace: Path) -> dict[str, Any]:
+    return read_json(workspace_lumen_dir(workspace) / "config" / "delivery.json", {})
+
+
+def patch_config(workspace: Path) -> dict[str, Any]:
+    config = load_delivery_config(workspace).get("automation", {})
+    patch = config.get("scheduled_auto_patch", {}) if isinstance(config, dict) else {}
+    return patch if isinstance(patch, dict) else {}
+
+
+def jira_config(workspace: Path) -> dict[str, Any]:
+    config = load_delivery_config(workspace).get("jira", {})
+    if isinstance(config, dict) and config:
+        return config
+    common = read_json(workspace / "config" / "common.json", {})
+    config = (common.get("notifications", {}) or {}).get("jira", {})
+    return config if isinstance(config, dict) else {}
+
+
+def publish_mode(workspace: Path) -> str:
+    publish = load_delivery_config(workspace).get("publish", {})
+    patch = publish.get("auto_patch", {}) if isinstance(publish, dict) else {}
+    mode = str(patch.get("mode", "pr") if isinstance(patch, dict) else "pr").strip().lower()
+    return mode if mode in {"pr", "direct"} else "pr"
+
+
+def normalize_values(value: Any, fallback: tuple[str, ...]) -> list[str]:
+    values = value if isinstance(value, (list, tuple, set)) else [value]
+    result: list[str] = []
+    for item in values:
+        for part in str(item or "").split(","):
+            item_value = part.strip()
+            if item_value and item_value.casefold() not in {entry.casefold() for entry in result}:
+                result.append(item_value)
+    return result or list(fallback)
+
+
+def eligible_statuses(workspace: Path) -> list[str]:
+    return normalize_values(patch_config(workspace).get("eligible_jira_statuses"), DEFAULT_PATCH_STATUSES)
+
+
+def issue_types(workspace: Path) -> list[str]:
+    return normalize_values(patch_config(workspace).get("issue_types"), DEFAULT_PATCH_TYPES)
+
+
+def quote_jql_values(values: list[str]) -> str:
+    return ", ".join('"' + value.replace('"', '\\"') + '"' for value in values)
+
+
+def candidate_jql(workspace: Path, include_blocked: bool = False) -> str:
+    statuses = eligible_statuses(workspace)
+    if include_blocked:
+        blocked = str(patch_config(workspace).get("blocked_status", "Block")).strip() or "Block"
+        statuses = [*statuses, blocked]
+    return f"project = {jira_config(workspace).get('project_key', '')} AND issuetype in ({quote_jql_values(issue_types(workspace))}) AND status in ({quote_jql_values(statuses)}) ORDER BY priority DESC, updated ASC"
+
+
+def unwrap_jira(payload: Any) -> Any:
+    if isinstance(payload, dict) and "data" in payload:
+        payload = payload["data"]
+    if isinstance(payload, dict) and isinstance(payload.get("issues"), list):
+        return payload["issues"]
+    return payload
+
+
+def jira_key(item: dict[str, Any]) -> str:
+    return str(item.get("key") or item.get("id") or "").strip().upper()
+
+
+def jira_fields(item: dict[str, Any]) -> dict[str, Any]:
+    fields = item.get("fields")
+    return fields if isinstance(fields, dict) else item
+
+
+def jira_summary(item: dict[str, Any]) -> str:
+    fields = jira_fields(item)
+    return str(fields.get("summary") or item.get("summary") or "").strip()
+
+
+def jira_status(item: dict[str, Any]) -> str:
+    status = jira_fields(item).get("status")
+    return str(status.get("name") if isinstance(status, dict) else status or "").strip()
+
+
+def jira_updated(item: dict[str, Any]) -> str:
+    return str(jira_fields(item).get("updated") or item.get("updated") or "").strip()
+
+
+def query_candidates(workspace: Path, include_blocked: bool = False) -> list[dict[str, Any]]:
+    config = jira_config(workspace)
+    if not config.get("project_key"):
+        raise RuntimeError("Jira project_key is not configured")
+    ready, reason = twg_ready()
+    if not ready:
+        raise RuntimeError(reason)
+    refreshed, reason = refresh_twg_auth(force=True)
+    if not refreshed:
+        raise RuntimeError(reason)
+    code, output = run_twg(["jira", "workitem", "query", "--jql", candidate_jql(workspace, include_blocked), "--limit", "50", "-o", "json", *site_args(config)])
+    if code != 0:
+        raise RuntimeError((output or "Jira candidate query failed").strip()[-1000:])
+    payload = unwrap_jira(parse_twg_json(output) or [])
+    return [item for item in payload if isinstance(item, dict) and jira_key(item)] if isinstance(payload, list) else []
+
+
+def get_workitem(workspace: Path, key: str) -> dict[str, Any]:
+    ready, reason = twg_ready()
+    if not ready:
+        raise RuntimeError(reason)
+    code, output = run_twg(["jira", "workitem", "get", key, "-o", "json", *site_args(jira_config(workspace))])
+    if code != 0:
+        raise RuntimeError((output or f"Unable to read Jira {key}").strip()[-1000:])
+    payload = unwrap_jira(parse_twg_json(output) or {})
+    if isinstance(payload, list):
+        payload = next((item for item in payload if isinstance(item, dict)), {})
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_registry(workspace: Path) -> dict[str, Any]:
+    payload = read_json(registry_path(workspace), {})
+    payload.setdefault("issues", {})
+    return payload
+
+
+def save_registry(workspace: Path, payload: dict[str, Any]) -> None:
+    write_json(registry_path(workspace), payload)
+
+
+def comment_fingerprint(comment: Any) -> str:
+    return hashlib.sha256(json.dumps(comment, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def comments(item: dict[str, Any]) -> list[Any]:
+    fields = jira_fields(item)
+    raw = fields.get("comment") or fields.get("comments") or item.get("comments") or item.get("comment")
+    if isinstance(raw, dict):
+        raw = raw.get("comments") or raw.get("content") or []
+    return raw if isinstance(raw, list) else []
+
+
+def has_external_reply(item: dict[str, Any], record: dict[str, Any]) -> bool:
+    question_at = str(record.get("blocked_at") or "")
+    question_hash = str(record.get("question_hash") or "")
+    for comment in comments(item):
+        if not isinstance(comment, dict):
+            continue
+        body = json.dumps(comment, ensure_ascii=False)
+        if "Lumen Auto Patch" in body:
+            continue
+        created = str(comment.get("created") or comment.get("createdAt") or "")
+        fingerprint = comment_fingerprint(comment)
+        if fingerprint == question_hash:
+            continue
+        if question_at and created and created <= question_at:
+            continue
+        return True
+    return False
+
+
+def repo_registry(workspace: Path) -> list[dict[str, Any]]:
+    config_path = workspace_lumen_dir(workspace) / "config" / "repos.json"
+    payload = read_json(config_path, {"repositories": []})
+    entries = payload.get("repositories") if isinstance(payload.get("repositories"), list) else []
+    result = []
+    for item in entries:
+        if not isinstance(item, dict) or not str(item.get("name", "")).strip():
+            continue
+        path = Path(str(item.get("path", ""))).expanduser()
+        if not path.is_absolute():
+            path = workspace / path
+        if path.is_dir():
+            result.append({**item, "path": str(path.resolve())})
+    if result:
+        return result
+    workspace_config = load_workspace_config(workspace)[1]
+    discovered = discover_git_repos(workspace, workspace_config)
+    container = repos_container_dir(workspace, workspace_config)
+    return [{"name": name, "path": str(path), "default_branch": resolve_repo_default_branch(name, path, workspace)} for name, path in discovered.items() if path.is_relative_to(container) or path.parent == workspace]
+
+
+def slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")[:60] or "patch"
+
+
+def patch_branch(key: str, summary: str) -> str:
+    return f"patch/{key}-{slugify(summary)}"
+
+
+def patch_worktree_path(workspace: Path, key: str, repo_name: str) -> Path:
+    return patch_dir(workspace) / key / repo_name
+
+
+def prepare_worktree(workspace: Path, key: str, summary: str, repo: dict[str, Any]) -> dict[str, Any]:
+    source = Path(str(repo.get("path"))).expanduser().resolve()
+    name = str(repo.get("name")).strip()
+    base = str(repo.get("default_branch") or "").strip()
+    if not base:
+        base = resolve_repo_default_branch(name, source, workspace)
+    destination = patch_worktree_path(workspace, key, name).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        status = subprocess.run(["git", "-C", str(destination), "status", "--porcelain"], capture_output=True, text=True, check=False)
+        if status.returncode != 0 or status.stdout.strip():
+            raise RuntimeError(f"Patch worktree is unavailable or dirty: {destination}")
+        return {"name": name, "source_path": str(source), "worktree_path": str(destination), "branch": patch_branch(key, summary), "default_branch": base}
+    fetch = subprocess.run(["git", "-C", str(source), "fetch", "origin", base], capture_output=True, text=True, check=False)
+    if fetch.returncode != 0:
+        raise RuntimeError((fetch.stderr or fetch.stdout or f"Unable to fetch origin/{base}").strip())
+    branch = patch_branch(key, summary)
+    created = subprocess.run(["git", "-C", str(source), "worktree", "add", "-B", branch, str(destination), f"origin/{base}"], capture_output=True, text=True, check=False)
+    if created.returncode != 0:
+        raise RuntimeError((created.stderr or created.stdout or "Unable to create patch worktree").strip())
+    return {"name": name, "source_path": str(source), "worktree_path": str(destination), "branch": branch, "default_branch": base}
+
+
+def remove_worktrees(repositories: list[dict[str, Any]]) -> None:
+    for repo in repositories:
+        source = str(repo.get("source_path") or "")
+        worktree = str(repo.get("worktree_path") or "")
+        if source and worktree:
+            subprocess.run(["git", "-C", source, "worktree", "remove", "--force", worktree], capture_output=True, text=True, check=False)
+    for repo in repositories:
+        path = Path(str(repo.get("worktree_path") or ""))
+        if path.parent.is_dir() and not any(path.parent.iterdir()):
+            shutil.rmtree(path.parent, ignore_errors=True)
+
+
+def empty_progress() -> dict[str, Any]:
+    return {"schema_version": "1.0", "run_id": "", "patch_status": "not_started", "current_phase": "", "current_step": "", "jira_key": "", "jira_summary": "", "jira_type": "", "jira_status": "", "branch": "", "repositories": [], "started_at": "", "updated_at": "", "finished_at": "", "phases": [], "self_checks": [], "question": "", "failures": [], "jira": {}, "feishu": {}, "messages": []}
+
+
+def new_progress(run_id: str, item: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    fields = jira_fields(item)
+    payload = empty_progress()
+    payload.update({"run_id": run_id, "patch_status": "in_progress", "jira_key": jira_key(item), "jira_summary": jira_summary(item), "jira_type": str(fields.get("issuetype", {}).get("name") if isinstance(fields.get("issuetype"), dict) else fields.get("issuetype") or ""), "jira_status": jira_status(item), "started_at": utc_now(), "updated_at": utc_now()})
+    payload["phases"] = [{"id": phase_id, "label": label, "status": "pending", "started_at": "", "finished_at": "", "detail": ""} for phase_id, label in PATCH_PHASES]
+    return payload
+
+
+def save_progress(workspace: Path, payload: dict[str, Any]) -> None:
+    payload["updated_at"] = utc_now()
+    write_json(progress_path(workspace), payload)
+
+
+def set_phase(workspace: Path, payload: dict[str, Any], phase_id: str, status: str, detail: str = "") -> None:
+    now = utc_now()
+    for phase in payload.get("phases", []):
+        if phase.get("id") != phase_id:
+            continue
+        phase["status"] = status
+        phase["detail"] = detail or phase.get("detail", "")
+        if status == "in_progress":
+            phase["started_at"] = phase.get("started_at") or now
+        elif status in {"completed", "failed", "blocked", "skipped"}:
+            phase["started_at"] = phase.get("started_at") or now
+            phase["finished_at"] = now
+        break
+    payload["current_phase"] = phase_id
+    payload["current_step"] = detail
+    if status == "in_progress":
+        payload["patch_status"] = "in_progress"
+    elif status in {"failed", "blocked"}:
+        payload["patch_status"] = status
+    save_progress(workspace, payload)

@@ -351,6 +351,10 @@ Usage:
   lumen schedule delivery add --project <slug> --every 5m
                                  Poll approved Stories and start deliveries for eligible JIRA statuses
                                  Aliases: lumen scan schedule ..., lumen delivery schedule ...
+  lumen patch run --project <slug> [--dry-run]
+                                 Capture one eligible Jira Task/Bug and run Auto Patch
+  lumen patch schedule add --project <slug> --every 5m
+                                 Poll eligible Jira cards for Auto Patch
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
                                  List tracked findings from the issue registry
@@ -550,6 +554,23 @@ sync_delivery_prompt_snippets() {
   fi
 }
 
+sync_patch_prompt_snippets() {
+  local workspace="$1"
+  local src_dir="${LUMEN_TEMPLATES_DIR}/prompts/patch"
+  local dest_dir="${workspace}/prompts/patch"
+  [[ -d "${src_dir}" ]] || return 0
+  mkdir -p "${dest_dir}"
+  local source relative destination
+  while IFS= read -r source; do
+    relative="${source#${src_dir}/}"
+    destination="${dest_dir}/${relative}"
+    if [[ ! -e "${destination}" ]]; then
+      mkdir -p "$(dirname "${destination}")"
+      cp "${source}" "${destination}"
+    fi
+  done < <(find "${src_dir}" -type f)
+}
+
 migrate_legacy_scan_prompts() {
   local workspace="$1" backup_dir="$2"
   local legacy_dir="${workspace}/config/prompts"
@@ -643,6 +664,7 @@ sync_workspace_templates() {
   migrate_legacy_scan_prompts "${workspace}" "${backup_dir}"
   sync_prompt_snippets "${workspace}"
   sync_delivery_prompt_snippets "${workspace}"
+  sync_patch_prompt_snippets "${workspace}"
 
   local project_name=""
   if [[ -f "${docs_root}/README.md" ]]; then
@@ -1816,6 +1838,7 @@ cmd_init() {
   cp "${LUMEN_TEMPLATES_DIR}/config/runtime-profiles.json" "${lumen_dir}/config/runtime-profiles.json"
   sync_prompt_snippets "${lumen_dir}"
   sync_delivery_prompt_snippets "${lumen_dir}"
+  sync_patch_prompt_snippets "${lumen_dir}"
   cp "${LUMEN_TEMPLATES_DIR}/config/feishu-card-template.json" "${lumen_dir}/config/feishu-card-template.json"
   cp "${LUMEN_TEMPLATES_DIR}/.env.common.example" "${lumen_dir}/.env.common.example"
   cp "${LUMEN_TEMPLATES_DIR}/.env.local.example" "${lumen_dir}/.env.local.example"
@@ -3275,6 +3298,95 @@ cmd_delivery_watch() {
   fi
 }
 
+cmd_patch_run() {
+  local slug="" dry_run="0" jira_key=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project|-p) slug="${2:-}"; shift 2 ;;
+      --jira-key) jira_key="${2:-}"; shift 2 ;;
+      --dry-run) dry_run="1"; shift ;;
+      --*) err "Unknown option: $1"; exit 1 ;;
+      *) err "Unexpected argument: $1"; exit 1 ;;
+    esac
+  done
+  [[ -n "${slug}" ]] || { err "Usage: lumen patch run --project <slug> [--jira-key <KEY>] [--dry-run]"; exit 1; }
+  local workspace
+  workspace="$(registry_cmd resolve-slug "${slug}" --workspace-only)" || { err "Project not found: ${slug}."; exit 1; }
+  require_workspace_initialized "${workspace}"
+  local workspace_root="$(dirname "${workspace}")"
+  local runner="${LUMEN_HOME}/lib/scripts/run-patch.sh"
+  [[ -f "${runner}" ]] || { err "Auto Patch runner not found: ${runner}"; exit 1; }
+  local args=("${workspace}")
+  [[ -n "${jira_key}" ]] && args+=(--jira-key "${jira_key}")
+  [[ "${dry_run}" == "1" ]] && args+=(--dry-run)
+  bash "${runner}" "${workspace_root}" "${args[@]:1}"
+}
+
+cmd_patch_schedule() {
+  local action="${1:-}"; shift || true
+  local slug="" every=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --project|-p) slug="${2:-}"; shift 2 ;;
+      --every) every="${2:-}"; shift 2 ;;
+      --*) err "Unknown option: $1"; exit 1 ;;
+      *) err "Unexpected argument: $1"; exit 1 ;;
+    esac
+  done
+  [[ -n "${slug}" ]] || { err "Usage: lumen patch schedule ${action:-add} --project <slug> --every 5m"; exit 1; }
+  local workspace
+  workspace="$(registry_cmd resolve-slug "${slug}" --workspace-only)" || { err "Project not found: ${slug}."; exit 1; }
+  require_workspace_initialized "${workspace}"
+  local scheduler_py="${LUMEN_HOME}/lib/scripts/patch_launchd.py" config_path="${workspace}/config/delivery.json"
+  [[ -f "${scheduler_py}" ]] || { err "Auto Patch scheduler helper not found: ${scheduler_py}"; exit 1; }
+  case "${action}" in
+    add)
+      [[ "${every}" =~ ^[1-9][0-9]*m$ ]] || { err "--every must look like 5m"; exit 1; }
+      local minutes="${every%m}" log_file="${workspace}/logs/patch-schedule.log" lumen_bin
+      lumen_bin="$(command -v lumen || true)"
+      [[ -n "${lumen_bin}" ]] || lumen_bin="${BASH_SOURCE[0]}"
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        python3 "${scheduler_py}" add --project "${slug}" --cron "*/${minutes} * * * *" --lumen-bin "${lumen_bin}" --lumen-home "${LUMEN_HOME}" --path "${PATH}" --log-file "${log_file}"
+      else
+        command -v crontab >/dev/null 2>&1 || { err "crontab is required on non-macOS systems."; exit 1; }
+        local marker="# lumen-patch-schedule:${slug}" existing filtered
+        existing="$(crontab -l 2>/dev/null || true)"
+        filtered="$(printf '%s\n' "${existing}" | grep -vF "${marker}" || true)"
+        printf '%s\n%s %q patch run --project %q >> %q 2>&1 %s\n' "${filtered}" "*/${minutes} * * * *" "${lumen_bin}" "${slug}" "${log_file}" "${marker}" | crontab -
+      fi
+      python3 "${LUMEN_HOME}/lib/scripts/patch_config.py" "${config_path}" --enabled true --interval "${minutes}"
+      ok "Scheduled Auto Patch for '${slug}' every ${minutes} minute(s)."
+      ;;
+    remove)
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        python3 "${scheduler_py}" remove --project "${slug}"
+      else
+        local marker="# lumen-patch-schedule:${slug}" existing
+        existing="$(crontab -l 2>/dev/null || true)"
+        printf '%s\n' "${existing}" | grep -vF "${marker}" | crontab - || true
+      fi
+      python3 "${LUMEN_HOME}/lib/scripts/patch_config.py" "${config_path}" --enabled false
+      ok "Auto Patch schedule removed for '${slug}'."
+      ;;
+    status)
+      if [[ "$(uname -s)" == "Darwin" ]]; then python3 "${scheduler_py}" status --project "${slug}"; else printf '{"enabled":false}\n'; fi
+      ;;
+    *) err "Usage: lumen patch schedule add|remove|status --project <slug> [--every 5m]"; exit 1 ;;
+  esac
+}
+
+cmd_patch() {
+  local sub="${1:-}"; shift || true
+  case "${sub}" in
+    run) cmd_patch_run "$@" ;;
+    schedule) cmd_patch_schedule "$@" ;;
+    ""|help|-h|--help)
+      printf 'Usage:\n  lumen patch run --project <slug> [--jira-key <KEY>] [--dry-run]\n  lumen patch schedule add --project <slug> --every 5m\n  lumen patch schedule remove --project <slug>\n  lumen patch schedule status --project <slug>\n'
+      ;;
+    *) err "Unknown patch command: ${sub}"; exit 1 ;;
+  esac
+}
+
 cmd_delivery() {
   local sub="${1:-}"
   shift || true
@@ -3423,6 +3535,7 @@ main() {
     schedule) cmd_schedule "$@" ;;
     set-up-docs|setup-docs) cmd_legacy_workspace_init "$@" ;;
     delivery) cmd_delivery "$@" ;;
+    patch) cmd_patch "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
     watch) cmd_watch "$@" ;;
     doctor) cmd_doctor "$@" ;;

@@ -13,6 +13,7 @@ from pathlib import Path
 from delivery_progress import docker_available
 from delivery_workspace import load_story_context, read_json, workspace_lumen_dir
 from jira_sync import refresh_twg_auth
+from run_delivery_verification import colima_environment, verification_steps
 from workspace_config import read_cursor_api_key
 
 
@@ -35,6 +36,18 @@ def cursor_auth_error(*, scheduled: bool, api_key: str, env_local: Path) -> str:
             f"Add it to {env_local} (Cursor Settings > API Keys)."
         )
     return check(["agent", "status"], "Cursor authentication")
+
+
+def requires_docker_verification(config: dict, repos: list) -> bool:
+    verification = config.get("verification") if isinstance(config.get("verification"), dict) else {}
+    docker = verification.get("docker") if isinstance(verification.get("docker"), dict) else {}
+    required_for = set(docker.get("required_for") or [])
+    return any(
+        bool(step.get("requires_docker")) or str(step.get("id")) in required_for
+        for repo in repos
+        for step in verification_steps(config, repo.path)
+        if isinstance(step, dict)
+    )
 
 
 def main() -> int:
@@ -77,13 +90,12 @@ def main() -> int:
                 errors.append(error)
 
         verification = config.get("verification") if isinstance(config.get("verification"), dict) else {}
-        steps = verification.get("steps") if isinstance(verification.get("steps"), dict) else {}
-        docker_required = any(
-            isinstance(step, dict) and (step.get("requires_docker") is True or str(step.get("id")) in set(verification.get("docker", {}).get("required_for", [])))
-            for repo_steps in steps.values() if isinstance(repo_steps, list) for step in repo_steps
-        )
+        docker_required = requires_docker_verification(config, context.repos)
         if docker_required and bool((verification.get("docker") or {}).get("check_before_run", True)):
             available, reason = docker_available()
+            if available and shutil.which("colima"):
+                colima_env, reason = colima_environment()
+                available = bool(colima_env)
             if not available and not bool((verification.get("docker") or {}).get("skip_if_unavailable")):
                 errors.append(f"Docker/Colima connectivity: {reason}")
 

@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "description": "Auto Patch prompt catalog.",
+  "inline": ["01-role-and-mission.md"],
+  "catalog": [
+    {"file": "02-pipeline.md", "title": "Pipeline", "description": "Capture, screen, patch, self-check, and handoff.", "when": "always"},
+    {"file": "03-jira-context.md", "title": "Jira context", "description": "Primary and related Jira context and TWG rules.", "when": "always"},
+    {"file": "04-repository-scope.md", "title": "Repository scope", "description": "Repository mapping and worktree boundaries.", "when": "always"},
+    {"file": "05-patch-implementation.md", "title": "Implementation", "description": "Minimal Bug and copy changes.", "when": "always"},
+    {"file": "06-self-check.md", "title": "Self-check", "description": "Focused checks and honest evidence.", "when": "always"},
+    {"file": "07-blocked-question.md", "title": "Blocked question", "description": "How to stop safely and ask one answerable question.", "when": "required"},
+    {"file": "08-git-and-publish.md", "title": "Git and publish", "description": "Agent handoff boundaries for commit, PR, and direct push.", "when": "always"},
+    {"file": "09-output-contract.md", "title": "Output", "description": "patch-result.json contract.", "when": "required"},
+    {"file": "10-secrets-and-safety.md", "title": "Safety", "description": "Secrets and data handling.", "when": "always"},
+    {"file": "11-console-summary.md", "title": "Summary", "description": "Short final Agent summary.", "when": "always"}
+  ]
+}

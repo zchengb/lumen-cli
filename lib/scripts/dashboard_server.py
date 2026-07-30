@@ -25,6 +25,9 @@ from urllib.parse import parse_qs, unquote, urlparse
 from delivery_launchd import install as install_delivery_schedule
 from delivery_launchd import remove as remove_delivery_schedule
 from delivery_launchd import status as delivery_schedule_status
+from patch_launchd import install as install_patch_schedule
+from patch_launchd import remove as remove_patch_schedule
+from patch_launchd import status as patch_schedule_status
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees
 from delivery_workspace import find_story_dir, load_story_context, read_json as read_delivery_json, workspace_lumen_dir
 from jira_delivery_sync import add_delivery_comment, jira_delivery_config, should_sync_jira, transition_issue
@@ -38,6 +41,7 @@ from discover_repos import default_branch, infer_profile
 from delivery_scheduler import DEFAULT_ELIGIBLE_JIRA_STATUSES, eligible_jira_statuses, normalize_statuses
 from sync_delivery_docs import commit_dirty_config, commit_paths, commit_story_metadata, lumen_commit_subject
 from git_sync import force_push_conflict, read_conflict
+from patch_runtime import patch_config, publish_mode as patch_publish_mode
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -91,7 +95,7 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def prompt_files(workspace: Path) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
-    for mode in ("scan", "delivery"):
+    for mode in ("scan", "delivery", "patch"):
         root = workspace / "prompts" / mode
         if not root.is_dir():
             continue
@@ -101,7 +105,7 @@ def prompt_files(workspace: Path) -> list[dict[str, str]]:
 
 
 def safe_prompt_path(workspace: Path, mode: str, relative: str) -> Path:
-    if mode not in {"scan", "delivery"}:
+    if mode not in {"scan", "delivery", "patch"}:
         raise ValueError("Unknown prompt mode")
     root = (workspace / "prompts" / mode).resolve()
     path = (root / relative).resolve()
@@ -130,6 +134,7 @@ def schedule_payload(workspace: Path, project: str) -> dict[str, Any]:
     delivery_config = load_json(workspace / "config" / "delivery.json", {})
     automation = delivery_config.get("automation") if isinstance(delivery_config.get("automation"), dict) else {}
     scheduled = automation.get("scheduled_delivery") if isinstance(automation.get("scheduled_delivery"), dict) else {}
+    scheduled_patch = automation.get("scheduled_auto_patch") if isinstance(automation.get("scheduled_auto_patch"), dict) else {}
     jira = delivery_config.get("jira") if isinstance(delivery_config.get("jira"), dict) else {}
     if delivery_raw is None:
         delivery_raw = {"enabled": False}
@@ -142,9 +147,18 @@ def schedule_payload(workspace: Path, project: str) -> dict[str, Any]:
     delivery_raw["in_dev_status"] = jira.get("in_dev_status", "")
     delivery_raw["dev_done_status"] = jira.get("dev_done_status", "")
     delivery_raw["blocked_status"] = jira.get("blocked_status", "Block")
+    patch_raw = capture_schedule_status(patch_schedule_status, project) or {"enabled": False}
+    patch_raw["enabled"] = bool(patch_raw.get("enabled")) and bool(scheduled_patch.get("enabled", True))
+    patch_raw["interval_seconds"] = int(patch_raw.get("interval_seconds") or int(scheduled_patch.get("poll_interval_minutes", 5)) * 60)
+    patch_raw["jira_statuses"] = normalize_statuses(scheduled_patch.get("eligible_jira_statuses"), ("To Do",))
+    patch_raw["issue_types"] = normalize_statuses(scheduled_patch.get("issue_types"), ("Task", "Bug"))
+    patch_raw["in_progress_status"] = scheduled_patch.get("in_progress_status", "In Progress")
+    patch_raw["done_status"] = scheduled_patch.get("done_status", "Done")
+    patch_raw["blocked_status"] = scheduled_patch.get("blocked_status", "Block")
     return {
         "scan": scan_raw,
         "delivery": delivery_raw,
+        "patch": patch_raw,
         "platform": "launchd" if sys.platform == "darwin" else "unsupported",
     }
 
@@ -251,10 +265,12 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         "publish": {
             "scan": str(((common.get("auto_fix") or {}).get("publish_mode") or "pr")),
             "delivery": str(((delivery_config.get("publish") or {}).get("mode") or "pr")),
+            "patch": patch_publish_mode(workspace),
         },
         "models": {
             "scan": str((common.get("execution") or {}).get("model") or "cursor-grok-4.5-medium").strip(),
             "delivery": str((delivery_config.get("execution") or {}).get("model") or "cursor-grok-4.5-medium").strip(),
+            "patch": str((delivery_config.get("execution") or {}).get("patch_model") or (delivery_config.get("execution") or {}).get("model") or "cursor-grok-4.5-medium").strip(),
         },
         "feishu_notifications_enabled": feishu_notifications_enabled(workspace),
         "git_sync_conflict": git_conflict,
@@ -413,9 +429,9 @@ def save_delivery_steps(workspace: Path, repository: str, commands: object) -> d
     return workspace_payload(workspace)
 
 
-def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object) -> dict[str, Any]:
+def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object, patch_mode: object = "pr") -> dict[str, Any]:
     modes = {"pr", "merge", "direct"}
-    if scan_mode not in modes or delivery_mode not in modes:
+    if scan_mode not in modes or delivery_mode not in modes or patch_mode not in {"pr", "direct"}:
         raise ValueError("Publish mode must be PR, Merge, or Direct push")
     common_path = workspace / "config" / "common.json"
     common = load_json(common_path, {})
@@ -424,6 +440,7 @@ def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: objec
     delivery_path = workspace / "config" / "delivery.json"
     delivery = load_json(delivery_path, {})
     delivery.setdefault("publish", {})["mode"] = delivery_mode
+    delivery.setdefault("publish", {}).setdefault("auto_patch", {})["mode"] = patch_mode
     write_json(delivery_path, delivery)
     auto_commit_delivery_config(workspace)
     return workspace_payload(workspace)
@@ -622,6 +639,76 @@ def delivery_stages(phases: object) -> list[dict[str, Any]]:
             "detail": detail,
         })
     return stages
+
+
+def patch_stages(phases: object) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for phase in phases if isinstance(phases, list) else []:
+        if not isinstance(phase, dict):
+            continue
+        result.append({
+            "id": phase.get("id", ""),
+            "label": phase.get("label", phase.get("id", "")),
+            "status": phase.get("status", "pending"),
+            "started_at": phase.get("started_at", ""),
+            "finished_at": phase.get("finished_at", ""),
+            "detail": phase.get("detail", ""),
+        })
+    return result
+
+
+def patch_payload(workspace: Path) -> dict[str, Any]:
+    history_root = workspace / "history" / "patch"
+    runs: list[dict[str, Any]] = []
+    if history_root.is_dir():
+        for source in sorted(history_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)[:20]:
+            item = read_delivery_json(source, {})
+            patch = item.get("patch") if isinstance(item.get("patch"), dict) else item
+            progress = item.get("progress") if isinstance(item.get("progress"), dict) else {}
+            runs.append({
+                "run_id": item.get("run_id") or source.stem,
+                "status": patch.get("patch_status") or progress.get("patch_status") or "unknown",
+                "jira_key": patch.get("jira_key") or progress.get("jira_key") or "",
+                "summary": patch.get("summary") or progress.get("jira_summary") or "",
+                "jira_type": progress.get("jira_type") or "",
+                "jira_status": progress.get("jira_status") or "",
+                "branch": progress.get("branch") or "",
+                "repositories": patch.get("repos_touched") or progress.get("repositories") or [],
+                "self_checks": patch.get("self_checks") or progress.get("self_checks") or [],
+                "pr_urls": patch.get("pr_urls") or [],
+                "commits": patch.get("commits") or [],
+                "question": patch.get("question") or progress.get("question") or "",
+                "started_at": progress.get("started_at") or patch.get("started_at") or "",
+                "finished_at": patch.get("finished_at") or progress.get("finished_at") or "",
+                "log_file": progress.get("log_file") or "",
+            })
+    progress = read_delivery_json(workspace / "results" / "patch-progress.json", {})
+    result = read_delivery_json(workspace / "results" / "patch-result.json", {})
+    if progress.get("run_id") and (not result or result.get("jira_key") == progress.get("jira_key")):
+        current = {**progress, **result}
+    else:
+        current = progress or result
+    current = dict(current)
+    current["stages"] = patch_stages(current.get("phases"))
+    lock = workspace / "locks" / "patch-run"
+    current["active"] = lock.exists()
+    activity_path = workspace / "state" / "patch-scheduler-activity.jsonl"
+    activity: list[dict[str, Any]] = []
+    if activity_path.is_file():
+        for line in activity_path.read_text(encoding="utf-8", errors="replace").splitlines()[-10:]:
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                activity.append(value)
+    return {
+        "current": current,
+        "runs": runs,
+        "scheduler_activity": list(reversed(activity)),
+        "scheduler_log_available": (workspace / "logs" / "patch-schedule.log").is_file(),
+        "config": read_delivery_json(workspace / "config" / "delivery.json", {}),
+    }
 
 
 def delivery_payload(workspace: Path) -> dict[str, Any]:
@@ -1002,6 +1089,7 @@ class DashboardServer(ThreadingHTTPServer):
             "workspace": workspace_payload(workspace),
         }
         data["delivery"] = delivery_payload(workspace)
+        data["patch"] = patch_payload(workspace)
         return data
 
     def delivery_log(self, workspace: Path, run_id: str) -> dict[str, Any]:
@@ -1030,6 +1118,48 @@ class DashboardServer(ThreadingHTTPServer):
             raise ValueError("No scheduler log is available yet")
         lines = log_file.read_text(encoding="utf-8", errors="replace").splitlines()
         return {"path": str(log_file.relative_to(workspace)), "content": "\n".join(lines[-220:])}
+
+    def patch_log(self, workspace: Path, run_id: str) -> dict[str, Any]:
+        payload = patch_payload(workspace)
+        current = payload.get("current") if isinstance(payload.get("current"), dict) else {}
+        selected = current if not run_id or run_id == current.get("run_id") else next((item for item in payload.get("runs", []) if item.get("run_id") == run_id), {})
+        log_value = str(selected.get("log_file") or "").strip()
+        if not log_value:
+            candidates = sorted((workspace / "logs" / "patch").glob("run-*.log"), key=lambda path: path.stat().st_mtime, reverse=True)
+            log_value = str(candidates[0]) if candidates else ""
+        if not log_value:
+            raise ValueError("No Auto Patch log is available")
+        path = Path(log_value).expanduser().resolve()
+        try:
+            path.relative_to(workspace.resolve())
+        except ValueError as exc:
+            raise ValueError("Invalid Auto Patch log path") from exc
+        if not path.is_file():
+            raise ValueError("Auto Patch log is no longer available")
+        return {"run_id": selected.get("run_id", ""), "path": str(path.relative_to(workspace)), "content": "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-220:])}
+
+    def patch_scheduler_log(self, workspace: Path) -> dict[str, Any]:
+        path = workspace / "logs" / "patch-schedule.log"
+        if not path.is_file():
+            raise ValueError("No Auto Patch scheduler log is available yet")
+        return {"path": str(path.relative_to(workspace)), "content": "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-220:])}
+
+    def start_patch(self, workspace: Path, project: str, jira_key: str = "") -> dict[str, Any]:
+        if (workspace / "locks" / "patch-run").exists():
+            raise RuntimeError("An Auto Patch run is already active")
+        command = [self.lumen_bin, "patch", "run", "--project", project]
+        if jira_key.strip():
+            command.extend(["--jira-key", jira_key.strip()])
+        subprocess.Popen(command, cwd=str(workspace), env=dict(os.environ, LUMEN_HOME=self.lumen_home), start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"project": project, "jira_key": jira_key.strip(), "started_at": utc_now()}
+
+    def stop_patch(self, workspace: Path) -> dict[str, Any]:
+        pid_path = workspace / "locks" / "patch-run" / "pid"
+        if not pid_path.is_file():
+            raise ValueError("No active Auto Patch run was found")
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        terminate_process_tree(pid)
+        return {"pid": pid, "stopped_at": utc_now()}
 
     def retry_delivery(self, workspace: Path, story_override: str = "") -> dict[str, Any]:
         progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
@@ -1256,10 +1386,10 @@ class DashboardServer(ThreadingHTTPServer):
     def update_schedule(self, body: dict[str, Any], workspace: Path, project: str) -> dict[str, Any]:
         kind = str(body.get("kind", ""))
         action = str(body.get("action", ""))
-        if kind not in {"scan", "delivery"} or action not in {"save", "remove"}:
+        if kind not in {"scan", "delivery", "patch"} or action not in {"save", "remove"}:
             raise ValueError("Invalid schedule request")
         if action == "remove":
-            func = remove_scan_schedule if kind == "scan" else remove_delivery_schedule
+            func = remove_scan_schedule if kind == "scan" else remove_delivery_schedule if kind == "delivery" else remove_patch_schedule
             func(argparse.Namespace(project=project))
             if kind == "delivery":
                 config_path = workspace / "config" / "delivery.json"
@@ -1267,6 +1397,12 @@ class DashboardServer(ThreadingHTTPServer):
                 automation = config.setdefault("automation", {})
                 scheduled = automation.setdefault("scheduled_delivery", {})
                 scheduled["enabled"] = False
+                write_json(config_path, config)
+                auto_commit_delivery_config(workspace)
+            if kind == "patch":
+                config_path = workspace / "config" / "delivery.json"
+                config = load_json(config_path, {})
+                config.setdefault("automation", {}).setdefault("scheduled_auto_patch", {})["enabled"] = False
                 write_json(config_path, config)
                 auto_commit_delivery_config(workspace)
             return schedule_payload(workspace, project)
@@ -1286,7 +1422,7 @@ class DashboardServer(ThreadingHTTPServer):
             )
             if install_scan_schedule(args) != 0:
                 raise RuntimeError("Unable to install scan schedule")
-        else:
+        elif kind == "delivery":
             interval = int(body.get("interval_minutes", 0))
             if interval < 1:
                 raise ValueError("Delivery interval must be at least one minute")
@@ -1320,6 +1456,32 @@ class DashboardServer(ThreadingHTTPServer):
             if dev_done_status:
                 jira["dev_done_status"] = dev_done_status
             jira["blocked_status"] = blocked_status
+            write_json(config_path, config)
+            auto_commit_delivery_config(workspace)
+        else:
+            interval = int(body.get("interval_minutes", 0))
+            if interval < 1:
+                raise ValueError("Auto Patch interval must be at least one minute")
+            statuses = normalize_statuses(body.get("jira_statuses", body.get("jira_status")), ("To Do",))
+            types = normalize_statuses(body.get("issue_types"), ("Task", "Bug"))
+            args = argparse.Namespace(
+                project=project,
+                cron=f"*/{interval} * * * *",
+                lumen_bin=self.lumen_bin,
+                lumen_home=self.lumen_home,
+                path=os.environ.get("PATH", ""),
+                log_file=str(workspace / "logs" / "patch-schedule.log"),
+            )
+            if install_patch_schedule(args) != 0:
+                raise RuntimeError("Unable to install Auto Patch schedule")
+            config_path = workspace / "config" / "delivery.json"
+            config = load_json(config_path, {})
+            scheduled = config.setdefault("automation", {}).setdefault("scheduled_auto_patch", {})
+            scheduled.update({"enabled": True, "poll_interval_minutes": interval, "eligible_jira_statuses": statuses, "issue_types": types})
+            for key in ("in_progress_status", "done_status", "blocked_status"):
+                value = str(body.get(key, "")).strip()
+                if value:
+                    scheduled[key] = value
             write_json(config_path, config)
             auto_commit_delivery_config(workspace)
         return schedule_payload(workspace, project)
@@ -1366,6 +1528,21 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/delivery/status-options":
             return self.respond_json(HTTPStatus.OK, jira_status_options(workspace))
+        if parsed.path == "/api/patch/log":
+            try:
+                return self.respond_json(HTTPStatus.OK, self.server.patch_log(workspace, query.get("run_id", [""])[0]))
+            except (OSError, ValueError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/patch/scheduler-log":
+            try:
+                return self.respond_json(HTTPStatus.OK, self.server.patch_scheduler_log(workspace))
+            except ValueError as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/patch/trace":
+            try:
+                return self.respond_json(HTTPStatus.OK, self.server.patch_log(workspace, query.get("run_id", [""])[0]))
+            except (OSError, ValueError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/stories":
             return self.respond_json(HTTPStatus.OK, {"stories": list_observatory_stories(workspace)})
         if parsed.path == "/api/stories/content":
@@ -1373,7 +1550,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_json(HTTPStatus.OK, observatory_story_content(workspace, query.get("story", [""])[0]))
             except (OSError, ValueError, FileNotFoundError) as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
-        if parsed.path in {"/", "/dashboard.html", "/scan", "/delivery", "/repositories", "/prompts", "/settings", "/observatory"}:
+        if parsed.path in {"/", "/dashboard.html", "/scan", "/delivery", "/patch", "/repositories", "/prompts", "/settings", "/observatory"}:
             return self.serve_file(self.server.workspace / "dashboard.html", "text/html; charset=utf-8")
         if parsed.path == "/dashboard-data.js":
             return self.serve_file(self.server.workspace / "dashboard-data.js", "application/javascript; charset=utf-8")
@@ -1436,6 +1613,9 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     delivery_path = workspace / "config" / "delivery.json"
                     delivery = load_json(delivery_path, {})
                     delivery.setdefault("execution", {})["model"] = delivery_model
+                    patch_model = str(body.get("patch_model") or "").strip()
+                    if patch_model:
+                        delivery.setdefault("execution", {})["patch_model"] = patch_model
                     write_json(delivery_path, delivery)
                 if "feishu_notifications_enabled" in body:
                     save_feishu_notifications(workspace, bool(body.get("feishu_notifications_enabled")))
@@ -1460,12 +1640,16 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/publish-policy":
                 return self.respond_json(
                     HTTPStatus.OK,
-                    {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"))},
+                    {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"), body.get("patch_mode", "pr"))},
                 )
             if parsed.path == "/api/observability":
                 return self.respond_json(HTTPStatus.OK, {"agent_trace": self.server.update_observability(workspace, body)})
             if parsed.path == "/api/scan/start":
                 return self.respond_json(HTTPStatus.ACCEPTED, {"scan": self.server.start_scan(workspace, project)})
+            if parsed.path == "/api/patch/start":
+                return self.respond_json(HTTPStatus.ACCEPTED, {"patch": self.server.start_patch(workspace, project, str(body.get("jira_key") or ""))})
+            if parsed.path == "/api/patch/stop":
+                return self.respond_json(HTTPStatus.ACCEPTED, {"patch": self.server.stop_patch(workspace)})
             if parsed.path == "/api/delivery/retry":
                 return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace)})
             if parsed.path == "/api/delivery/start":

@@ -64,7 +64,8 @@ import import_jira_story  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
 from auto_fix_sync import extract_pr_url, record_merge_success  # noqa: E402
 from finalize_delivery import branch_has_commits  # noqa: E402
-from run_delivery_verification import java_gradle_steps  # noqa: E402
+from run_delivery_verification import java_gradle_steps, run_command  # noqa: E402
+from delivery_preflight import requires_docker_verification  # noqa: E402
 from delivery_runtime import runtime_values  # noqa: E402
 
 
@@ -276,6 +277,25 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             steps = java_gradle_steps(repo)
 
         self.assertTrue(next(step for step in steps if step["id"] == "test_suite")["requires_docker"])
+
+    def test_preflight_detects_automatic_testcontainers_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "build.gradle").write_text("testImplementation 'org.testcontainers:junit-jupiter:1.20.0'\n", encoding="utf-8")
+
+            required = requires_docker_verification({}, [SimpleNamespace(path=repo)])
+
+        self.assertTrue(required)
+
+    def test_docker_gradle_command_uses_a_fresh_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "gradlew").write_text("#!/bin/sh\n", encoding="utf-8")
+            completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with patch("run_delivery_verification.subprocess.run", return_value=completed) as run:
+                run_command(repo, ["./gradlew", "test"], {"DOCKER_HOST": "unix:///docker.sock"}, isolated=True)
+
+        self.assertEqual([str(repo / "gradlew"), "--no-daemon", "test"], run.call_args.args[0])
 
     def test_branch_commit_check_ignores_clean_feature_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

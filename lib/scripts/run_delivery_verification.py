@@ -240,11 +240,23 @@ def colima_environment() -> tuple[dict[str, str], str]:
     socket = Path.home() / ".colima" / "default" / "docker.sock"
     if not socket.exists():
         return {}, f"Colima Docker socket not found: {socket}"
-    return {
+    environment = {
         "DOCKER_HOST": f"unix://{socket}",
         "TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE": "/var/run/docker.sock",
         "TESTCONTAINERS_HOST_OVERRIDE": address,
-    }, f"Colima {address}"
+    }
+    completed = subprocess.run(
+        ["docker", "info"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        env={**os.environ, **environment},
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "docker info failed").strip()
+        return {}, f"Colima Docker is not ready: {detail}"
+    return environment, f"Colima {address}"
 
 
 def resolve_codeartifact_token(env: dict[str, str]) -> tuple[dict[str, str], str]:
@@ -293,10 +305,11 @@ def runtime_environment(
     return env, details, None
 
 
-def run_command(repo_path: Path, command: list[str], env: dict[str, str]) -> tuple[int, str]:
+def run_command(repo_path: Path, command: list[str], env: dict[str, str], isolated: bool = False) -> tuple[int, str]:
     if command and command[0] == "./gradlew":
         wrapper = gradle_wrapper(repo_path)
-        command = [str(wrapper), *command[1:]]
+        options = ["--no-daemon"] if isolated and "--no-daemon" not in command else []
+        command = [str(wrapper), *options, *command[1:]]
     completed = subprocess.run(
         command,
         cwd=str(repo_path),
@@ -409,7 +422,7 @@ def run_step(
     if kind == "php_lint":
         exit_code, output = run_php_lint(repo_path, environment)
     else:
-        exit_code, output = run_command(repo_path, [str(part) for part in command], environment)
+        exit_code, output = run_command(repo_path, [str(part) for part in command], environment, isolated=requires_docker)
     allow_no_tests = bool(step.get("allow_no_tests"))
     status = "passed" if exit_code == 0 else "failed"
     summary = "Passed" if exit_code == 0 else output[-2000:] or f"Exit code {exit_code}"

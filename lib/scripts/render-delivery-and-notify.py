@@ -210,6 +210,42 @@ def build_delivery_feishu_card(
     return card
 
 
+def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]:
+    key = str(patch.get("jira_key") or "").strip()
+    title = str(patch.get("summary") or "Auto Patch").strip()
+    status = str(patch.get("patch_status") or "unknown").replace("_", " ").title()
+    repositories = patch.get("repos_touched") if isinstance(patch.get("repos_touched"), list) else []
+    repo_names = ", ".join(str(item.get("name") or "").strip() for item in repositories if isinstance(item, dict) and item.get("name")) or "No repository recorded"
+    checks = patch.get("self_checks") if isinstance(patch.get("self_checks"), list) else []
+    passed = sum(1 for item in checks if isinstance(item, dict) and item.get("status") == "passed")
+    failed = sum(1 for item in checks if isinstance(item, dict) and item.get("status") == "failed")
+    pr_urls = [str(url).strip() for url in patch.get("pr_urls") or [] if str(url).strip()]
+    event_meta = {
+        "patch.started": ("Patch Started", "blue"),
+        "patch.completed": ("Patch Completed", "green"),
+        "patch.blocked": ("Patch Blocked", "orange"),
+    }
+    event_title, template = event_meta.get(event, ("Patch Update", "grey"))
+    lines = [f"**Status:** {status}", f"**Repositories:** {repo_names}"]
+    if patch.get("branch"):
+        lines.append(f"**Branch:** `{patch['branch']}`")
+    if checks:
+        lines.append(f"**Self-check:** {passed} passed, {failed} failed")
+    elements: list[dict[str, Any]] = [{"tag": "markdown", "content": "\n".join(lines)}]
+    if patch.get("question"):
+        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": f"**Question**\n{patch['question']}"}])
+    if pr_urls:
+        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**Pull requests**\n" + "\n".join(pr_urls)}])
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "schema": "2.0",
+            "header": {"title": {"tag": "plain_text", "content": f"Lumen · {event_title}"}, "subtitle": {"tag": "plain_text", "content": " · ".join(part for part in (key, title) if part)}, "template": template},
+            "body": {"elements": elements},
+        },
+    }
+
+
 def update_story_metadata(
     metadata_path: Path,
     delivery: dict[str, Any],
@@ -259,6 +295,21 @@ def main() -> int:
 
     dry_run = os.environ.get("LUMEN_DRY_RUN", "").strip().lower() in {"1", "true", "yes"}
     delivery = load_delivery_result(result_path)
+    if "patch_status" in delivery:
+        webhook = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
+        feishu_result = {"status": "skipped", "detail": "FEISHU_WEBHOOK_URL not set"}
+        if dry_run:
+            feishu_result = {"status": "dry_run", "event": event}
+        elif webhook and not os.environ.get("LUMEN_SKIP_FEISHU", "").strip().casefold() in {"1", "true", "yes"}:
+            try:
+                send_feishu(build_patch_feishu_card(event, delivery), webhook)
+                feishu_result = {"status": "sent", "event": event}
+            except Exception as exc:
+                feishu_result = {"status": "failed", "detail": redact(str(exc))}
+        delivery["feishu"] = feishu_result
+        write_json(result_path, delivery)
+        print(json.dumps({"feishu": feishu_result}, indent=2, ensure_ascii=False))
+        return 0
     docs_dir = resolve_docs_dir(delivery, result_path)
     workspace_root = Path(str(delivery.get("workspace_root", "")).strip() or docs_dir).expanduser().resolve()
     delivery_config = read_json(delivery_config_path(workspace_root))

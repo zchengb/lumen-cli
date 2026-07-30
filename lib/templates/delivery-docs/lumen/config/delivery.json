@@ -2,6 +2,7 @@
   "schema_version": "1.0",
   "execution": {
     "model": "cursor-grok-4.5-medium",
+    "patch_model": "cursor-grok-4.5-medium",
     "sandbox": "disabled",
     "approve_mcps": false,
     "agent_timeout_seconds": 3600,
@@ -33,6 +34,20 @@
       "enabled": false,
       "eligible_jira_statuses": ["To Do", "Backlog", "In Progress"],
       "required_jira_status": "To Do"
+    },
+    "scheduled_auto_patch": {
+      "enabled": false,
+      "poll_interval_minutes": 5,
+      "eligible_jira_statuses": ["To Do"],
+      "issue_types": ["Task", "Bug"],
+      "in_progress_status": "In Progress",
+      "done_status": "Done",
+      "blocked_status": "Block"
+    }
+  },
+  "publish": {
+    "auto_patch": {
+      "mode": "pr"
     }
   },
   "verification": {
