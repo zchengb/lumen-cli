@@ -551,7 +551,7 @@ def main() -> int:
     for name in ("workspace-root", "docs-dir", "story", "run-id", "stage", "provider", "model", "output-format", "sandbox", "lumen-version", "provider-version"):
         run.add_argument(f"--{name}", required=name in {"workspace-root", "docs-dir", "run-id", "stage"}, default="")
     run.add_argument("--attempt", type=int, default=1)
-    run.add_argument("--timeout", type=int, default=5400)
+    run.add_argument("--timeout", type=int, default=3600)
     run.add_argument("--idle-timeout", type=int, default=900)
     run.add_argument("command", nargs=argparse.REMAINDER)
     check = sub.add_parser("doctor"); check.add_argument("--workspace-root", required=True)

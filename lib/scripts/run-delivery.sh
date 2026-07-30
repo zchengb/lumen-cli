@@ -219,7 +219,7 @@ MODEL="${MODEL:-cursor-grok-4.5-medium}"
 SANDBOX_MODE="${CURSOR_AGENT_SANDBOX:-disabled}"
 OUTPUT_FORMAT="${CURSOR_AGENT_OUTPUT_FORMAT:-stream-json}"
 STREAM_PARTIAL="${CURSOR_AGENT_STREAM_PARTIAL:-1}"
-AGENT_TIMEOUT_SECONDS="${CURSOR_AGENT_TIMEOUT_SECONDS:-$(execution_seconds agent_timeout_seconds 5400)}"
+AGENT_TIMEOUT_SECONDS="${CURSOR_AGENT_TIMEOUT_SECONDS:-$(execution_seconds agent_timeout_seconds 3600)}"
 AGENT_IDLE_TIMEOUT_SECONDS="${CURSOR_AGENT_IDLE_TIMEOUT_SECONDS:-$(execution_seconds agent_idle_timeout_seconds 900)}"
 
 figma_mcp_approved() {
