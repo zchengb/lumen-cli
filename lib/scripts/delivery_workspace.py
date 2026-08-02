@@ -70,6 +70,20 @@ def frontend_delivery_disabled_reasons(context: StoryContext) -> list[str]:
     return reasons
 
 
+def repository_delivery_disabled_reasons(context: StoryContext) -> list[str]:
+    config = read_json(workspace_lumen_dir(context.workspace_root) / "config" / "repos.json", {"repositories": []})
+    entries = config.get("repositories") if isinstance(config.get("repositories"), list) else []
+    by_name = {str(item.get("name", "")).strip(): item for item in entries if isinstance(item, dict)}
+    reasons = []
+    for repo in context.repos:
+        entry = by_name.get(repo.name, {})
+        automation = entry.get("automation") if isinstance(entry.get("automation"), dict) else {}
+        delivery = automation.get("delivery") if isinstance(automation.get("delivery"), dict) else {}
+        if delivery.get("enabled") is False:
+            reasons.append(f"repository '{repo.name}' is not authorized for Auto Delivery")
+    return reasons
+
+
 def read_json(path: Path, default: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     if not path.is_file():
         return default or {}

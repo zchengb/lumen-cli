@@ -65,14 +65,25 @@ def lock_path(workspace: Path) -> Path:
 
 def select_repository(workspace: Path, item: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     repositories = repo_registry(workspace)
-    if len(repositories) == 1:
-        return repositories[0], "Only one registered repository is available."
+    def enabled(repo: dict[str, Any]) -> bool:
+        automation = repo.get("automation") if isinstance(repo.get("automation"), dict) else {}
+        patch = automation.get("patch") if isinstance(automation.get("patch"), dict) else {}
+        return bool(patch.get("enabled", False))
+
+    eligible = [repo for repo in repositories if enabled(repo)]
+    if not eligible:
+        return None, "Auto Patch is disabled for every registered repository."
+    if len(eligible) == 1:
+        repo = eligible[0]
+        return repo, "Only one Auto Patch-authorized repository is available."
     raw = json.dumps(item, ensure_ascii=False).casefold()
     labels = jira_fields(item).get("labels") or []
     label_text = " ".join(str(value) for value in labels) if isinstance(labels, list) else str(labels)
     matches = [repo for repo in repositories if str(repo.get("name") or "").casefold() in raw or str(repo.get("name") or "").casefold() in label_text.casefold()]
     if len(matches) == 1:
-        return matches[0], f"Repository name appears in Jira context: {matches[0].get('name')}."
+        if enabled(matches[0]):
+            return matches[0], f"Repository name appears in Jira context: {matches[0].get('name')}."
+        return None, f"Auto Patch is disabled for registered repository '{matches[0].get('name')}'."
     if not repositories:
         return None, "No registered repository is available."
     return None, "Jira context does not identify exactly one registered repository."
@@ -165,6 +176,9 @@ def run_agent(workspace: Path, prompt: str, log_file: Path) -> int:
 def choose_item(workspace: Path, requested: str) -> tuple[dict[str, Any] | None, bool]:
     if requested:
         item = get_workitem(workspace, requested)
+        _, reason = select_repository(workspace, item)
+        if reason.startswith("Auto Patch is disabled"):
+            return None, False
         registry = load_registry(workspace).get("issues", {}).get(requested, {})
         return item, jira_status(item).casefold() == str(patch_config(workspace).get("blocked_status", "Block")).casefold() and has_external_reply(item, registry)
     registry = load_registry(workspace).get("issues", {})
@@ -176,6 +190,9 @@ def choose_item(workspace: Path, requested: str) -> tuple[dict[str, Any] | None,
         if blocked and not has_external_reply(item, record):
             continue
         if record.get("status") in {"completed", "skipped"} and record.get("updated") == str(jira_fields(item).get("updated") or ""):
+            continue
+        _, reason = select_repository(workspace, item)
+        if reason.startswith("Auto Patch is disabled"):
             continue
         return item, blocked
     return None, False

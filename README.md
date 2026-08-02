@@ -141,19 +141,11 @@ For a UI Story with a Figma Design Source, the Technical Loop stores the node ID
 
 This only approves MCP use for a delivery with a Figma contract; it does not install or configure Figma MCP. If the server is unavailable, Delivery continues from the committed snapshot and reference.
 
-### Authenticated Web Development Sessions
+### Repository Governance
 
-For a configured Web repository, Delivery can start one persistent local Playwright session before the implementation Agent runs. Configure `runtime` in `lumen/config/repos.json` with `browser_mode` (`managed` or `cdp`), `base_url`, `ready_url`, and one authentication strategy: `existing-session`, `storage-state`, or `login-endpoint`. Repository login credentials are stored directly in that repository's workspace runtime configuration with `lumen config set-visual-auth`; the credential is visible only in the local loopback Dashboard editor and is never included in the Agent prompt or session evidence. The Agent receives one internal session helper and discovers routes from repository code.
+Dashboard → Repository is the control plane for connected Git repositories. It detects the default branch, Git health, Java and Node versions, and Gradle/Maven/npm/pnpm/yarn tooling. It also keeps separate permissions for Auto Scan fixes, Auto Scan pull requests, Auto Delivery, and Auto Patch. Auto Patch is disabled for every repository until explicitly authorized.
 
-Quick setup and checks:
-
-```bash
-lumen dashboard --project <project-slug>   # Repository → Visual runtime
-lumen doctor                                # Validate Node, Playwright, auth, fixture, and runtime readiness
-lumen config set-visual-auth <repository> <credential> --project <project-slug>
-```
-
-The Dashboard's Repository → Visual runtime editor stores the generic per-repository runtime contract in `lumen/config/repos.json`: package/install/start commands, base and ready URLs, timeout, browser mode, authentication, credential, and fixture strategy. Platform-specific fields remain in the same runtime object so Web and React Native repositories share one configuration boundary.
+Delivery verification commands are suggested from the detected build and only run after you save them. Frontend delivery is currently disabled globally, so the Dashboard does not expose web runtime, browser, or credential configuration.
 
 ### Delivery Scheduling
 

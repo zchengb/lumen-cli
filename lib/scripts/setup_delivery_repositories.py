@@ -71,9 +71,13 @@ def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str
         "path": str(repo_path.resolve()),
         "default_branch": branch,
         "runtime_profile": infer_profile(repo_path),
-        "validation_commands": [],
         "allow_auto_fix": True,
         "allow_pr": True,
+        "automation": {
+            "scan": {"allow_auto_fix": True, "allow_pr": True},
+            "delivery": {"enabled": True},
+            "patch": {"enabled": False},
+        },
     }
     detected = detect_runtime(repo_path)
     if detected:
@@ -82,6 +86,11 @@ def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str
     updated = False
     for index, item in enumerate(repositories):
         if isinstance(item, dict) and str(item.get("name", "")).strip() == name:
+            if isinstance(item.get("automation"), dict):
+                entry["automation"] = item["automation"]
+                scan = item["automation"].get("scan") if isinstance(item["automation"].get("scan"), dict) else {}
+                entry["allow_auto_fix"] = bool(scan.get("allow_auto_fix", item.get("allow_auto_fix", True)))
+                entry["allow_pr"] = bool(scan.get("allow_pr", item.get("allow_pr", True)))
             if isinstance(item.get("runtime"), dict):
                 entry["runtime_profile"] = item.get("runtime_profile", entry["runtime_profile"])
                 entry["runtime"] = item["runtime"]

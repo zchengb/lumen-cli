@@ -246,12 +246,14 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         if not isinstance(repository, dict):
             continue
         entry = dict(repository)
-        runtime = entry.get("runtime")
-        if isinstance(runtime, dict):
-            runtime_view = dict(runtime)
-            entry["runtime"] = runtime_view
+        runtime = entry.pop("runtime", {})
+        runtime = runtime if isinstance(runtime, dict) else {}
+        entry["runtime_configured"] = bool(runtime)
+        entry["automation"] = repository_automation(entry)
         entry["delivery_steps"] = steps.get(str(entry.get("name", "")), [])
-        entry["branches"] = repository_branches(Path(str(entry.get("path", ""))), str(entry.get("default_branch", "main")))
+        path = Path(str(entry.get("path", "")))
+        entry["branches"] = repository_branches(path, str(entry.get("default_branch", "main")))
+        entry["health"] = repository_health(path, str(entry.get("default_branch", "main")), runtime, str(entry.get("runtime_profile", "")))
         enriched_repositories.append(entry)
     git_conflict = read_conflict(workspace / "state")
     if not all(str(git_conflict.get(key) or "").strip() for key in ("repo", "branch", "remote_oid", "local_oid")):
@@ -274,6 +276,122 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         },
         "feishu_notifications_enabled": feishu_notifications_enabled(workspace),
         "git_sync_conflict": git_conflict,
+    }
+
+
+def repository_automation(repository: dict[str, Any]) -> dict[str, dict[str, bool]]:
+    automation = repository.get("automation") if isinstance(repository.get("automation"), dict) else {}
+    scan = automation.get("scan") if isinstance(automation.get("scan"), dict) else {}
+    delivery = automation.get("delivery") if isinstance(automation.get("delivery"), dict) else {}
+    patch = automation.get("patch") if isinstance(automation.get("patch"), dict) else {}
+    return {
+        "scan": {
+            "allow_auto_fix": bool(scan.get("allow_auto_fix", repository.get("allow_auto_fix", True))),
+            "allow_pr": bool(scan.get("allow_pr", repository.get("allow_pr", True))),
+        },
+        "delivery": {"enabled": bool(delivery.get("enabled", True))},
+        "patch": {"enabled": bool(patch.get("enabled", False))},
+    }
+
+
+def git_output(repository: Path, *args: str) -> str:
+    if not repository.is_dir() or not (repository / ".git").exists():
+        return ""
+    completed = subprocess.run(["git", "-C", str(repository), *args], capture_output=True, text=True, check=False)
+    return completed.stdout.strip() if completed.returncode == 0 else ""
+
+
+def configured_node_version(repository: Path, runtime: dict[str, Any]) -> str:
+    configured = str(runtime.get("node_version", "")).strip()
+    if configured:
+        return configured
+    for name in (".nvmrc", ".node-version"):
+        path = repository / name
+        if path.is_file():
+            return path.read_text(encoding="utf-8", errors="ignore").strip()
+    package = repository / "package.json"
+    if package.is_file():
+        try:
+            engines = json.loads(package.read_text(encoding="utf-8")).get("engines", {})
+            if isinstance(engines, dict):
+                return str(engines.get("node", "")).strip()
+        except (OSError, json.JSONDecodeError):
+            pass
+    return ""
+
+
+def configured_java_version(repository: Path) -> str:
+    version_file = repository / ".java-version"
+    if version_file.is_file():
+        match = re.search(r"\b(8|11|17|21)\b", version_file.read_text(encoding="utf-8", errors="ignore"))
+        if match:
+            return match.group(1)
+    files = (repository / "build.gradle", repository / "build.gradle.kts", repository / "pom.xml")
+    source = "\n".join(path.read_text(encoding="utf-8", errors="ignore") for path in files if path.is_file())
+    for pattern in (
+        r"JavaLanguageVersion\.of\((\d+)\)",
+        r"(?:sourceCompatibility|targetCompatibility)\s*=\s*(?:JavaVersion\.VERSION_|['\"]?)(\d+)",
+        r"<(?:java\.version|maven\.compiler\.(?:release|source))>\s*(\d+)\s*</",
+    ):
+        match = re.search(pattern, source)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def package_manager(repository: Path) -> str:
+    for filename, name in (("pnpm-lock.yaml", "pnpm"), ("yarn.lock", "yarn"), ("package-lock.json", "npm"), ("bun.lockb", "bun")):
+        if (repository / filename).is_file():
+            return name
+    return ""
+
+
+def repository_health(repository: Path, branch: str, runtime: dict[str, Any], profile: str) -> dict[str, Any]:
+    files = {item.name for item in repository.iterdir()} if repository.is_dir() else set()
+    is_java = bool(files & {"gradlew", "build.gradle", "build.gradle.kts", "pom.xml"})
+    is_node = "package.json" in files
+    tools = []
+    if any((repository / name).is_file() for name in ("gradlew", "build.gradle", "build.gradle.kts")):
+        tools.append("Gradle")
+    elif (repository / "pom.xml").is_file():
+        tools.append("Maven")
+    manager = package_manager(repository)
+    if manager:
+        tools.append(manager)
+    language = "Java" if is_java else "Node.js" if is_node else "PHP" if "composer.json" in files else str(profile or "Generic").replace("local-", "").replace("-review-only", "").replace("-", " ").title()
+    package: dict[str, Any] = {}
+    if is_node:
+        try:
+            package = json.loads((repository / "package.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            package = {}
+    command_prefix = manager or "npm"
+    suggestions: list[str] = []
+    if (repository / "gradlew").is_file():
+        suggestions = ["./gradlew compileJava compileTestJava -x test", "./gradlew test"]
+    elif (repository / "pom.xml").is_file():
+        suggestions = ["./mvnw test" if (repository / "mvnw").is_file() else "mvn test"]
+    elif is_node:
+        scripts = package.get("scripts") if isinstance(package.get("scripts"), dict) else {}
+        for name in ("typecheck", "lint", "test"):
+            if name in scripts:
+                suggestions.append(f"{command_prefix} run {name}")
+    status = git_output(repository, "status", "--porcelain")
+    remote = git_output(repository, "remote", "get-url", "origin")
+    counts = git_output(repository, "rev-list", "--left-right", "--count", f"origin/{branch}...HEAD").split()
+    sync = "unknown"
+    if len(counts) == 2 and all(count.isdigit() for count in counts):
+        behind, ahead = (int(count) for count in counts)
+        sync = "synced" if not ahead and not behind else "diverged" if ahead and behind else "ahead" if ahead else "behind"
+    return {
+        "language": language,
+        "java_version": configured_java_version(repository) if is_java else "",
+        "node_version": configured_node_version(repository, runtime) if is_node else "",
+        "build_tools": tools,
+        "git_status": "changes" if status else "clean",
+        "sync_status": sync,
+        "remote_url": remote,
+        "suggested_commands": suggestions,
     }
 
 
@@ -334,20 +452,29 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
         if not path.is_dir() or not (path / ".git").exists():
             raise ValueError(f"Repository is not a local Git checkout: {path}")
         seen.add(name)
+        existing = next((item for item in existing_repositories if isinstance(item, dict) and str(item.get("name", "")).strip() == name), {})
+        automation_source = dict(existing) if isinstance(existing, dict) else {}
+        automation_source.update(repository)
+        existing_automation = existing.get("automation") if isinstance(existing, dict) and isinstance(existing.get("automation"), dict) else {}
+        supplied_automation = repository.get("automation") if isinstance(repository.get("automation"), dict) else {}
+        automation_source["automation"] = {
+            key: {**(existing_automation.get(key) if isinstance(existing_automation.get(key), dict) else {}), **(supplied_automation.get(key) if isinstance(supplied_automation.get(key), dict) else {})}
+            for key in ("scan", "delivery", "patch")
+        }
+        automation = repository_automation(automation_source)
         cleaned.append({
             "name": name,
             "path": str(path.resolve()),
-            "remote_url": str(repository.get("remote_url", "")).strip(),
+            "remote_url": str(repository.get("remote_url", "")).strip() or git_output(path, "remote", "get-url", "origin"),
             "default_branch": branch,
             "runtime_profile": profile,
-            "validation_commands": [str(item) for item in repository.get("validation_commands", []) if str(item).strip()],
-            "allow_auto_fix": bool(repository.get("allow_auto_fix", True)),
-            "allow_pr": bool(repository.get("allow_pr", True)),
+            "allow_auto_fix": automation["scan"]["allow_auto_fix"],
+            "allow_pr": automation["scan"]["allow_pr"],
+            "automation": automation,
         })
         if "generate_tests" in repository:
             cleaned[-1]["generate_tests"] = bool(repository.get("generate_tests"))
         runtime = repository.get("runtime")
-        existing = next((item for item in existing_repositories if isinstance(item, dict) and str(item.get("name", "")).strip() == name), {})
         existing_runtime = existing.get("runtime") if isinstance(existing, dict) and isinstance(existing.get("runtime"), dict) else {}
         if runtime is not None or existing_runtime:
             if runtime is not None and not isinstance(runtime, dict):
@@ -360,11 +487,6 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Runtime configuration for {name} must contain JSON values") from exc
             cleaned[-1]["runtime"] = stored_runtime
-        if "runtime_status" in repository:
-            runtime_status = str(repository.get("runtime_status") or "").strip()
-            if runtime_status not in {"ready", "incomplete"}:
-                raise ValueError(f"Runtime status for {name} must be ready or incomplete")
-            cleaned[-1]["runtime_status"] = runtime_status
         if "delivery_commands" in repository:
             commands = repository["delivery_commands"]
             lines = commands.splitlines() if isinstance(commands, str) else commands
@@ -402,9 +524,13 @@ def clone_repository(workspace: Path, url: object) -> dict[str, Any]:
         "remote_url": remote_url,
         "default_branch": default_branch(destination),
         "runtime_profile": infer_profile(destination),
-        "validation_commands": [],
         "allow_auto_fix": True,
         "allow_pr": True,
+        "automation": {
+            "scan": {"allow_auto_fix": True, "allow_pr": True},
+            "delivery": {"enabled": True},
+            "patch": {"enabled": False},
+        },
     })
     return save_repositories(workspace, repositories)
 
