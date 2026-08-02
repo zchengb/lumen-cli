@@ -48,7 +48,14 @@ def main() -> int:
         trace_source.relative_to(trace_root)
     except (OSError, ValueError):
         trace_source = None
-    if trace_path and trace_source is not None and trace_source.is_dir():
+    valid_trace_source = (
+        bool(trace_path)
+        and trace_source is not None
+        and trace_source.parent == trace_root
+        and trace_source.is_dir()
+        and (trace_source / "trace.json").is_file()
+    )
+    if valid_trace_source:
         trace_target = delivery_history_dir(workspace_root) / run_id / "agent-trace"
         shutil.copytree(trace_source, trace_target, dirs_exist_ok=True)
         payload["agent_trace_path"] = str(trace_target)
