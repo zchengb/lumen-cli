@@ -20,11 +20,10 @@ def scan_entry(repo: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]
         "default_branch": repo.get("default_branch") or "main",
         "runtime_profile": repo.get("runtime_profile") or "local-generic-review-only",
         "allow_auto_fix": existing.get("allow_auto_fix", True),
-        "allow_pr": existing.get("allow_pr", True),
         "automation": existing.get("automation") if isinstance(existing.get("automation"), dict) else {
-            "scan": {"allow_auto_fix": existing.get("allow_auto_fix", True), "allow_pr": existing.get("allow_pr", True)},
+            "scan": {"allow_auto_fix": existing.get("allow_auto_fix", True)},
             "delivery": {"enabled": True},
-            "patch": {"enabled": False},
+            "patch": {"enabled": True},
         },
     }
     if isinstance(existing.get("runtime"), dict):

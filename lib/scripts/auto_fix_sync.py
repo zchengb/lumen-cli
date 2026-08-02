@@ -281,7 +281,7 @@ def is_pr_candidate(finding: dict, repo_cfg: Optional[dict]) -> bool:
         return False
     automation = repo_cfg.get("automation") if isinstance(repo_cfg.get("automation"), dict) else {}
     scan = automation.get("scan") if isinstance(automation.get("scan"), dict) else {}
-    if not bool(scan.get("allow_auto_fix", repo_cfg.get("allow_auto_fix", True))) or not bool(scan.get("allow_pr", repo_cfg.get("allow_pr", True))):
+    if not bool(scan.get("allow_auto_fix", repo_cfg.get("allow_auto_fix", True))):
         return False
     auto_fix = finding.get("auto_fix")
     if not isinstance(auto_fix, dict):

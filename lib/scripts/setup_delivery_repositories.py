@@ -72,11 +72,10 @@ def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str
         "default_branch": branch,
         "runtime_profile": infer_profile(repo_path),
         "allow_auto_fix": True,
-        "allow_pr": True,
         "automation": {
-            "scan": {"allow_auto_fix": True, "allow_pr": True},
+            "scan": {"allow_auto_fix": True},
             "delivery": {"enabled": True},
-            "patch": {"enabled": False},
+            "patch": {"enabled": True},
         },
     }
     detected = detect_runtime(repo_path)
@@ -90,7 +89,6 @@ def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str
                 entry["automation"] = item["automation"]
                 scan = item["automation"].get("scan") if isinstance(item["automation"].get("scan"), dict) else {}
                 entry["allow_auto_fix"] = bool(scan.get("allow_auto_fix", item.get("allow_auto_fix", True)))
-                entry["allow_pr"] = bool(scan.get("allow_pr", item.get("allow_pr", True)))
             if isinstance(item.get("runtime"), dict):
                 entry["runtime_profile"] = item.get("runtime_profile", entry["runtime_profile"])
                 entry["runtime"] = item["runtime"]

@@ -143,9 +143,9 @@ This only approves MCP use for a delivery with a Figma contract; it does not ins
 
 ### Repository Governance
 
-Dashboard → Repository is the control plane for connected Git repositories. It detects the default branch, Git health, Java and Node versions, and Gradle/Maven/npm/pnpm/yarn tooling. It also keeps separate permissions for Auto Scan fixes, Auto Scan pull requests, Auto Delivery, and Auto Patch. Auto Patch is disabled for every repository until explicitly authorized.
+Dashboard → Repository is the control plane for connected Git repositories. It detects the default branch, Git health, Java and Node versions, and Gradle/Maven/npm/pnpm/yarn tooling. It keeps separate permissions for Auto Scan fixes, Auto Delivery, and Auto Patch; Auto Patch is enabled by default for registered repositories, while the workflow schedule remains separately controllable.
 
-Delivery verification commands are suggested from the detected build and only run after you save them. Frontend delivery is currently disabled globally, so the Dashboard does not expose web runtime, browser, or credential configuration.
+Delivery verification commands are suggested from the detected build. If no repository-specific commands are saved, Delivery selects the matching runtime profile at execution time. Frontend delivery is currently disabled globally, so the Dashboard does not expose web runtime, browser, or credential configuration.
 
 ### Delivery Scheduling
 

@@ -15,6 +15,7 @@ if str(LIB_DIR) not in sys.path:
 
 from dashboard_server import save_repositories, workspace_payload  # noqa: E402
 from delivery_workspace import repository_delivery_disabled_reasons  # noqa: E402
+from auto_fix_sync import is_pr_candidate  # noqa: E402
 from patch_runner import select_repository  # noqa: E402
 
 
@@ -49,6 +50,23 @@ class RepositoryGovernanceTests(unittest.TestCase):
             self.assertIn("Gradle", repository["health"]["build_tools"])
             self.assertFalse(repository["automation"]["delivery"]["enabled"])
             self.assertFalse(repository["automation"]["patch"]["enabled"])
+
+    def test_missing_patch_permission_defaults_to_enabled_without_scan_pr_permission(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace, _ = self.make_workspace(Path(directory))
+            config_path = workspace / "config" / "repos.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["repositories"][0].pop("automation")
+            config["repositories"][0].pop("allow_pr", None)
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            repository = workspace_payload(workspace)["repositories"][0]
+            self.assertTrue(repository["automation"]["patch"]["enabled"])
+            self.assertNotIn("allow_pr", repository)
+            selected, _ = select_repository(workspace.parent, {"fields": {"labels": ["service"]}})
+            self.assertEqual("service", selected["name"])
+            finding = {"severity": "High", "auto_fix": {"status": "committed"}}
+            self.assertTrue(is_pr_candidate(finding, {"automation": {"scan": {"allow_auto_fix": True, "allow_pr": False}}}))
 
     def test_save_removes_unused_validation_commands_and_preserves_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

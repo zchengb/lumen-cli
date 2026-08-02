@@ -68,7 +68,7 @@ def select_repository(workspace: Path, item: dict[str, Any]) -> tuple[dict[str, 
     def enabled(repo: dict[str, Any]) -> bool:
         automation = repo.get("automation") if isinstance(repo.get("automation"), dict) else {}
         patch = automation.get("patch") if isinstance(automation.get("patch"), dict) else {}
-        return bool(patch.get("enabled", False))
+        return bool(patch.get("enabled", True))
 
     eligible = [repo for repo in repositories if enabled(repo)]
     if not eligible:

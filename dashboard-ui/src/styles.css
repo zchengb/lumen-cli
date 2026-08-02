@@ -96,6 +96,7 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 
 /* Prompt source and rendered Markdown live in a focused inspector. */
 .prompt-inspector-modal{width:min(1120px,calc(100vw - 42px));max-height:calc(100vh - 42px);border-radius:10px}.prompt-inspector-header{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:16px 18px;border-bottom:1px solid #e3e3e6}.prompt-inspector-header>div{display:grid;gap:3px;min-width:0}.prompt-inspector-header span{color:#9a5b2c;font-size:9px;font-weight:550}.prompt-inspector-header strong{font-size:15px;font-weight:600}.prompt-inspector-header code{color:#77777e;font-size:10px}.prompt-inspector-body{padding:16px;background:#f8f8f7}.prompt-inspector-body .markdown-workbench{height:min(66vh,680px);min-height:480px;background:#fff}.prompt-inspector-body .markdown-pane textarea{height:100%;min-height:0}.prompt-inspector-body .markdown-content{height:100%}.prompt-inspector-modal footer{display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid #e3e3e6;background:#fff}
+.prompt-inspector-header .repository-modal-description{color:#55555c;font-size:12px;font-weight:400;line-height:1.45}
 
 @media(max-width:900px){.fact .story-reference-title{white-space:normal}.flow-track{left:calc(10% + 14px);right:calc(10% + 14px)}.prompt-inspector-body .markdown-workbench{height:72vh;min-height:0}.prompt-inspector-modal{width:calc(100vw - 24px);max-height:calc(100vh - 24px)}}
 

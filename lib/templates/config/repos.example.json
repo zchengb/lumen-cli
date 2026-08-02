@@ -6,17 +6,15 @@
       "default_branch": "main",
       "runtime_profile": "local-java-review-only",
       "allow_auto_fix": true,
-      "allow_pr": true,
       "automation": {
         "scan": {
-          "allow_auto_fix": true,
-          "allow_pr": true
+          "allow_auto_fix": true
         },
         "delivery": {
           "enabled": true
         },
         "patch": {
-          "enabled": false
+          "enabled": true
         }
       }
     },
@@ -26,17 +24,15 @@
       "default_branch": "master",
       "runtime_profile": "local-react-native-review-only",
       "allow_auto_fix": true,
-      "allow_pr": true,
       "automation": {
         "scan": {
-          "allow_auto_fix": true,
-          "allow_pr": true
+          "allow_auto_fix": true
         },
         "delivery": {
           "enabled": true
         },
         "patch": {
-          "enabled": false
+          "enabled": true
         }
       }
     }

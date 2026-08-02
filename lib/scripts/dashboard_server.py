@@ -287,10 +287,9 @@ def repository_automation(repository: dict[str, Any]) -> dict[str, dict[str, boo
     return {
         "scan": {
             "allow_auto_fix": bool(scan.get("allow_auto_fix", repository.get("allow_auto_fix", True))),
-            "allow_pr": bool(scan.get("allow_pr", repository.get("allow_pr", True))),
         },
         "delivery": {"enabled": bool(delivery.get("enabled", True))},
-        "patch": {"enabled": bool(patch.get("enabled", False))},
+        "patch": {"enabled": bool(patch.get("enabled", True))},
     }
 
 
@@ -469,7 +468,6 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
             "default_branch": branch,
             "runtime_profile": profile,
             "allow_auto_fix": automation["scan"]["allow_auto_fix"],
-            "allow_pr": automation["scan"]["allow_pr"],
             "automation": automation,
         })
         if "generate_tests" in repository:
@@ -525,11 +523,10 @@ def clone_repository(workspace: Path, url: object) -> dict[str, Any]:
         "default_branch": default_branch(destination),
         "runtime_profile": infer_profile(destination),
         "allow_auto_fix": True,
-        "allow_pr": True,
         "automation": {
-            "scan": {"allow_auto_fix": True, "allow_pr": True},
+            "scan": {"allow_auto_fix": True},
             "delivery": {"enabled": True},
-            "patch": {"enabled": False},
+            "patch": {"enabled": True},
         },
     })
     return save_repositories(workspace, repositories)
