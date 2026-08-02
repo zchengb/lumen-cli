@@ -25,7 +25,13 @@ import zlib
 from pathlib import Path
 from typing import Any
 
-from delivery_workspace import StoryContext, read_json, workspace_lumen_dir, write_json
+from delivery_workspace import (
+    StoryContext,
+    frontend_delivery_disabled_reasons,
+    read_json,
+    workspace_lumen_dir,
+    write_json,
+)
 
 
 FAILURE_CATEGORIES = {
@@ -45,6 +51,7 @@ FAILURE_CATEGORIES = {
     "session_unhealthy",
     "visual_difference",
     "cleanup_failed",
+    "frontend_delivery_disabled",
 }
 
 
@@ -823,6 +830,7 @@ def stage_result(category: str, detail: str, scenario: dict[str, Any]) -> dict[s
         "environment_failed": "environment", "runtime_failed": "runtime", "authentication_failed": "authentication",
         "fixture_failed": "fixture", "navigation_failed": "navigation", "stability_failed": "stability",
         "capture_failed": "capture", "visual_difference": "visual_comparison", "cleanup_failed": "cleanup",
+        "frontend_delivery_disabled": "environment",
     }
     stages[mapping[category]] = "failed"
     return {**scenario, "status": "failed", "failure_category": category, "summary": detail, "stages": stages}
@@ -835,9 +843,16 @@ def execute(
     runtime_env: dict[str, str] | None = None,
     runtime_running: bool = False,
 ) -> list[dict[str, Any]]:
+    disabled_reasons = frontend_delivery_disabled_reasons(context)
     contract = visual_contract(context.technical_plan)
     if not contract:
         return []
+    if disabled_reasons:
+        scenarios = scenarios if scenarios is not None else contract.get("scenarios", [])
+        detail = "Frontend delivery is disabled by policy: " + "; ".join(disabled_reasons)
+        results = [stage_result("frontend_delivery_disabled", detail, item) for item in scenarios]
+        merge_visual_result(result_path, contract["runtime"].get("runtime_profile", ""), results)
+        return results
     runtime_contract = contract["runtime"]
     repo_name = runtime_contract.get("repository", "")
     repo_target = next((repo for repo in context.repos if repo.name == repo_name), None)

@@ -10,6 +10,7 @@ from pathlib import Path
 from delivery_workspace import (
     StoryContext,
     delivery_result_path,
+    frontend_delivery_disabled_reasons,
     load_story_context,
     read_json,
     workspace_lumen_dir,
@@ -70,6 +71,8 @@ def catalog_when_applies(when: str, context: StoryContext | None) -> bool:
 def has_ui_runtime(context: StoryContext | None) -> bool:
     if context is None:
         return False
+    if frontend_delivery_disabled_reasons(context):
+        return False
     if visual_contract(context.technical_plan) is not None:
         return True
     config = read_json(repos_config(context.workspace_root), {"repositories": []})
@@ -80,6 +83,12 @@ def has_ui_runtime(context: StoryContext | None) -> bool:
         if platform in {"web", "react-native", "ios", "android", "native"}:
             return True
     return False
+
+
+def frontend_delivery_policy_block() -> str:
+    return """# Frontend Delivery Policy
+
+Frontend/Web/Native UI delivery is disabled. Do not modify frontend or UI source, implement Figma-to-code work, start a browser/device runtime, run visual QA, or claim visual delivery completion. Keep frontend work out of scope and report it as blocked for human review. Backend-only work may proceed only when it is independently deliverable without frontend changes."""
 
 
 def render_prompt_catalog(prompts_dir: Path, manifest: dict, context: StoryContext | None) -> str:
@@ -216,6 +225,8 @@ def repository_delivery_policies_block(context: StoryContext) -> str:
 
 
 def agent_quick_login_block(context: StoryContext) -> str:
+    if frontend_delivery_disabled_reasons(context):
+        return ""
     config = read_json(repos_config(context.workspace_root), {"repositories": []})
     sections: list[str] = []
     for repo in context.repos:
@@ -248,6 +259,8 @@ def agent_quick_login_block(context: StoryContext) -> str:
 
 
 def authenticated_web_session_block(context: StoryContext) -> str:
+    if frontend_delivery_disabled_reasons(context):
+        return ""
     current = workspace_lumen_dir(context.workspace_root) / "results" / "web-session" / "current.json"
     context_path = ""
     if current.is_file():
@@ -301,6 +314,8 @@ def authenticated_web_session_block(context: StoryContext) -> str:
 
 
 def visual_state_matrix_block(context: StoryContext) -> str:
+    if frontend_delivery_disabled_reasons(context):
+        return ""
     contract = visual_contract(context.technical_plan)
     if contract is None:
         return ""
@@ -336,6 +351,8 @@ Use the prepared session and every row in the Visual State Matrix. Read `05-visu
 
 
 def figma_mcp_block(context: StoryContext) -> str:
+    if frontend_delivery_disabled_reasons(context):
+        return ""
     contract = visual_contract(context.technical_plan)
     execution = context.delivery_config.get("execution", {}) if isinstance(context.delivery_config, dict) else {}
     if not isinstance(execution, dict) or execution.get("approve_mcps") is not True or contract is None:
@@ -428,6 +445,7 @@ The previous implementation already exists in the feature worktrees. Do not rest
 def compose_delivery_prompt(context: StoryContext, remediation: bool = False) -> str:
     parts = [
         compose_snippets(context),
+        frontend_delivery_policy_block(),
         render_context_block(context),
         repository_delivery_policies_block(context),
         agent_quick_login_block(context),

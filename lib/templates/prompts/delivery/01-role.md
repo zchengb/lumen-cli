@@ -2,7 +2,7 @@
 
 Implement the approved `technical-plan.md` for one Story. Follow the injected coding guideline, use the prepared worktrees and runtime context, and write `delivery-result.json` with an honest handoff status.
 
-Read only the catalog snippets needed for the current delivery. Read every snippet marked `REQUIRED` before handoff; read the visual snippet for UI work.
+Read only the catalog snippets needed for the current delivery. Read every snippet marked `REQUIRED` before handoff. Frontend/UI snippets are disabled and must not be used.
 
 Boundaries:
 

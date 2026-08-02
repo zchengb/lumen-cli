@@ -229,6 +229,8 @@ Valid `businessStatus` values:
 
 The Technical Loop may run in Codex, Cursor, or another compatible Agent. Read `standards/technical-loop.md` for the full contract.
 
+Frontend delivery is disabled. Do not approve or start a Story whose delivery includes Web, Native, mobile UI, frontend source changes, Figma-to-code work, browser/device runtime work, a Visual Delivery Contract, or visual QA. Keep that part out of scope or blocked; backend-only work may proceed only when it is independently deliverable without frontend changes.
+
 Before starting the Technical Loop, use the same preflight sync rules as the Business Loop.
 
 During the Technical Loop, the Agent should:
@@ -275,7 +277,7 @@ During the Development Loop, Lumen CLI should:
 2. Resolve code repositories from the configured workspace mapping.
 3. Create feature worktrees under `<workspace-root>/lumen/worktrees/<story-key>/<repository>/`.
 4. Run the delivery agent with the Lumen coding guideline.
-5. Let Lumen run verification after the Agent exits. Java uses host JDK/Testcontainers when required; App/PHP/frontend stay on lightweight checks.
+5. Let Lumen run verification after the Agent exits. Java uses host JDK/Testcontainers when required; App/PHP stay on lightweight checks. Frontend delivery is rejected before worktree creation.
 6. If mandatory verification fails, Lumen may invoke up to two bounded remediation rounds in the same worktree. Each round receives the failed-check evidence and may make only the smallest Story-scope correction. Lumen stops for human review after the configured limit.
 7. Record a repository-history-compatible `commit_subject` in `delivery-result.json`, but do not commit, push, or open a PR.
 7. Let Lumen commit, push, open PRs, update `metadata.json.deliveryStatus`, transition JIRA, send notifications, and archive the run.

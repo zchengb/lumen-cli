@@ -95,47 +95,9 @@ classDiagram
 |---|---|---|---|
 | TBD | TBD | `repository/path → symbol` | TBD |
 
-### Visual Delivery Contract (UI Stories Only)
+### Frontend Delivery (Disabled)
 
-For Figma-backed UI, inspect every referenced node with Figma MCP and record reproducible inputs. Every state in the matrix must have a fixture, approved reference, stable marker, and verification expectation before approval.
-
-#### Runtime
-
-| Property | Value |
-|---|---|
-| Repository | TBD |
-| Runtime profile | TBD |
-| Platform | web / react-native |
-| Navigation | `/path` |
-| Authentication | TBD |
-
-#### Design Source
-
-| Screen | Figma file | Node ID | Design context snapshot | Approved reference |
-|---|---|---|---|---|
-| TBD | `https://www.figma.com/design/...` | `123:456` | `assets/TBD.design.md` | `assets/TBD.png` |
-
-#### Visual State Matrix
-
-| Screen | State | Fixture | Reference | Stable marker | Maestro flow | Navigation | Viewport |
-|---|---|---|---|---|---|---|---|
-| TBD | Default | fixture name | `assets/TBD.png` | `data-testid` / native marker | optional | optional state path | optional `1440x900` |
-
-#### Visual Verification
-
-| Screen | State | Comparison | Maximum difference |
-|---|---|---|---|
-| TBD | Default | Full content area | `1%` / `N/A` with reason |
-
-#### Figma-to-Code Component Mapping
-
-| Figma component | Existing implementation | Delivery action |
-|---|---|---|
-| TBD | `path/to/component` | Reuse / extend / create |
-
-#### Platform Rules
-
-- State responsive, accessibility, overflow, loading, empty, error, and data-volume boundaries that affect this UI.
+Frontend/Web/Native UI delivery is disabled by policy. Do not add a Visual Delivery Contract, Figma-to-code mapping, frontend implementation steps, browser/device runtime work, or visual QA requirements to this plan. Record frontend work as out of scope or blocked and return to the Business Loop when the Story cannot be delivered without it. Backend-only work may proceed only when it is independently deliverable without frontend changes.
 
 ## 4. Change Contract & Implementation
 

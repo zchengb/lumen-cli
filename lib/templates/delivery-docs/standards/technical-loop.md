@@ -2,6 +2,10 @@
 
 The Technical Loop turns one concrete, business-ready `story.md` into one executable `technical-plan.md`. It may run in Codex, Cursor, or another Agent, but it must stay in planning mode: no application source code changes are allowed in this loop.
 
+## Frontend Delivery Policy
+
+Frontend delivery is disabled. The Technical Loop must not approve a plan whose delivery includes Web, Native, mobile UI, frontend source changes, Figma-to-code work, a Visual Delivery Contract, browser/device runtime work, or visual QA. Keep that portion out of scope and return to the Business Loop when the Story cannot be delivered without it. Backend-only work may proceed only when it is independently deliverable without frontend changes.
+
 ## Inputs
 
 - `story.md`
@@ -59,7 +63,7 @@ Do not start the Development Loop until:
 10. Publish a naming contract for changed/new public methods, persisted fields, API fields, DTO properties, and key local variables whose semantics can be confused with an existing concept.
 11. Produce a file-level implementation plan detailed enough for another engineer or Agent to implement without guessing.
 12. Add concise Repository Evidence for important decisions: decision, repository path and symbol, and what it proves. Paste only a 3-8 line excerpt when a path and symbol are insufficient.
-13. For a UI Story with a Figma URL, use the available Figma MCP to inspect every referenced node before approval. Commit a concise `assets/<screen>.design.md` snapshot with the node URL/ID, capture time, layout, typography, spacing, colors, variants, and represented states. Add both that snapshot and the approved reference image to the Visual Delivery Contract. If Figma MCP is unavailable or cannot read the node, keep the plan draft and record the blocker; do not replace live design context with a screenshot alone.
+13. If the Story requires a UI, frontend, Figma-to-code, browser/device, or visual-delivery change, keep that delivery scope out of the Technical Loop and record it as out of scope or blocked. Do not call Figma MCP or create a Visual Delivery Contract for it.
 14. If inspection reveals a business ambiguity affecting ACs, rules, user-visible behavior, actor/role, permission/data visibility, scope, failure behavior, or promised freshness/timing/availability, keep draft, show evidence and options, and return to Business Loop; do not modify `story.md` from this loop.
 15. Before approval, confirm investigation, profile, questions, concrete verification, and Plan Quality Bar are complete with no blocking TBD. Present profile/reason, repositories, approach, important decisions, applicable impacts, verification, risks, and Out of Scope. Ask: `A. Approve this Technical Plan`, `B. Continue refining`, `C. Keep it as draft`, or `D. Request a Business Loop revision`.
 16. Only explicit A may set `technicalStatus` to `approved`. A substantive later change returns it to draft and requires approval again; formatting-only changes do not.
@@ -111,8 +115,8 @@ The Agent should actively check these areas and ask only when the answer is not 
 - Data model: tables, migrations, indexes, default values, backfill, rollback, and data retention. Do not plan database foreign keys; use application-level relationship validation and ordinary indexes where needed.
 - Integration boundary: upstream/downstream services, queues, scheduled jobs, email/SMS/push providers, and failure handling.
 - Runtime and environment: Java version, project-provided Dockerfile, runtime profile, secrets, config keys, and local limitations.
-- Visual/UI design: for every Figma-backed UI Story, confirm Figma MCP can read each node and commit the matching `assets/*.design.md` design-context snapshot plus approved reference image. Treat missing MCP design context as an approval blocker, not a Delivery-time discovery.
-- Verification: identify the repository's actual test capability first. For Java, plan compile/static analysis, focused unit tests, integration tests, and architecture guards when those patterns exist. For App/PHP/frontend repos, plan only syntax/type/lint and explicitly permitted focused tests; do not assume heavy environment-dependent builds.
+- Visual/UI design: frontend and visual delivery are disabled. Do not plan UI implementation, Figma-to-code, browser/device QA, or Visual Delivery Contract work; keep it out of scope or blocked.
+- Verification: identify the repository's actual test capability first. For Java, plan compile/static analysis, focused unit tests, integration tests, and architecture guards when those patterns exist. For App/PHP repos, plan only syntax/type/lint and explicitly permitted focused tests; do not assume heavy environment-dependent builds.
 - Permission and data scope: identify affected actors, roles/permissions, ownership, tenant/dealer scope, audit expectations, and the matching authorization test pattern.
 - Observability: logs, metrics, audit trail, alerting, and support diagnostics.
 - Rollout and rollback: feature flags, config switch, release sequencing, and rollback plan.
@@ -189,7 +193,7 @@ Reject your own draft and keep refining when:
 - The plan changes a protected flow without naming its actor, permission/data scope, and verification approach.
 - The plan ignores an existing architecture guard or claims tests that the repository does not actually support.
 - The plan assumes Docker commands when the repository does not provide or reference a usable Dockerfile/profile.
-- The plan asks App/PHP/frontend projects to run heavy environment-dependent builds when only syntax/light checks are expected.
+- The plan asks App/PHP projects to run heavy environment-dependent builds when only syntax/light checks are expected.
 
 ## Approval
 

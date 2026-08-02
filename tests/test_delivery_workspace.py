@@ -28,6 +28,7 @@ from delivery_workspace import (  # noqa: E402
     StoryContext,
     discover_git_repos,
     ensure_feature_worktree,
+    frontend_delivery_disabled_reasons,
     load_workspace_config,
     story_worktrees_dir,
     validate_story_gates,
@@ -858,12 +859,10 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 workspace_config={},
             )
             prompt = compose_delivery_prompt(context)
-            self.assertIn("05-visual-delivery.md", prompt)
-            self.assertIn("REQUIRED", prompt)
-            self.assertIn("# Visual State Matrix (verify every row)", prompt)
-            self.assertIn("Dealer | Disabled", prompt)
-            self.assertIn("# Visual QA", prompt)
-            self.assertIn("05-visual-delivery.md", prompt)
+            self.assertIn("# Frontend Delivery Policy", prompt)
+            self.assertNotIn("05-visual-delivery.md", prompt)
+            self.assertNotIn("# Visual State Matrix (verify every row)", prompt)
+            self.assertNotIn("# Visual QA", prompt)
             self.assertNotIn("# Implementation Rules", prompt.split("# Delivery Context")[0])
 
     def test_generic_ui_delivery_prompt_applies_without_visual_contract(self) -> None:
@@ -894,9 +893,37 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
             prompt = compose_delivery_prompt(context)
 
-            self.assertIn("05-visual-delivery.md", prompt)
-            self.assertIn("Mandatory whole-screen rendered UI inspection checklist", prompt)
-        self.assertIn("# Visual QA", prompt)
+            self.assertIn("# Frontend Delivery Policy", prompt)
+            self.assertNotIn("05-visual-delivery.md", prompt)
+            self.assertNotIn("# Visual QA", prompt)
+
+    def test_frontend_delivery_is_disabled_before_worktree_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            story_dir = workspace / "stories" / "DEMO-ui"
+            story_dir.mkdir(parents=True)
+            (workspace / "lumen" / "config").mkdir(parents=True)
+            (workspace / "lumen" / "config" / "repos.json").write_text(
+                json.dumps({"repositories": [{"name": "portal", "runtime": {"platform": "web"}}]}),
+                encoding="utf-8",
+            )
+            context = StoryContext(
+                docs_dir=workspace,
+                workspace_root=workspace,
+                story_dir=story_dir,
+                story_md=story_dir / "story.md",
+                technical_plan=story_dir / "technical-plan.md",
+                metadata_path=story_dir / "metadata.json",
+                metadata={},
+                repos=[RepoTarget("portal", workspace / "repo", workspace / "worktree")],
+                branch_name="feature/DEMO-ui",
+                delivery_config={},
+                workspace_config={},
+            )
+
+            reasons = frontend_delivery_disabled_reasons(context)
+
+            self.assertEqual(["repository 'portal' uses web"], reasons)
 
     def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1050,7 +1077,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("Full test suite", prompt)
             self.assertNotIn('"label": "PMD"', prompt)
 
-    def test_figma_mcp_is_prompted_only_when_explicitly_approved(self) -> None:
+    def test_figma_mcp_is_disabled_even_when_explicitly_approved(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
             story_dir = workspace / "stories" / "MBPAS-101-figma"
@@ -1071,14 +1098,13 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 delivery_config={"execution": {"approve_mcps": True}}, workspace_config={},
             )
             prompt = compose_delivery_prompt(context)
-            self.assertIn("# Approved Figma Design Context", prompt)
-            self.assertIn("Figma MCP access is explicitly approved for this delivery.", prompt)
-            self.assertIn("node 12:34", prompt)
-            self.assertIn("assets/home.context.json", prompt)
+            self.assertIn("# Frontend Delivery Policy", prompt)
+            self.assertNotIn("# Approved Figma Design Context", prompt)
+            self.assertNotIn("Figma MCP access is explicitly approved for this delivery.", prompt)
             context.delivery_config = {"execution": {"approve_mcps": False}}
             self.assertNotIn("Figma MCP access is explicitly approved for this delivery.", compose_delivery_prompt(context))
 
-    def test_quick_login_block_is_injected_from_repos_runtime(self) -> None:
+    def test_quick_login_block_is_disabled_for_frontend_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
             lumen = workspace / "lumen" / "config"
@@ -1127,8 +1153,9 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 workspace_config={},
             )
             prompt = compose_delivery_prompt(context)
-            self.assertIn("# Quick Login", prompt)
-            self.assertIn("POST http://127.0.0.1:3000/oauth-proxy-api/auth/admin/fake", prompt)
+            self.assertIn("# Frontend Delivery Policy", prompt)
+            self.assertNotIn("# Quick Login", prompt)
+            self.assertNotIn("POST http://127.0.0.1:3000/oauth-proxy-api/auth/admin/fake", prompt)
             self.assertNotIn("TEST-WIW", prompt)
             self.assertNotIn("LUMEN_VISUAL_AUTH_DIGITAL_PLATFORM_ADMIN", prompt)
 

@@ -15,6 +15,7 @@ from visual_delivery import (  # noqa: E402
     configured_node_version,
     dependencies_installed,
     detect_runtime,
+    execute,
     merge_visual_result,
     matching_scenarios,
     redact,
@@ -234,6 +235,37 @@ class VisualDeliveryTests(unittest.TestCase):
             payload = json.loads(result.read_text(encoding="utf-8"))
             self.assertEqual(1, len(payload["verification_results"]))
             self.assertEqual("passed", payload["verification_results"][0]["status"])
+
+    def test_visual_execution_is_blocked_before_runtime_start(self) -> None:
+        from delivery_workspace import RepoTarget, StoryContext
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            story = root / "stories" / "DEMO"
+            story.mkdir(parents=True)
+            plan = story / "technical-plan.md"
+            plan.write_text(PLAN, encoding="utf-8")
+            result = root / "results" / "delivery-result.json"
+            result.parent.mkdir(parents=True)
+            result.write_text("{}\n", encoding="utf-8")
+            context = StoryContext(
+                docs_dir=root,
+                workspace_root=root,
+                story_dir=story,
+                story_md=story / "story.md",
+                technical_plan=plan,
+                metadata_path=story / "metadata.json",
+                metadata={},
+                repos=[RepoTarget("app", root / "app", root / "worktree")],
+                branch_name="feature/DEMO",
+                delivery_config={},
+                workspace_config={},
+            )
+
+            results = execute(context, result)
+
+            self.assertEqual("frontend_delivery_disabled", results[0]["failure_category"])
+            self.assertEqual("failed", json.loads(result.read_text(encoding="utf-8"))["visual_verification"]["status"])
 
     def test_secret_redaction_covers_visual_runtime_values(self) -> None:
         self.assertEqual(

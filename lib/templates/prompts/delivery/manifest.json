@@ -25,8 +25,8 @@
     },
     {
       "file": "05-visual-delivery.md",
-      "title": "Visual delivery QA",
-      "description": "Mandatory whole-screen rendered UI inspection checklist for Web and Native UI delivery.",
+      "title": "Frontend delivery disabled",
+      "description": "Frontend visual delivery is disabled by policy.",
       "when": "ui_runtime"
     }
   ]

@@ -6,6 +6,8 @@ The Development Loop implements an approved `technical-plan.md` in code. It is e
 lumen delivery run --story <JIRA-KEY-or-slug>
 ```
 
+Frontend delivery is disabled. A Story linked to a Web, Native, mobile UI, or explicitly visual frontend repository is rejected before worktree creation. Do not implement frontend source, Figma-to-code work, browser/device runtime work, or visual QA; keep it out of scope or blocked. Backend-only work may proceed only when it is independently deliverable without frontend changes.
+
 ## Workspace Layout
 
 Code repositories live inside this docs project:
@@ -60,7 +62,7 @@ Do not run `lumen delivery run` until:
    - `technical-plan.md`
    - Lumen coding guideline
 6. Agent writes `delivery-result.json` under the workspace root `lumen/results/`.
-7. Lumen reruns the repository-specific verification profile from the approved plan. Java repositories run compile, PMD when configured, and their full Gradle test suite; App/PHP/frontend repositories run only lightweight local syntax/type/lint checks and never run native builds by default.
+7. Lumen reruns the repository-specific verification profile from the approved plan. Java repositories run compile, PMD when configured, and their full Gradle test suite; App/PHP repositories run only lightweight local syntax/type/lint checks. Frontend delivery is rejected before verification.
 8. Lumen commits verified changes, pushes only feature branches, and opens one PR per repository.
 9. Lumen updates `metadata.json`, moves JIRA to `DEV DONE`, sends `delivery.dev_done`, and archives the run history.
 

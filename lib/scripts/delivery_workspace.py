@@ -38,6 +38,38 @@ class StoryContext:
     workspace_config: dict[str, Any]
 
 
+FRONTEND_RUNTIME_PLATFORMS = {"web", "react-native", "ios", "android", "native"}
+FRONTEND_PROFILE_MARKERS = ("frontend", "web-", "web_", "react-native", "ios-", "android-")
+
+
+def frontend_delivery_disabled_reasons(context: StoryContext) -> list[str]:
+    """Return the explicit reasons this delivery belongs to the disabled UI scope."""
+    reasons: list[str] = []
+    try:
+        plan_text = context.technical_plan.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        plan_text = ""
+    if re.search(r"(?mi)^#{1,6}\s+Visual Delivery Contract\b", plan_text):
+        reasons.append("technical-plan.md contains a Visual Delivery Contract")
+
+    config = read_json(workspace_lumen_dir(context.workspace_root) / "config" / "repos.json", {"repositories": []})
+    entries = config.get("repositories") if isinstance(config.get("repositories"), list) else []
+    by_name = {
+        str(item.get("name", "")).strip(): item
+        for item in entries
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
+    for repo in context.repos:
+        entry = by_name.get(repo.name, {})
+        runtime = entry.get("runtime") if isinstance(entry, dict) else None
+        platform = str(runtime.get("platform", "")).strip().casefold() if isinstance(runtime, dict) else ""
+        profile = str(entry.get("runtime_profile", "")).strip().casefold() if isinstance(entry, dict) else ""
+        if platform in FRONTEND_RUNTIME_PLATFORMS or any(marker in profile for marker in FRONTEND_PROFILE_MARKERS):
+            detail = platform or profile or "frontend runtime"
+            reasons.append(f"repository '{repo.name}' uses {detail}")
+    return reasons
+
+
 def read_json(path: Path, default: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     if not path.is_file():
         return default or {}

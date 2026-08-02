@@ -16,4 +16,4 @@ When given `# Verification Remediation Context`, diagnose only the listed failur
 
 ## Stop conditions
 
-Set `delivery_status` to `blocked` when the plan lacks required detail, a required concept or identifier is ambiguous, a worktree is unavailable, or the session needed for visual QA cannot be established. Do not move Jira status manually.
+Set `delivery_status` to `blocked` when the plan lacks required detail, a required concept or identifier is ambiguous, a worktree is unavailable, frontend/UI delivery is requested, or a required environment cannot be established. Do not move Jira status manually.

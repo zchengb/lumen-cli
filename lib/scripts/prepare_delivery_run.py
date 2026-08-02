@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from delivery_workspace import load_story_context, prepare_story_for_delivery
+from delivery_workspace import frontend_delivery_disabled_reasons, load_story_context, prepare_story_for_delivery
 
 
 def main() -> int:
@@ -25,6 +25,11 @@ def main() -> int:
 
     try:
         context = load_story_context(Path(args.docs_dir), args.story)
+        frontend_reasons = frontend_delivery_disabled_reasons(context)
+        if frontend_reasons:
+            raise RuntimeError(
+                "Frontend delivery is disabled by policy: " + "; ".join(frontend_reasons)
+            )
         messages = [] if args.dry_run else prepare_story_for_delivery(context)
         payload = {
             "docs_dir": str(context.docs_dir),
