@@ -636,12 +636,15 @@ function App() {
   const [settingsDirty, setSettingsDirty] = useState(false);
   const [observatoryDirty, setObservatoryDirty] = useState(false);
   const [gitConflict, setGitConflict] = useState<RecordValue | null>(null);
+  const loadSequence = useRef(0);
   const notify = useCallback<Notify>((message, tone = "info") => setNotice({ message, tone }), []);
 
   const load = async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
     try {
       const next = await request("/api/state", project);
+      if (sequence !== loadSequence.current) return;
       setData(next);
       const conflict = next.interactive?.workspace?.git_sync_conflict;
       setGitConflict(conflict && typeof conflict === "object" && ["repo", "branch", "remote_oid", "local_oid"].every((key) => String(conflict[key] || "").trim()) ? conflict : null);
@@ -649,10 +652,11 @@ function App() {
       if (!project && next.interactive?.project) setProject(next.interactive.project);
       setError("");
     } catch (err) {
+      if (sequence !== loadSequence.current) return;
       const staticData = window.DASHBOARD_DATA;
       if (staticData) { setData(staticData); setError("Static report mode: interactive actions are unavailable."); }
       else setError(err instanceof Error ? err.message : "Unable to load Dashboard state");
-    } finally { setLoading(false); }
+    } finally { if (sequence === loadSequence.current) setLoading(false); }
   };
 
   useEffect(() => { void load(); const id = window.setInterval(load, 5_000); return () => window.clearInterval(id); }, [project]);
@@ -1555,14 +1559,15 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const saveAll = async () => {
     try {
       if (!scanModel.trim() || !deliveryModel.trim() || !patchModel.trim()) throw new Error("Choose a preset or enter a Cursor-supported model ID for all workflows.");
-      await Promise.all([
-        request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel.trim(), delivery_model: deliveryModel.trim(), patch_model: patchModel.trim(), feishu_notifications_enabled: feishuEnabled } }),
-        request("/api/schedule", project, { method: "POST", json: scanEnabled ? { kind: "scan", action: "save", cron: scanCron } : { kind: "scan", action: "remove" } }),
-        request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_statuses: eligibleStatuses, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }),
-        request("/api/schedule", project, { method: "POST", json: patchEnabled ? { kind: "patch", action: "save", interval_minutes: Number(patchInterval), jira_statuses: patchStatuses, issue_types: ["Task", "Bug"], in_progress_status: patchStartStatus, done_status: patchDoneStatus, blocked_status: patchBlockedStatus } : { kind: "patch", action: "remove" } }),
-        request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode, patch_mode: patchPublishMode } }),
-        ...Object.entries(changedSecrets).map(([key, value]) => request("/api/integration", project, { method: "POST", json: { key, value } }))
-      ]);
+      const saves = [
+        () => request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel.trim(), delivery_model: deliveryModel.trim(), patch_model: patchModel.trim(), feishu_notifications_enabled: feishuEnabled } }),
+        () => request("/api/schedule", project, { method: "POST", json: scanEnabled ? { kind: "scan", action: "save", cron: scanCron } : { kind: "scan", action: "remove" } }),
+        () => request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_statuses: eligibleStatuses, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }),
+        () => request("/api/schedule", project, { method: "POST", json: patchEnabled ? { kind: "patch", action: "save", interval_minutes: Number(patchInterval), jira_statuses: patchStatuses, issue_types: ["Task", "Bug"], in_progress_status: patchStartStatus, done_status: patchDoneStatus, blocked_status: patchBlockedStatus } : { kind: "patch", action: "remove" } }),
+        () => request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode, patch_mode: patchPublishMode } }),
+        ...Object.entries(changedSecrets).map(([key, value]) => () => request("/api/integration", project, { method: "POST", json: { key, value } }))
+      ];
+      for (const save of saves) await save();
       setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved", "success"); await reload();
     } catch (err) { notify(err instanceof Error ? err.message : "Unable to save Settings", "error"); }
   };

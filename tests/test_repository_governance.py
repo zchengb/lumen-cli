@@ -82,6 +82,20 @@ class RepositoryGovernanceTests(unittest.TestCase):
             self.assertTrue(saved["automation"]["patch"]["enabled"])
             self.assertFalse(saved["allow_auto_fix"])
 
+    def test_save_persists_auto_patch_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace, repository = self.make_workspace(Path(directory))
+            save_repositories(workspace, [{
+                "name": "service", "path": str(repository), "default_branch": "main", "runtime_profile": "local-java-review-only",
+                "automation": {"scan": {"allow_auto_fix": True}, "delivery": {"enabled": True}, "patch": {"enabled": False}},
+            }])
+            saved = json.loads((workspace / "config" / "repos.json").read_text(encoding="utf-8"))["repositories"][0]
+            self.assertFalse(saved["automation"]["patch"]["enabled"])
+            self.assertFalse(workspace_payload(workspace)["repositories"][0]["automation"]["patch"]["enabled"])
+            selected, reason = select_repository(workspace.parent, {"fields": {"labels": ["service"]}})
+            self.assertIsNone(selected)
+            self.assertIn("Auto Patch is disabled", reason)
+
     def test_patch_and_delivery_respect_repository_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace, repository = self.make_workspace(Path(directory))

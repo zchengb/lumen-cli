@@ -419,11 +419,11 @@ def repository_name_from_url(url: str) -> str:
     return name
 
 
-def auto_commit_delivery_config(workspace: Path, summary: str = "update delivery config") -> str:
+def auto_commit_delivery_config(workspace: Path, summary: str = "update delivery config", *, push: bool = True) -> str:
     docs_dir = docs_dir_for_workspace(workspace)
     if not (docs_dir / ".git").exists():
         return "skipped"
-    return commit_dirty_config(docs_dir, summary, push=True)
+    return commit_dirty_config(docs_dir, summary, push=push)
 
 
 def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
@@ -497,7 +497,9 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
             ]
     write_json(workspace / "config" / "repos.json", {"repositories": cleaned})
     write_json(workspace / "config" / "delivery.json", delivery)
-    auto_commit_delivery_config(workspace)
+    # Repository governance is edited interactively; do not block the Save
+    # request on a remote fetch/rebase/push or trigger credential helpers.
+    auto_commit_delivery_config(workspace, push=False)
     return workspace_payload(workspace)
 
 
@@ -552,7 +554,7 @@ def save_delivery_steps(workspace: Path, repository: str, commands: object) -> d
     return workspace_payload(workspace)
 
 
-def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object, patch_mode: object = "pr") -> dict[str, Any]:
+def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object, patch_mode: object = "pr", *, push: bool = True) -> dict[str, Any]:
     modes = {"pr", "merge", "direct"}
     if scan_mode not in modes or delivery_mode not in modes or patch_mode not in {"pr", "direct"}:
         raise ValueError("Publish mode must be PR, Merge, or Direct push")
@@ -565,7 +567,7 @@ def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: objec
     delivery.setdefault("publish", {})["mode"] = delivery_mode
     delivery.setdefault("publish", {}).setdefault("auto_patch", {})["mode"] = patch_mode
     write_json(delivery_path, delivery)
-    auto_commit_delivery_config(workspace)
+    auto_commit_delivery_config(workspace, push=push)
     return workspace_payload(workspace)
 
 
@@ -692,7 +694,7 @@ def feishu_notifications_enabled(workspace: Path) -> bool:
     return True
 
 
-def save_feishu_notifications(workspace: Path, enabled: bool) -> dict[str, Any]:
+def save_feishu_notifications(workspace: Path, enabled: bool, *, push: bool = True) -> dict[str, Any]:
     for relative in ("config/common.json", "config/delivery.json"):
         path = workspace / relative
         config = load_json(path, {})
@@ -706,7 +708,7 @@ def save_feishu_notifications(workspace: Path, enabled: bool) -> dict[str, Any]:
             notifications["feishu"] = feishu
         feishu["enabled"] = enabled
         write_json(path, config)
-    auto_commit_delivery_config(workspace)
+    auto_commit_delivery_config(workspace, push=push)
     return workspace_payload(workspace)
 
 
@@ -1506,7 +1508,7 @@ class DashboardServer(ThreadingHTTPServer):
         auto_commit_delivery_config(workspace)
         return observability["agent_trace"]
 
-    def update_schedule(self, body: dict[str, Any], workspace: Path, project: str) -> dict[str, Any]:
+    def update_schedule(self, body: dict[str, Any], workspace: Path, project: str, *, push: bool = True) -> dict[str, Any]:
         kind = str(body.get("kind", ""))
         action = str(body.get("action", ""))
         if kind not in {"scan", "delivery", "patch"} or action not in {"save", "remove"}:
@@ -1521,13 +1523,13 @@ class DashboardServer(ThreadingHTTPServer):
                 scheduled = automation.setdefault("scheduled_delivery", {})
                 scheduled["enabled"] = False
                 write_json(config_path, config)
-                auto_commit_delivery_config(workspace)
+                auto_commit_delivery_config(workspace, push=push)
             if kind == "patch":
                 config_path = workspace / "config" / "delivery.json"
                 config = load_json(config_path, {})
                 config.setdefault("automation", {}).setdefault("scheduled_auto_patch", {})["enabled"] = False
                 write_json(config_path, config)
-                auto_commit_delivery_config(workspace)
+                auto_commit_delivery_config(workspace, push=push)
             return schedule_payload(workspace, project)
 
         if kind == "scan":
@@ -1580,7 +1582,7 @@ class DashboardServer(ThreadingHTTPServer):
                 jira["dev_done_status"] = dev_done_status
             jira["blocked_status"] = blocked_status
             write_json(config_path, config)
-            auto_commit_delivery_config(workspace)
+            auto_commit_delivery_config(workspace, push=push)
         else:
             interval = int(body.get("interval_minutes", 0))
             if interval < 1:
@@ -1606,7 +1608,7 @@ class DashboardServer(ThreadingHTTPServer):
                 if value:
                     scheduled[key] = value
             write_json(config_path, config)
-            auto_commit_delivery_config(workspace)
+            auto_commit_delivery_config(workspace, push=push)
         return schedule_payload(workspace, project)
 
 
@@ -1698,7 +1700,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 issue = set_issue_status(workspace, issue_id, "ignored", str(body.get("reason", "")).strip())
                 return self.respond_json(HTTPStatus.OK, {"issue": issue})
             if parsed.path == "/api/schedule":
-                return self.respond_json(HTTPStatus.OK, {"schedules": self.server.update_schedule(body, workspace, project)})
+                return self.respond_json(HTTPStatus.OK, {"schedules": self.server.update_schedule(body, workspace, project, push=False)})
             if parsed.path == "/api/prompt":
                 path = safe_prompt_path(workspace, str(body.get("mode", "")), str(body.get("path", "")))
                 if not path.is_file():
@@ -1728,22 +1730,27 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 if not isinstance(execution, dict):
                     raise ValueError("Invalid workspace execution configuration")
                 execution["scan_window_days"] = days
-                if str(body.get("scan_model") or "").strip():
-                    execution["model"] = str(body["scan_model"]).strip()
+                scan_model = str(body.get("scan_model") or "").strip()
+                if scan_model:
+                    execution["model"] = scan_model
                 write_json(path, config)
                 delivery_model = str(body.get("delivery_model") or "").strip()
-                if delivery_model:
+                patch_model = str(body.get("patch_model") or "").strip()
+                if delivery_model or patch_model:
                     delivery_path = workspace / "config" / "delivery.json"
                     delivery = load_json(delivery_path, {})
-                    delivery.setdefault("execution", {})["model"] = delivery_model
-                    patch_model = str(body.get("patch_model") or "").strip()
+                    delivery_execution = delivery.setdefault("execution", {})
+                    if not isinstance(delivery_execution, dict):
+                        raise ValueError("Invalid delivery execution configuration")
+                    if delivery_model:
+                        delivery_execution["model"] = delivery_model
                     if patch_model:
-                        delivery.setdefault("execution", {})["patch_model"] = patch_model
+                        delivery_execution["patch_model"] = patch_model
                     write_json(delivery_path, delivery)
                 if "feishu_notifications_enabled" in body:
-                    save_feishu_notifications(workspace, bool(body.get("feishu_notifications_enabled")))
+                    save_feishu_notifications(workspace, bool(body.get("feishu_notifications_enabled")), push=False)
                 else:
-                    auto_commit_delivery_config(workspace)
+                    auto_commit_delivery_config(workspace, push=False)
                 return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
             if parsed.path == "/api/integration":
                 update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))
@@ -1763,7 +1770,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             if parsed.path == "/api/publish-policy":
                 return self.respond_json(
                     HTTPStatus.OK,
-                    {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"), body.get("patch_mode", "pr"))},
+                    {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"), body.get("patch_mode", "pr"), push=False)},
                 )
             if parsed.path == "/api/observability":
                 return self.respond_json(HTTPStatus.OK, {"agent_trace": self.server.update_observability(workspace, body)})

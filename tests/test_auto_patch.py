@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import argparse
+import json
+import plistlib
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,7 +16,7 @@ import sys
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from patch_launchd import interval_minutes_from_cron  # noqa: E402
+from patch_launchd import interval_minutes_from_cron, status as patch_schedule_status  # noqa: E402
 from patch_runtime import (  # noqa: E402
     candidate_jql,
     has_external_reply,
@@ -49,6 +54,15 @@ class AutoPatchTests(unittest.TestCase):
         self.assertEqual(5, interval_minutes_from_cron("*/5 * * * *"))
         self.assertIsNone(interval_minutes_from_cron("5 * * * *"))
         self.assertIsNone(interval_minutes_from_cron("*/0 * * * *"))
+
+    def test_launchd_status_reports_an_installed_patch_schedule_as_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "patch.plist"
+            path.write_bytes(plistlib.dumps({"StartInterval": 300}))
+            output = StringIO()
+            with patch("patch_launchd.plist_path", return_value=path), redirect_stdout(output):
+                self.assertEqual(0, patch_schedule_status(argparse.Namespace(project="demo")))
+        self.assertTrue(json.loads(output.getvalue())["enabled"])
 
 
 if __name__ == "__main__":

@@ -82,7 +82,7 @@ def status(args: argparse.Namespace) -> int:
         interval = int(payload.get("StartInterval") or 0)
     except (OSError, ValueError, plistlib.InvalidFileException):
         interval = 0
-    print(json.dumps({"path": str(path), "interval_seconds": interval}))
+    print(json.dumps({"enabled": interval > 0, "path": str(path), "interval_seconds": interval}))
     return 0
 
 

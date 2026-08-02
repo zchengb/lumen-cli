@@ -656,8 +656,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             subprocess.run(["git", "init", str(repository)], check=True, capture_output=True)
             config = workspace / "config"
             config.mkdir(parents=True)
-            (config / "common.json").write_text("{}\n", encoding="utf-8")
-            (config / "delivery.json").write_text("{}\n", encoding="utf-8")
+            (config / "common.json").write_text(json.dumps({"execution": {"model": "scan-custom-model"}}) + "\n", encoding="utf-8")
+            (config / "delivery.json").write_text(json.dumps({"execution": {"model": "delivery-custom-model", "patch_model": "patch-custom-model"}}) + "\n", encoding="utf-8")
             (config / "runtime-profiles.json").write_text(
                 json.dumps({"local-java-review-only": {"language": "java", "validation": "review only"}}),
                 encoding="utf-8",
@@ -685,7 +685,10 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             common = json.loads((config / "common.json").read_text(encoding="utf-8"))
             self.assertEqual(["./gradlew", "test"], delivery["verification"]["steps"]["service"][0]["command"])
             self.assertEqual("merge", delivery["publish"]["mode"])
+            self.assertEqual("delivery-custom-model", delivery["execution"]["model"])
+            self.assertEqual("patch-custom-model", delivery["execution"]["patch_model"])
             self.assertEqual("pr", common["auto_fix"]["publish_mode"])
+            self.assertEqual("scan-custom-model", common["execution"]["model"])
             log = subprocess.run(
                 ["git", "-C", str(docs), "log", "-1", "--format=%s"],
                 check=True,
