@@ -688,7 +688,7 @@ function App() {
     if (tab !== "observatory") setObservatoryDirty(false);
   };
   const interact = async (path: string, json: RecordValue, message: string): Promise<boolean> => {
-    try { await request(path, project, { method: "POST", json }); notify(message, "success"); await load(); return true; }
+    try { await request(path, project, { method: "POST", json }); notify(message, "success"); void load(); return true; }
     catch (err) { notify(err instanceof Error ? err.message : "Request failed", "error"); return false; }
   };
   const projects = data?.interactive?.projects || [];
@@ -1214,7 +1214,7 @@ function ObservatoryView({ project, notify, onDirtyChange }: { project: string; 
             </h2>
             <div className="panel-actions observatory-actions">
               {canStartDelivery && <button type="button" className="button secondary" disabled={startBusy || loadingContent} onClick={openStartDelivery}><Play size={14} />Start delivery</button>}
-              <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}><Save size={14} />{saving ? "Saving…" : "Save"}</button>
+              <button type="button" className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving || loadingContent} onClick={() => void save()}>{saving ? <LoaderCircle size={14} className="spin" /> : <Save size={14} />}{saving ? "Saving…" : "Save"}</button>
             </div>
           </div>
           <div className="observatory-subheader">
@@ -1348,6 +1348,7 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
   const [mode, setMode] = useState<"scan" | "delivery" | "patch">("scan");
   const [selected, setSelected] = useState<{ mode: "scan" | "delivery" | "patch"; path: string } | null>(null);
   const [content, setContent] = useState("");
+  const [saving, setSaving] = useState(false);
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [fullscreen, setFullscreen] = useState(false);
   const pointer = useRef<{ id: number; x: number; y: number } | null>(null);
@@ -1357,6 +1358,12 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
     setSelected(item);
     try { const response = await request(`/api/prompt?mode=${encodeURIComponent(item.mode)}&path=${encodeURIComponent(item.path)}`, project); setContent(response.content); }
     catch (err) { notify(err instanceof Error ? err.message : "Unable to load prompt", "error"); }
+  };
+  const savePrompt = async () => {
+    if (!selected || saving) return;
+    setSaving(true);
+    try { await interact("/api/prompt", { mode: selected.mode, path: selected.path, content }, "Prompt saved"); }
+    finally { setSaving(false); }
   };
   const switchMode = (next: "scan" | "delivery" | "patch") => { setMode(next); setSelected(null); setContent(""); setView({ x: 0, y: 0, scale: 1 }); };
   useEffect(() => {
@@ -1404,13 +1411,13 @@ function PromptsView({ data, project, interact, notify }: { data: DashboardData;
         })}</div>{columnIndex < columns.length - 1 && <span className="workflow-connector" aria-hidden="true" />}</section>;
       })}</div><div className="workflow-retry"><RotateCcw size={14} /><span><strong>{mode === "delivery" ? "Remediation retry" : mode === "patch" ? "Blocked-question retry" : "Safe-fix re-review"}</strong><small>{mode === "delivery" ? "Verification failure → prepare_delivery_remediation.py → implementation agent → verification" : mode === "patch" ? "External Jira reply → capture context → rerun the complete patch flow" : "High-confidence finding → auto_fix_sync.py → focused validation → pull request"}</small></span></div></div></div>
     </Panel>
-    {selected && <PromptInspectorDialog item={selected} content={content} onChange={setContent} onClose={() => { setSelected(null); setContent(""); }} onSave={() => void interact("/api/prompt", { mode: selected.mode, path: selected.path, content }, "Prompt saved")} />}
+    {selected && <PromptInspectorDialog item={selected} content={content} saving={saving} onChange={setContent} onClose={() => { if (!saving) { setSelected(null); setContent(""); } }} onSave={() => void savePrompt()} />}
   </>;
 }
 
-function PromptInspectorDialog({ item, content, onChange, onClose, onSave }: { item: { mode: "scan" | "delivery" | "patch"; path: string }; content: string; onChange: (value: string) => void; onClose: () => void; onSave: () => void }) {
+function PromptInspectorDialog({ item, content, saving, onChange, onClose, onSave }: { item: { mode: "scan" | "delivery" | "patch"; path: string }; content: string; saving: boolean; onChange: (value: string) => void; onClose: () => void; onSave: () => void }) {
   const meta = promptMeta(item);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : item.mode === "delivery" ? "Auto Delivery" : "Auto Patch"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} /></label><article className="markdown-preview"><span>Preview</span><MarkdownBody content={content} /></article></div></div><footer><button className="button" onClick={onClose}>Cancel</button><button className="button primary" onClick={onSave}><Save size={14} />Save prompt</button></footer></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={saving ? undefined : onClose}><section className="modal prompt-inspector-modal" role="dialog" aria-modal="true" aria-label={`${meta.title} prompt`} onMouseDown={(event) => event.stopPropagation()}><div className="prompt-inspector-header"><div><span>{item.mode === "scan" ? "Auto Scan" : item.mode === "delivery" ? "Auto Delivery" : "Auto Patch"} prompt</span><strong>{meta.title}</strong><code>{item.path}</code></div><button className="button secondary" disabled={saving} onClick={onClose}>Close</button></div><div className="prompt-inspector-body"><div className="markdown-workbench"><label className="markdown-pane"><span>Original Markdown</span><textarea value={content} onChange={(event) => onChange(event.target.value)} spellCheck={false} disabled={saving} /></label><article className="markdown-preview"><span>Preview</span><MarkdownBody content={content} /></article></div></div><footer><button className="button" disabled={saving} onClick={onClose}>Cancel</button><button className={`button primary${saving ? " is-busy" : ""}`} disabled={saving} onClick={onSave}>{saving ? <LoaderCircle size={14} className="spin" /> : <Save size={14} />}{saving ? "Saving…" : "Save prompt"}</button></footer></section></div>;
 }
 
 function HelpTip({ children }: { children: React.ReactNode }) {
@@ -1473,6 +1480,7 @@ function RepositoryView({ data, interact }: { data: DashboardData; interact: (pa
   const workspace = data.interactive?.workspace || {};
   const [repositories, setRepositories] = useState<RecordValue[]>(workspace.repositories || []);
   const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [filter, setFilter] = useState<"all" | "attention" | "patch">("all");
@@ -1481,7 +1489,12 @@ function RepositoryView({ data, interact }: { data: DashboardData; interact: (pa
   const commandsFor = (repository: RecordValue) => (repository.delivery_steps || []).map((step: RecordValue) => Array.isArray(step.command) ? step.command.join(" ") : "").filter(Boolean).join("\n");
   const automationFor = (repository: RecordValue) => ({ scan: { allow_auto_fix: repository.automation?.scan?.allow_auto_fix ?? repository.allow_auto_fix !== false }, delivery: { enabled: repository.automation?.delivery?.enabled !== false }, patch: { enabled: repository.automation?.patch?.enabled ?? true } });
   const updateAutomation = (index: number, section: "scan" | "delivery" | "patch", patch: RecordValue) => { setDirty(true); setRepositories((items) => items.map((item, current) => current === index ? { ...item, automation: { ...automationFor(item), [section]: { ...automationFor(item)[section], ...patch } } } : item)); };
-  const saveGovernance = async () => { if (await interact("/api/repositories", { repositories }, "Repository governance saved")) setDirty(false); };
+  const saveGovernance = async () => {
+    if (!dirty || saving) return;
+    setSaving(true);
+    try { if (await interact("/api/repositories", { repositories }, "Repository governance saved")) setDirty(false); }
+    finally { setSaving(false); }
+  };
   const attention = repositories.filter((repository) => ["changes", "behind", "diverged"].includes(String(repository.health?.git_status)) || ["behind", "diverged"].includes(String(repository.health?.sync_status))).length;
   const patchEnabled = repositories.filter((repository) => automationFor(repository).patch.enabled).length;
   const visible = repositories.filter((repository) => filter === "all" || filter === "patch" && automationFor(repository).patch.enabled || filter === "attention" && (["changes", "behind", "diverged"].includes(String(repository.health?.git_status)) || ["behind", "diverged"].includes(String(repository.health?.sync_status))));
@@ -1505,7 +1518,7 @@ function RepositoryView({ data, interact }: { data: DashboardData; interact: (pa
           </div>}
         </article>;
       })}{visible.length === 0 && <Empty label="No repositories match this view." />}</div>
-      <footer className="repository-footer"><span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "Unsaved repository changes" : "All changes saved"}</span><button className="button primary" onClick={() => void saveGovernance()}><Save size={15} />Save</button></footer>
+      <footer className="repository-footer"><span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{saving ? "Saving repository…" : dirty ? "Unsaved repository changes" : "All changes saved"}</span><button className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving} onClick={() => void saveGovernance()}>{saving ? <LoaderCircle size={15} className="spin" /> : <Save size={15} />}{saving ? "Saving…" : "Save"}</button></footer>
     </Panel>
     {addOpen && <AddRepositoryDialog onClose={() => setAddOpen(false)} onAdd={(url) => { void interact("/api/repositories/clone", { url }, "Repository cloned and registered"); setAddOpen(false); }} />}
   </div>;
@@ -1544,6 +1557,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [deliveryPublishMode, setDeliveryPublishMode] = useState(String(workspace.publish?.delivery || "pr"));
   const [patchPublishMode, setPatchPublishMode] = useState(String(workspace.publish?.patch || "pr"));
   const [feishuEnabled, setFeishuEnabled] = useState(workspace.feishu_notifications_enabled !== false);
+  const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
   useEffect(() => { void request("/api/delivery/status-options", project).then((response) => setWorkflowStatuses(Array.isArray(response.options) ? response.options.map(String) : [])).catch(() => setWorkflowStatuses([])); }, [project]);
@@ -1556,20 +1570,30 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const copy = async (name: string) => { try { const result = await getSecret(name); await navigator.clipboard.writeText(result); notify("Integration value copied", "success"); } catch (err) { notify(err instanceof Error ? err.message : "Unable to copy value", "error"); } };
   const configured = workspace.configured_integrations || [];
   const statusOptions = Array.from(new Set(["To Do", "Backlog", "In Progress", "Done", "Block", ...workflowStatuses, ...eligibleStatuses, ...patchStatuses, inDevStatus, devDoneStatus, patchStartStatus, patchDoneStatus, patchBlockedStatus].filter(Boolean)));
+  const configuredDeliveryStatuses = Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean);
+  const configuredPatchStatuses = Array.isArray(schedules.patch?.jira_statuses) ? schedules.patch.jira_statuses.map(String) : ["To Do"];
+  const sameValues = (left: string[], right: string[]) => left.length === right.length && left.every((value, index) => value === right[index]);
+  const scanScheduleChanged = scanEnabled !== Boolean(schedules.scan) || (scanEnabled && scanCron !== String(schedules.scan?.cron || "0 12 * * 1-5"));
+  const deliveryScheduleChanged = deliveryEnabled !== Boolean(schedules.delivery?.enabled) || (deliveryEnabled && (deliveryInterval !== String(Math.round((schedules.delivery?.interval_seconds || 300) / 60)) || !sameValues(eligibleStatuses, configuredDeliveryStatuses) || inDevStatus !== String(schedules.delivery?.in_dev_status || "") || devDoneStatus !== String(schedules.delivery?.dev_done_status || "") || blockedStatus !== String(schedules.delivery?.blocked_status || "Block")));
+  const patchScheduleChanged = patchEnabled !== Boolean(schedules.patch?.enabled) || (patchEnabled && (patchInterval !== String(Math.round((schedules.patch?.interval_seconds || 300) / 60)) || !sameValues(patchStatuses, configuredPatchStatuses) || patchStartStatus !== String(schedules.patch?.in_progress_status || "In Progress") || patchDoneStatus !== String(schedules.patch?.done_status || "Done") || patchBlockedStatus !== String(schedules.patch?.blocked_status || "Block")));
+  const publishPolicyChanged = scanPublishMode !== String(workspace.publish?.scan || "pr") || deliveryPublishMode !== String(workspace.publish?.delivery || "pr") || patchPublishMode !== String(workspace.publish?.patch || "pr");
   const saveAll = async () => {
+    if (saving) return;
+    setSaving(true);
     try {
       if (!scanModel.trim() || !deliveryModel.trim() || !patchModel.trim()) throw new Error("Choose a preset or enter a Cursor-supported model ID for all workflows.");
       const saves = [
         () => request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel.trim(), delivery_model: deliveryModel.trim(), patch_model: patchModel.trim(), feishu_notifications_enabled: feishuEnabled } }),
-        () => request("/api/schedule", project, { method: "POST", json: scanEnabled ? { kind: "scan", action: "save", cron: scanCron } : { kind: "scan", action: "remove" } }),
-        () => request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_statuses: eligibleStatuses, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }),
-        () => request("/api/schedule", project, { method: "POST", json: patchEnabled ? { kind: "patch", action: "save", interval_minutes: Number(patchInterval), jira_statuses: patchStatuses, issue_types: ["Task", "Bug"], in_progress_status: patchStartStatus, done_status: patchDoneStatus, blocked_status: patchBlockedStatus } : { kind: "patch", action: "remove" } }),
-        () => request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode, patch_mode: patchPublishMode } }),
         ...Object.entries(changedSecrets).map(([key, value]) => () => request("/api/integration", project, { method: "POST", json: { key, value } }))
       ];
+      if (scanScheduleChanged) saves.push(() => request("/api/schedule", project, { method: "POST", json: scanEnabled ? { kind: "scan", action: "save", cron: scanCron } : { kind: "scan", action: "remove" } }));
+      if (deliveryScheduleChanged) saves.push(() => request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_statuses: eligibleStatuses, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }));
+      if (patchScheduleChanged) saves.push(() => request("/api/schedule", project, { method: "POST", json: patchEnabled ? { kind: "patch", action: "save", interval_minutes: Number(patchInterval), jira_statuses: patchStatuses, issue_types: ["Task", "Bug"], in_progress_status: patchStartStatus, done_status: patchDoneStatus, blocked_status: patchBlockedStatus } : { kind: "patch", action: "remove" } }));
+      if (publishPolicyChanged) saves.push(() => request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode, patch_mode: patchPublishMode } }));
       for (const save of saves) await save();
-      setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved", "success"); await reload();
+      setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved", "success"); void reload();
     } catch (err) { notify(err instanceof Error ? err.message : "Unable to save Settings", "error"); }
+    finally { setSaving(false); }
   };
   return <div className="settings-stack">
     <Panel title="Automation Schedules">
@@ -1581,7 +1605,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>Direct push uses the repository credentials already configured for Git; PR and Merge use GitHub CLI.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option><option value="direct">Push directly to main branch</option></select></Field><Field label="Auto Patch"><select value={patchPublishMode} onChange={(event) => { setPatchPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="direct">Push directly to main branch</option></select></Field></div></div></div></Panel>
     <Panel title="Notifications"><div className="settings-section"><div className="settings-copy"><h4>Feishu notifications</h4><p>Control whether Scan and Delivery post cards to the configured Feishu webhook. The webhook URL still lives under Variable Keys.</p></div><div className="settings-toggle"><ScheduleToggle enabled={feishuEnabled} onChange={(enabled) => { setFeishuEnabled(enabled); markDirty(); }} /></div></div></Panel>
     <Panel title="Variable Keys" action={<span className="muted">Stored only in this workspace</span>}><div className="settings-section"><div className="settings-copy"><h4>Available keys</h4><p>Reveal a value to inspect it, or enter a replacement directly. Values are saved without display quotes.</p></div><div className="settings-control wide"><div className="secret-list">{configured.length ? configured.map((name: string) => { const value = changedSecrets[name] ?? secrets[name] ?? ""; return <div className="secret-row" key={name}><code>{name}</code><input type={secrets[name] || changedSecrets[name] !== undefined ? "text" : "password"} value={value} placeholder="Reveal or enter a replacement value" aria-label={`Value for ${name}`} onChange={(event) => { const next = event.target.value; setChangedSecrets((current) => ({ ...current, [name]: next })); markDirty(); }} /><div><IconButton label="Reveal value" onClick={() => void reveal(name)}>{secrets[name] ? <EyeOff size={15} /> : <Eye size={15} />}</IconButton><IconButton label="Copy value" onClick={() => void copy(name)}><Copy size={15} /></IconButton></div></div>; }) : <Empty label="No local integration keys configured." />}</div></div></div></Panel>
-    <footer className="settings-save-bar"><span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{dirty ? "You have unsaved changes" : "All changes saved"}</span><button className="button primary" disabled={!dirty} onClick={() => void saveAll()}><Save size={15} />Save changes</button></footer>
+    <footer className="settings-save-bar"><span className={dirty ? "settings-save-status unsaved" : "settings-save-status"}>{saving ? "Saving settings…" : dirty ? "You have unsaved changes" : "All changes saved"}</span><button className={`button primary${saving ? " is-busy" : ""}`} disabled={!dirty || saving} onClick={() => void saveAll()}>{saving ? <LoaderCircle size={15} className="spin" /> : <Save size={15} />}{saving ? "Saving…" : "Save changes"}</button></footer>
   </div>;
 }
 

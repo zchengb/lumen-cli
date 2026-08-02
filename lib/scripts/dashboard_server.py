@@ -426,7 +426,7 @@ def auto_commit_delivery_config(workspace: Path, summary: str = "update delivery
     return commit_dirty_config(docs_dir, summary, push=push)
 
 
-def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
+def save_repositories(workspace: Path, repositories: object, *, include_payload: bool = True) -> dict[str, Any]:
     if not isinstance(repositories, list):
         raise ValueError("Repositories must be a list")
     profiles = load_json(workspace / "config" / "runtime-profiles.json", {})
@@ -500,10 +500,10 @@ def save_repositories(workspace: Path, repositories: object) -> dict[str, Any]:
     # Repository governance is edited interactively; do not block the Save
     # request on a remote fetch/rebase/push or trigger credential helpers.
     auto_commit_delivery_config(workspace, push=False)
-    return workspace_payload(workspace)
+    return workspace_payload(workspace) if include_payload else {"saved_at": utc_now()}
 
 
-def clone_repository(workspace: Path, url: object) -> dict[str, Any]:
+def clone_repository(workspace: Path, url: object, *, include_payload: bool = True) -> dict[str, Any]:
     remote_url = str(url).strip()
     if not remote_url:
         raise ValueError("Repository clone URL is required")
@@ -531,10 +531,10 @@ def clone_repository(workspace: Path, url: object) -> dict[str, Any]:
             "patch": {"enabled": True},
         },
     })
-    return save_repositories(workspace, repositories)
+    return save_repositories(workspace, repositories, include_payload=include_payload)
 
 
-def save_delivery_steps(workspace: Path, repository: str, commands: object) -> dict[str, Any]:
+def save_delivery_steps(workspace: Path, repository: str, commands: object, *, include_payload: bool = True) -> dict[str, Any]:
     name = str(repository).strip()
     if not name or not isinstance(commands, list):
         raise ValueError("Repository and commands are required")
@@ -551,10 +551,10 @@ def save_delivery_steps(workspace: Path, repository: str, commands: object) -> d
     ]
     write_json(path, config)
     auto_commit_delivery_config(workspace)
-    return workspace_payload(workspace)
+    return workspace_payload(workspace) if include_payload else {"saved_at": utc_now()}
 
 
-def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object, patch_mode: object = "pr", *, push: bool = True) -> dict[str, Any]:
+def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object, patch_mode: object = "pr", *, push: bool = True, include_payload: bool = True) -> dict[str, Any]:
     modes = {"pr", "merge", "direct"}
     if scan_mode not in modes or delivery_mode not in modes or patch_mode not in {"pr", "direct"}:
         raise ValueError("Publish mode must be PR, Merge, or Direct push")
@@ -568,7 +568,7 @@ def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: objec
     delivery.setdefault("publish", {}).setdefault("auto_patch", {})["mode"] = patch_mode
     write_json(delivery_path, delivery)
     auto_commit_delivery_config(workspace, push=push)
-    return workspace_payload(workspace)
+    return workspace_payload(workspace) if include_payload else {"saved_at": utc_now()}
 
 
 def integration_value(workspace: Path, key: str) -> str:
@@ -694,7 +694,7 @@ def feishu_notifications_enabled(workspace: Path) -> bool:
     return True
 
 
-def save_feishu_notifications(workspace: Path, enabled: bool, *, push: bool = True) -> dict[str, Any]:
+def save_feishu_notifications(workspace: Path, enabled: bool, *, push: bool = True, include_payload: bool = True) -> dict[str, Any]:
     for relative in ("config/common.json", "config/delivery.json"):
         path = workspace / relative
         config = load_json(path, {})
@@ -709,7 +709,7 @@ def save_feishu_notifications(workspace: Path, enabled: bool, *, push: bool = Tr
         feishu["enabled"] = enabled
         write_json(path, config)
     auto_commit_delivery_config(workspace, push=push)
-    return workspace_payload(workspace)
+    return workspace_payload(workspace) if include_payload else {"saved_at": utc_now()}
 
 
 def delivery_stages(phases: object) -> list[dict[str, Any]]:
@@ -1748,29 +1748,29 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                         delivery_execution["patch_model"] = patch_model
                     write_json(delivery_path, delivery)
                 if "feishu_notifications_enabled" in body:
-                    save_feishu_notifications(workspace, bool(body.get("feishu_notifications_enabled")), push=False)
+                    save_feishu_notifications(workspace, bool(body.get("feishu_notifications_enabled")), push=False, include_payload=False)
                 else:
                     auto_commit_delivery_config(workspace, push=False)
-                return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
+                return self.respond_json(HTTPStatus.OK, {"saved_at": utc_now()})
             if parsed.path == "/api/integration":
                 update_env_value(workspace, str(body.get("key", "")).strip(), str(body.get("value", "")))
-                return self.respond_json(HTTPStatus.OK, {"workspace": workspace_payload(workspace)})
+                return self.respond_json(HTTPStatus.OK, {"saved_at": utc_now()})
             if parsed.path == "/api/git-sync/force":
                 commit = force_push_conflict(workspace / "state")
                 return self.respond_json(HTTPStatus.OK, {"ok": True, "commit": commit, "workspace": workspace_payload(workspace)})
             if parsed.path == "/api/repositories":
-                return self.respond_json(HTTPStatus.OK, {"workspace": save_repositories(workspace, body.get("repositories"))})
+                return self.respond_json(HTTPStatus.OK, {"workspace": save_repositories(workspace, body.get("repositories"), include_payload=False)})
             if parsed.path == "/api/repositories/clone":
-                return self.respond_json(HTTPStatus.OK, {"workspace": clone_repository(workspace, body.get("url"))})
+                return self.respond_json(HTTPStatus.OK, {"workspace": clone_repository(workspace, body.get("url"), include_payload=False)})
             if parsed.path == "/api/repository/verification":
                 return self.respond_json(
                     HTTPStatus.OK,
-                    {"workspace": save_delivery_steps(workspace, body.get("repository"), body.get("commands"))},
+                    {"workspace": save_delivery_steps(workspace, body.get("repository"), body.get("commands"), include_payload=False)},
                 )
             if parsed.path == "/api/publish-policy":
                 return self.respond_json(
                     HTTPStatus.OK,
-                    {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"), body.get("patch_mode", "pr"), push=False)},
+                    {"workspace": save_publish_policy(workspace, body.get("scan_mode"), body.get("delivery_mode"), body.get("patch_mode", "pr"), push=False, include_payload=False)},
                 )
             if parsed.path == "/api/observability":
                 return self.respond_json(HTTPStatus.OK, {"agent_trace": self.server.update_observability(workspace, body)})
