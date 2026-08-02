@@ -82,7 +82,7 @@
     "send_exactly_one_card": true,
     "include_pdf_path_in_card": false,
     "jira": {
-      "enabled": false,
+      "enabled": true,
       "project_key": "MBPAS",
       "board_id": "",
       "assign_to_active_sprint": true,

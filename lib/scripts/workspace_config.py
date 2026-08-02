@@ -105,7 +105,7 @@ def jira_config(common: dict) -> dict:
 
 def default_jira_config() -> dict:
     return {
-        "enabled": False,
+        "enabled": True,
         "project_key": "MBPAS",
         "board_id": "",
         "assign_to_active_sprint": True,
