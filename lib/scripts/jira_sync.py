@@ -194,68 +194,19 @@ def resolve_board_id(config: dict) -> Optional[str]:
     if not project_key:
         return None
 
-    jql = f'project = {project_key} AND sprint in openSprints() ORDER BY updated DESC'
-    returncode, output = run_twg(
-        [
-            "jira",
-            "workitem",
-            "query",
-            "--jql",
-            jql,
-            "--limit",
-            "1",
-            "-o",
-            "json",
-            *site_args(config),
-        ]
-    )
+    returncode, output = run_twg(["jira", "board", "query", "--project", project_key, "--max-results", "50", "-o", "json", *site_args(config)])
     if returncode != 0:
         return None
 
     payload = parse_twg_json(output)
-    issues = ((payload or {}).get("data") or {}).get("issues") or []
-    if not issues:
+    boards = ((payload or {}).get("data") or {}).get("boards") or []
+    boards = [board for board in boards if isinstance(board, dict) and board.get("id") is not None]
+    if len(boards) == 1:
+        return str(boards[0]["id"]).strip()
+    scrum_boards = [board for board in boards if str(board.get("type") or "").casefold() == "scrum"]
+    if len(scrum_boards) != 1:
         return None
-
-    issue_key = str((issues[0] or {}).get("key", "")).strip()
-    if not issue_key:
-        return None
-
-    returncode, output = run_twg(
-        [
-            "jira",
-            "workitem",
-            "get",
-            issue_key,
-            "--fields",
-            "sprint,customfield_10020",
-            "-o",
-            "json",
-            *site_args(config),
-        ]
-    )
-    if returncode != 0:
-        return None
-
-    payload = parse_twg_json(output)
-    items = (payload or {}).get("data") or []
-    if not isinstance(items, list) or not items:
-        return None
-
-    issue = items[0] if isinstance(items[0], dict) else {}
-    sprint_field = issue.get("customfield_10020") or issue.get("sprint")
-    if not isinstance(sprint_field, list) or not sprint_field:
-        return None
-
-    active = next(
-        (item for item in sprint_field if isinstance(item, dict) and item.get("state") == "active"),
-        sprint_field[0] if isinstance(sprint_field[0], dict) else None,
-    )
-    if not isinstance(active, dict):
-        return None
-
-    board = active.get("boardId")
-    return str(board).strip() if board is not None else None
+    return str(scrum_boards[0]["id"]).strip()
 
 
 def resolve_active_sprint(config: dict) -> Tuple[Optional[str], Optional[str]]:

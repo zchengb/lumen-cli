@@ -21,7 +21,7 @@ from delivery_workspace import (
     workspace_lumen_dir,
     write_json,
 )
-from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, site_args, twg_ready, workspace_jira_config
+from jira_sync import parse_twg_json, refresh_twg_auth, resolve_active_sprint, run_twg, site_args, twg_ready, workspace_jira_config
 
 
 DEFAULT_PATCH_STATUSES = ("To Do",)
@@ -114,12 +114,15 @@ def quote_jql_values(values: list[str]) -> str:
     return ", ".join('"' + value.replace('"', '\\"') + '"' for value in values)
 
 
-def candidate_jql(workspace: Path, include_blocked: bool = False) -> str:
+def candidate_jql(workspace: Path, sprint_id: str, include_blocked: bool = False) -> str:
+    sprint_id = str(sprint_id or "").strip()
+    if not sprint_id.isdigit():
+        raise ValueError("Auto Patch requires a numeric active sprint ID")
     statuses = eligible_statuses(workspace)
     if include_blocked:
         blocked = str(patch_config(workspace).get("blocked_status", "Block")).strip() or "Block"
         statuses = [*statuses, blocked]
-    return f"project = {jira_config(workspace).get('project_key', '')} AND sprint in openSprints() AND issuetype in ({quote_jql_values(issue_types(workspace))}) AND status in ({quote_jql_values(statuses)}) ORDER BY priority DESC, updated ASC"
+    return f"project = {jira_config(workspace).get('project_key', '')} AND sprint = {sprint_id} AND issuetype in ({quote_jql_values(issue_types(workspace))}) AND status in ({quote_jql_values(statuses)}) ORDER BY priority DESC, updated ASC"
 
 
 def unwrap_jira(payload: Any) -> Any:
@@ -163,7 +166,11 @@ def query_candidates(workspace: Path, include_blocked: bool = False) -> list[dic
     refreshed, reason = refresh_twg_auth(force=True)
     if not refreshed:
         raise RuntimeError(reason)
-    code, output = run_twg(["jira", "workitem", "query", "--jql", candidate_jql(workspace, include_blocked), "--limit", "50", "-o", "json", *site_args(config)])
+    sprint_id, _ = resolve_active_sprint(config)
+    if not sprint_id:
+        raise RuntimeError("No active sprint found for the configured Jira board")
+    jql = candidate_jql(workspace, sprint_id, include_blocked)
+    code, output = run_twg(["jira", "workitem", "query", "--jql", jql, "--limit", "50", "-o", "json", *site_args(config)])
     if code != 0:
         raise RuntimeError((output or "Jira candidate query failed").strip()[-1000:])
     payload = unwrap_jira(parse_twg_json(output) or [])
@@ -174,7 +181,7 @@ def get_workitem(workspace: Path, key: str) -> dict[str, Any]:
     ready, reason = twg_ready()
     if not ready:
         raise RuntimeError(reason)
-    code, output = run_twg(["jira", "workitem", "get", key, "-o", "json", *site_args(jira_config(workspace))])
+    code, output = run_twg(["jira", "workitem", "get", key, "--full", "-o", "json", *site_args(jira_config(workspace))])
     if code != 0:
         raise RuntimeError((output or f"Unable to read Jira {key}").strip()[-1000:])
     payload = unwrap_jira(parse_twg_json(output) or {})

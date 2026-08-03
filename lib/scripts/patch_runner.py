@@ -174,28 +174,36 @@ def run_agent(workspace: Path, prompt: str, log_file: Path) -> int:
     return completed.returncode
 
 
+def write_idle_state(workspace: Path, message: str) -> str:
+    idle = empty_progress()
+    idle.update({"patch_status": "idle", "current_step": message, "finished_at": utc_now()})
+    save_progress(workspace, idle)
+    write_json(result_path(workspace), {"schema_version": "1.0", "patch_status": "idle", "jira_key": "", "summary": message, "finished_at": idle["finished_at"]})
+    return message
+
+
 def choose_item(workspace: Path, requested: str) -> tuple[dict[str, Any] | None, bool]:
-    if requested:
-        item = get_workitem(workspace, requested)
-        _, reason = select_repository(workspace, item)
-        if reason.startswith("Auto Patch is disabled"):
-            return None, False
-        registry = load_registry(workspace).get("issues", {}).get(requested, {})
-        return item, jira_status(item).casefold() == str(patch_config(workspace).get("blocked_status", "Block")).casefold() and has_external_reply(item, registry)
     registry = load_registry(workspace).get("issues", {})
-    for candidate in query_candidates(workspace, include_blocked=True):
+    candidates = query_candidates(workspace, include_blocked=True)
+    if requested:
+        candidates = [candidate for candidate in candidates if jira_key(candidate) == requested]
+    for candidate in candidates:
         key = jira_key(candidate)
         item = get_workitem(workspace, key)
         record = registry.get(key, {}) if isinstance(registry, dict) else {}
         blocked = jira_status(item).casefold() == str(patch_config(workspace).get("blocked_status", "Block")).casefold()
-        if blocked and not has_external_reply(item, record):
-            continue
+        waiting_for_reply = blocked or record.get("status") == "blocked"
+        resumed = False
+        if waiting_for_reply:
+            if not has_external_reply(item, record):
+                continue
+            resumed = record.get("status") == "blocked"
         if record.get("status") in {"completed", "skipped"} and record.get("updated") == str(jira_fields(item).get("updated") or ""):
             continue
         _, reason = select_repository(workspace, item)
         if reason.startswith("Auto Patch is disabled"):
             continue
-        return item, blocked
+        return item, resumed
     return None, False
 
 
@@ -217,13 +225,16 @@ def main() -> int:
     try:
         (lock / "pid").write_text(str(os.getpid()), encoding="utf-8")
         progress: dict[str, Any] | None = None
-        item, resumed = choose_item(workspace, args.jira_key.strip().upper())
+        try:
+            item, resumed = choose_item(workspace, args.jira_key.strip().upper())
+        except RuntimeError as exc:
+            if str(exc) == "No active sprint found for the configured Jira board":
+                message = write_idle_state(workspace, "No active sprint found for the configured Jira board.")
+                print(message)
+                return 0
+            raise
         if not item:
-            message = "No eligible Auto Patch Jira card found in the current active sprint."
-            idle = empty_progress()
-            idle.update({"patch_status": "idle", "current_step": message, "finished_at": utc_now()})
-            save_progress(workspace, idle)
-            write_json(result_path(workspace), {"schema_version": "1.0", "patch_status": "idle", "jira_key": "", "summary": message, "finished_at": idle["finished_at"]})
+            message = write_idle_state(workspace, "No eligible Auto Patch Jira card found in the current active sprint.")
             print(message)
             return 0
         key = jira_key(item)

@@ -17,13 +17,14 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from patch_launchd import interval_minutes_from_cron, status as patch_schedule_status  # noqa: E402
-from jira_sync import workspace_jira_config  # noqa: E402
+from jira_sync import resolve_board_id, workspace_jira_config  # noqa: E402
 from patch_runtime import (  # noqa: E402
     candidate_jql,
     has_external_reply,
     jira_config,
     patch_branch,
     patch_worktree_path,
+    query_candidates,
 )
 
 
@@ -34,11 +35,38 @@ class AutoPatchTests(unittest.TestCase):
             with patch("patch_runtime.jira_config", return_value={"project_key": "DEMO"}), patch(
                 "patch_runtime.eligible_statuses", return_value=["To Do", "Ready"]
             ), patch("patch_runtime.issue_types", return_value=["Task", "Bug"]):
-                query = candidate_jql(workspace)
+                query = candidate_jql(workspace, "10025")
         self.assertEqual(
-            'project = DEMO AND sprint in openSprints() AND issuetype in ("Task", "Bug") AND status in ("To Do", "Ready") ORDER BY priority DESC, updated ASC',
+            'project = DEMO AND sprint = 10025 AND issuetype in ("Task", "Bug") AND status in ("To Do", "Ready") ORDER BY priority DESC, updated ASC',
             query,
         )
+
+    def test_candidate_jql_rejects_missing_or_non_numeric_sprint(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                candidate_jql(Path(directory), "")
+            with self.assertRaises(ValueError):
+                candidate_jql(Path(directory), "10025 OR sprint in openSprints()")
+
+    def test_board_auto_detection_does_not_use_an_issue_from_another_sprint(self) -> None:
+        with patch("jira_sync.twg_ready", return_value=(True, "")), patch(
+            "jira_sync.run_twg",
+            return_value=(0, json.dumps({"data": {"boards": [{"id": 186, "type": "scrum"}]}})),
+        ):
+            self.assertEqual("186", resolve_board_id({"project_key": "DEMO"}))
+
+    def test_candidate_query_uses_board_current_sprint_id(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            with patch("patch_runtime.jira_config", return_value={"project_key": "DEMO"}), patch(
+                "patch_runtime.twg_ready", return_value=(True, "")
+            ), patch("patch_runtime.refresh_twg_auth", return_value=(True, "")), patch(
+                "patch_runtime.resolve_active_sprint", return_value=("10025", "Current")
+            ), patch("patch_runtime.run_twg", return_value=(0, json.dumps({"data": {"issues": []}}))) as run:
+                self.assertEqual([], query_candidates(workspace))
+        command = run.call_args.args[0]
+        self.assertIn("sprint = 10025", command[command.index("--jql") + 1])
+        self.assertNotIn("openSprints()", command[command.index("--jql") + 1])
 
     def test_jira_project_key_comes_from_shared_common_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
