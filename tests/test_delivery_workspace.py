@@ -67,7 +67,7 @@ import import_jira_story  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
 from auto_fix_sync import extract_pr_url, record_merge_success  # noqa: E402
 from finalize_delivery import branch_has_commits  # noqa: E402
-from run_delivery_verification import java_gradle_steps, run_command  # noqa: E402
+from run_delivery_verification import java_gradle_steps, resolve_codeartifact_token, run_command  # noqa: E402
 from delivery_preflight import requires_docker_verification  # noqa: E402
 from delivery_runtime import runtime_values  # noqa: E402
 
@@ -309,6 +309,37 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 run_command(repo, ["./gradlew", "test"], {"DOCKER_HOST": "unix:///docker.sock"}, isolated=True)
 
         self.assertEqual([str(repo / "gradlew"), "--no-daemon", "test"], run.call_args.args[0])
+
+    def test_codeartifact_token_uses_repository_helper_without_running_shell_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "acquire-code-artifact-token.sh").write_text(
+                "token=$(aws codeartifact get-authorization-token --domain mbpass --domain-owner 943884814247 --query authorizationToken --output text)\n",
+                encoding="utf-8",
+            )
+            completed = SimpleNamespace(returncode=0, stdout="token-value\n", stderr="")
+            with patch("run_delivery_verification.subprocess.run", return_value=completed) as run:
+                token_env, detail = resolve_codeartifact_token({}, repo)
+
+        self.assertEqual({"CODEARTIFACT_AUTH_TOKEN": "token-value"}, token_env)
+        self.assertIn("repository helper", detail)
+        self.assertEqual(
+            [
+                "aws",
+                "codeartifact",
+                "get-authorization-token",
+                "--domain",
+                "mbpass",
+                "--domain-owner",
+                "943884814247",
+                "--query",
+                "authorizationToken",
+                "--output",
+                "text",
+            ],
+            run.call_args.args[0],
+        )
+        self.assertFalse(run.call_args.kwargs["shell"])
 
     def test_branch_commit_check_ignores_clean_feature_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

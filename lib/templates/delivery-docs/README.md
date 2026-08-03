@@ -80,4 +80,4 @@ notifications/
 
 Java delivery verification runs on the host machine. For Testcontainers on macOS/Colima, start Colima once with `colima start --network-address`. Lumen then injects the required Testcontainers environment variables for each integration test.
 
-If a private Gradle repository needs CodeArtifact, provide `CODEARTIFACT_AUTH_TOKEN` in the current shell, or define a trusted local `CODEARTIFACT_TOKEN_COMMAND` in `.env.local`. Neither value is committed or written to delivery results.
+If a private Gradle repository needs CodeArtifact, provide `CODEARTIFACT_AUTH_TOKEN` in the current shell, define a trusted local `CODEARTIFACT_TOKEN_COMMAND` in `.env.local`, or add the repository's standard `acquire-code-artifact-token.sh` helper. Lumen only auto-runs a direct `aws codeartifact get-authorization-token` command found in that exact helper filename. Neither the token nor command output is committed or written to delivery results.

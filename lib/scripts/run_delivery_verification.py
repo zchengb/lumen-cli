@@ -260,18 +260,45 @@ def colima_environment() -> tuple[dict[str, str], str]:
     return environment, f"Colima {address}"
 
 
-def resolve_codeartifact_token(env: dict[str, str]) -> tuple[dict[str, str], str]:
+def resolve_codeartifact_token(env: dict[str, str], repo_path: Path) -> tuple[dict[str, str], str]:
     if env.get("CODEARTIFACT_AUTH_TOKEN"):
         return {}, "CodeArtifact token already provided"
     command = env.get("CODEARTIFACT_TOKEN_COMMAND", "").strip()
+    auto_discovered = False
     if not command:
-        return {}, "No CodeArtifact token command configured"
-    completed = subprocess.run(command, shell=True, check=False, capture_output=True, text=True, env=env)
+        helper = repo_path / "acquire-code-artifact-token.sh"
+        try:
+            helper_text = helper.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            helper_text = ""
+        match = re.search(
+            r"(?m)^\s*token=\$\(\s*(aws\s+codeartifact\s+get-authorization-token\b[^)\n]*)\)\s*$",
+            helper_text,
+        )
+        if match:
+            command = match.group(1).strip()
+            auto_discovered = True
+    if not command:
+        return {}, "No CodeArtifact token command configured or supported repository helper found"
+
+    command_args = shlex.split(command) if auto_discovered else []
+    if auto_discovered and command_args[:3] != ["aws", "codeartifact", "get-authorization-token"]:
+        return {}, "Repository CodeArtifact helper did not contain a supported AWS token command"
+    completed = subprocess.run(
+        command_args if auto_discovered else command,
+        shell=not auto_discovered,
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
     token = completed.stdout.strip()
     if completed.returncode != 0 or not token:
         detail = (completed.stderr or completed.stdout or "token command returned no token").strip()
-        return {}, f"Unable to refresh CodeArtifact token: {detail[-300:]}"
-    return {"CODEARTIFACT_AUTH_TOKEN": token}, "CodeArtifact token refreshed"
+        source = "repository helper" if auto_discovered else "configured command"
+        return {}, f"Unable to refresh CodeArtifact token from {source}: {detail[-300:]}"
+    source = "repository helper" if auto_discovered else "configured command"
+    return {"CODEARTIFACT_AUTH_TOKEN": token}, f"CodeArtifact token refreshed from {source}"
 
 
 def runtime_environment(
@@ -290,10 +317,9 @@ def runtime_environment(
             env["JAVA_HOME"] = str(java_home)
             env["PATH"] = f"{java_home / 'bin'}{os.pathsep}{env.get('PATH', '')}"
             details.append(f"JDK {major}")
-        token_env, token_detail = resolve_codeartifact_token(env)
+        token_env, token_detail = resolve_codeartifact_token(env, repo_path)
         env.update(token_env)
-        if token_env:
-            details.append(token_detail)
+        details.append(token_detail)
 
     if requires_docker:
         docker_env, docker_detail = colima_environment()
