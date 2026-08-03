@@ -689,7 +689,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             }])
             self.assertEqual("service", payload["repositories"][0]["name"])
             save_delivery_steps(workspace, "service", ["./gradlew test", "./gradlew pmdMain"])
-            save_publish_policy(workspace, "pr", "merge")
+            payload = save_publish_policy(workspace, "pr", "merge", "direct")
 
             delivery = json.loads((config / "delivery.json").read_text(encoding="utf-8"))
             common = json.loads((config / "common.json").read_text(encoding="utf-8"))
@@ -697,8 +697,12 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("merge", delivery["publish"]["mode"])
             self.assertEqual("delivery-custom-model", delivery["execution"]["model"])
             self.assertEqual("patch-custom-model", delivery["execution"]["patch_model"])
+            self.assertEqual("direct", delivery["publish"]["auto_patch"]["mode"])
             self.assertEqual("pr", common["auto_fix"]["publish_mode"])
             self.assertEqual("scan-custom-model", common["execution"]["model"])
+            self.assertEqual("direct", payload["publish"]["patch"])
+            with self.assertRaisesRegex(ValueError, "Auto Scan supports only PR or Merge"):
+                save_publish_policy(workspace, "direct", "merge", "direct", push=False)
             log = subprocess.run(
                 ["git", "-C", str(docs), "log", "-1", "--format=%s"],
                 check=True,

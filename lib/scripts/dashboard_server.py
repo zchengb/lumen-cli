@@ -267,7 +267,9 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         "publish": {
             "scan": str(((common.get("auto_fix") or {}).get("publish_mode") or "pr")),
             "delivery": str(((delivery_config.get("publish") or {}).get("mode") or "pr")),
-            "patch": patch_publish_mode(workspace),
+            # patch_runtime expects the docs workspace root, while this
+            # function receives its visible `lumen/` directory.
+            "patch": patch_publish_mode(workspace.parent),
         },
         "models": {
             "scan": str((common.get("execution") or {}).get("model") or "cursor-grok-4.5-medium").strip(),
@@ -555,9 +557,12 @@ def save_delivery_steps(workspace: Path, repository: str, commands: object, *, i
 
 
 def save_publish_policy(workspace: Path, scan_mode: object, delivery_mode: object, patch_mode: object = "pr", *, push: bool = True, include_payload: bool = True) -> dict[str, Any]:
-    modes = {"pr", "merge", "direct"}
-    if scan_mode not in modes or delivery_mode not in modes or patch_mode not in {"pr", "direct"}:
-        raise ValueError("Publish mode must be PR, Merge, or Direct push")
+    if scan_mode not in {"pr", "merge"}:
+        raise ValueError("Auto Scan supports only PR or Merge")
+    if delivery_mode not in {"pr", "merge", "direct"}:
+        raise ValueError("Auto Delivery supports PR, Merge, or Direct push")
+    if patch_mode not in {"pr", "direct"}:
+        raise ValueError("Auto Patch supports PR or Direct push")
     common_path = workspace / "config" / "common.json"
     common = load_json(common_path, {})
     common.setdefault("auto_fix", {})["publish_mode"] = scan_mode
