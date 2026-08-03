@@ -57,7 +57,7 @@ def transition_issue(jira_key: str, status_name: str, config: dict) -> None:
         raise RuntimeError(truncate_error(detail or f"JIRA transition to '{status_name}' was rejected"))
 
 
-def add_delivery_comment(jira_key: str, comment: str, config: dict) -> None:
+def add_delivery_comment(jira_key: str, comment: str, config: dict, comment_format: str = "markdown") -> None:
     returncode, output = run_twg(
         [
             "jira",
@@ -68,7 +68,7 @@ def add_delivery_comment(jira_key: str, comment: str, config: dict) -> None:
             "--comment",
             comment,
             "--comment-format",
-            "markdown",
+            comment_format,
             "-o",
             "json",
             *site_args(config),

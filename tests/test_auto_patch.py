@@ -17,6 +17,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from patch_launchd import interval_minutes_from_cron, status as patch_schedule_status  # noqa: E402
+from patch_jira import blocked_comment  # noqa: E402
 from jira_sync import resolve_board_id, workspace_jira_config  # noqa: E402
 from patch_runtime import (  # noqa: E402
     candidate_jql,
@@ -88,6 +89,14 @@ class AutoPatchTests(unittest.TestCase):
         ]}}}
         self.assertTrue(has_external_reply(item, {"blocked_at": "2026-07-30T10:01:00Z"}))
         self.assertFalse(has_external_reply(item, {"blocked_at": "2026-07-30T10:06:00Z"}))
+
+    def test_blocked_comment_matches_jira_readable_format(self) -> None:
+        comment = blocked_comment("Repository <service> is ambiguous", "Should we modify service & api?")
+        self.assertIn("<strong><span style=\"color: #bf2600\">Blocked</span></strong>", comment)
+        self.assertIn("<strong>Confirmed:</strong> Repository &lt;service&gt; is ambiguous", comment)
+        self.assertIn("<strong>Question:</strong> Should we modify service &amp; api?", comment)
+        self.assertIn("color: #97a0af", comment)
+        self.assertNotIn("- Confirmed:", comment)
 
     def test_patch_branch_and_worktree_are_deterministic(self) -> None:
         self.assertEqual("patch/DEMO-123-fix-login-timeout", patch_branch("DEMO-123", "Fix login timeout"))

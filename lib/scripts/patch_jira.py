@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any
 
 from jira_delivery_sync import add_delivery_comment
@@ -47,8 +48,20 @@ def transition_issue(workspace, key: str, target: str) -> str:
     return jira_status(get_workitem(workspace, key))
 
 
-def add_comment(workspace, key: str, comment: str) -> None:
+def add_comment(workspace, key: str, comment: str, comment_format: str = "markdown") -> None:
     refreshed, reason = refresh_twg_auth(force=True)
     if not refreshed:
         raise RuntimeError(reason)
-    add_delivery_comment(key, comment, jira_config(workspace))
+    add_delivery_comment(key, comment, jira_config(workspace), comment_format)
+
+
+def blocked_comment(reason: str, question: str) -> str:
+    return "".join(
+        [
+            "<p>Lumen Auto Patch · <strong><span style=\"color: #bf2600\">Blocked</span></strong></p>",
+            f"<p><strong>Confirmed:</strong> {escape(reason)}</p>",
+            f"<p><strong>Question:</strong> {escape(question)}</p>",
+            "<p></p>",
+            "<p><span style=\"color: #97a0af\">P.S. Reply in Jira; the next Auto Patch cycle will re-read the comments and retry automatically.</span></p>",
+        ]
+    )

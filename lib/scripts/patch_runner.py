@@ -16,7 +16,7 @@ from typing import Any
 
 from capture_patch_context import capture
 from compose_patch_prompt import compose
-from patch_jira import add_comment, transition_issue
+from patch_jira import add_comment, blocked_comment, transition_issue
 from patch_runtime import (
     comments,
     comment_fingerprint,
@@ -142,8 +142,7 @@ def block(workspace: Path, progress: dict[str, Any], question: str, reason: str)
     key = str(progress.get("jira_key") or "")
     try:
         transition_issue(workspace, key, str(patch_config(workspace).get("blocked_status", "Block")))
-        comment = "\n".join(["Lumen Auto Patch · Blocked", "", f"- Confirmed: {reason}", f"- Question: {question}", "- Reply in Jira; the next Auto Patch cycle will re-read the comments and retry automatically."])
-        add_comment(workspace, key, comment)
+        add_comment(workspace, key, blocked_comment(reason, question), "html")
         registry = load_registry(workspace)
         registry.setdefault("issues", {})[key] = {"status": "blocked", "blocked_at": utc_now(), "question_hash": comment_fingerprint({"body": question}), "updated": registry.get("issues", {}).get(key, {}).get("updated", "")}
         save_registry(workspace, registry)
