@@ -16,6 +16,12 @@ def main() -> int:
     args = parser.parse_args()
     path = Path(args.path).expanduser().resolve()
     data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    if args.enabled == "true":
+        common_path = path.parent / "common.json"
+        common = json.loads(common_path.read_text(encoding="utf-8")) if common_path.is_file() else {}
+        jira = ((common.get("notifications") or {}).get("jira") or {}) if isinstance(common, dict) else {}
+        if not str(jira.get("project_key") or "").strip():
+            parser.error("shared Jira project key is required in config/common.json before enabling Auto Patch")
     patch = data.setdefault("automation", {}).setdefault("scheduled_auto_patch", {})
     patch["enabled"] = args.enabled == "true"
     if args.interval is not None:

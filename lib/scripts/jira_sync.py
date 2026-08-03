@@ -27,6 +27,20 @@ def jira_config(common: dict) -> dict:
     return config
 
 
+def workspace_jira_config(workspace_root: Path) -> dict:
+    """Load the one workspace-level Jira configuration shared by every loop."""
+    for relative in ("config/common.json", "lumen/config/common.json", ".lumen/config/common.json"):
+        path = workspace_root / relative
+        if not path.is_file():
+            continue
+        try:
+            common = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return jira_config(common) if isinstance(common, dict) else {}
+    return {}
+
+
 def is_enabled(common: dict) -> bool:
     config = jira_config(common)
     return bool(config.get("enabled"))

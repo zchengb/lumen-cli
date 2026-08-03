@@ -21,7 +21,7 @@ from delivery_workspace import (
     workspace_lumen_dir,
     write_json,
 )
-from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, site_args, twg_ready
+from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, site_args, twg_ready, workspace_jira_config
 
 
 DEFAULT_PATCH_STATUSES = ("To Do",)
@@ -81,12 +81,7 @@ def patch_config(workspace: Path) -> dict[str, Any]:
 
 
 def jira_config(workspace: Path) -> dict[str, Any]:
-    config = load_delivery_config(workspace).get("jira", {})
-    if isinstance(config, dict) and config:
-        return config
-    common = read_json(workspace / "config" / "common.json", {})
-    config = (common.get("notifications", {}) or {}).get("jira", {})
-    return config if isinstance(config, dict) else {}
+    return workspace_jira_config(workspace)
 
 
 def publish_mode(workspace: Path) -> str:

@@ -31,7 +31,7 @@ from patch_launchd import status as patch_schedule_status
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees
 from delivery_workspace import find_story_dir, load_story_context, read_json as read_delivery_json, workspace_lumen_dir
 from jira_delivery_sync import add_delivery_comment, jira_delivery_config, should_sync_jira, transition_issue
-from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, twg_ready
+from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, twg_ready, workspace_jira_config
 from issue_registry import set_issue_status
 from projects_registry import find_by_slug, load_registry
 from scan_launchd import install as install_scan_schedule
@@ -1587,6 +1587,8 @@ class DashboardServer(ThreadingHTTPServer):
             interval = int(body.get("interval_minutes", 0))
             if interval < 1:
                 raise ValueError("Auto Patch interval must be at least one minute")
+            if not str(workspace_jira_config(workspace).get("project_key") or "").strip():
+                raise ValueError("Configure the shared Jira project key in config/common.json before enabling Auto Patch")
             statuses = normalize_statuses(body.get("jira_statuses", body.get("jira_status")), ("To Do",))
             types = normalize_statuses(body.get("issue_types"), ("Task", "Bug"))
             args = argparse.Namespace(

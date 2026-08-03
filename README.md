@@ -217,6 +217,8 @@ lumen config set-scan-window 14 --project <project-slug>
 
 Jira integration uses the locally authenticated TWG CLI. Configure it through `lumen config set-jira`; authenticate TWG separately before scheduled or delivery operations.
 
+The Jira project key is configured once in `lumen/config/common.json` under `notifications.jira.project_key` and is shared by Auto Scan, Auto Delivery, and Auto Patch. `lumen/config/delivery.json` only contains Delivery-specific workflow settings such as transition statuses.
+
 ### Jira and TWG OAuth token refresh
 
 Lumen does not store Jira credentials. When Jira sync is enabled, it calls the locally installed [TWG CLI](https://developer.atlassian.com/cloud/twg-cli/) using OAuth tokens in `~/.config/twg/auth.conf`.

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from jira_sync import parse_twg_json, run_twg, site_args, twg_ready
+from jira_sync import parse_twg_json, run_twg, site_args, twg_ready, workspace_jira_config
 
 
 KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]*-\d+$")
@@ -72,13 +72,7 @@ def plain_text(value: Any) -> str:
 
 
 def jira_config(docs_dir: Path) -> dict[str, Any]:
-    common = load_json(docs_dir / "lumen" / "config" / "common.json")
-    config = ((common.get("notifications") or {}).get("jira") or {})
-    if isinstance(config, dict) and config:
-        return config
-    delivery = load_json(docs_dir / "lumen" / "config" / "delivery.json")
-    config = delivery.get("jira") or {}
-    return config if isinstance(config, dict) else {}
+    return workspace_jira_config(docs_dir)
 
 
 def jira_url(item: dict[str, Any], key: str, config: dict[str, Any]) -> str:

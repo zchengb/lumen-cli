@@ -17,9 +17,11 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from patch_launchd import interval_minutes_from_cron, status as patch_schedule_status  # noqa: E402
+from jira_sync import workspace_jira_config  # noqa: E402
 from patch_runtime import (  # noqa: E402
     candidate_jql,
     has_external_reply,
+    jira_config,
     patch_branch,
     patch_worktree_path,
 )
@@ -37,6 +39,19 @@ class AutoPatchTests(unittest.TestCase):
             'project = DEMO AND issuetype in ("Task", "Bug") AND status in ("To Do", "Ready") ORDER BY priority DESC, updated ASC',
             query,
         )
+
+    def test_jira_project_key_comes_from_shared_common_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "lumen" / "config").mkdir(parents=True)
+            (root / "lumen" / "config" / "common.json").write_text(
+                json.dumps({"notifications": {"jira": {"project_key": "COMMON"}}}), encoding="utf-8"
+            )
+            (root / "lumen" / "config" / "delivery.json").write_text(
+                json.dumps({"jira": {"project_key": "LEGACY"}}), encoding="utf-8"
+            )
+            self.assertEqual("COMMON", jira_config(root)["project_key"])
+            self.assertEqual("COMMON", workspace_jira_config(root)["project_key"])
 
     def test_blocked_card_requires_new_external_reply(self) -> None:
         item = {"fields": {"comment": {"comments": [
