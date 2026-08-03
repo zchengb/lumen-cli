@@ -290,6 +290,7 @@ def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]
     jira_url = _patch_text(patch.get("jira_url"))
     event_meta = {
         "patch.started": ("Lumen Auto Patch · Started", "blue"),
+        "patch.skipped": ("Lumen Auto Patch · Skipped", "grey"),
         "patch.completed": ("Lumen Auto Patch · Completed", "green"),
         "patch.blocked": ("Lumen Auto Patch · Action required", "orange"),
         "patch.failed": ("Lumen Auto Patch · Failed", "red"),
@@ -317,7 +318,7 @@ def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]
     if event == "patch.started":
         elements.extend([
             {"tag": "hr"},
-            {"tag": "markdown", "content": "**Scope**\nBug fixes and small copy adjustments only; work is isolated in a patch worktree."},
+            {"tag": "markdown", "content": "**Scope**\nBug fixes, small copy adjustments, and bounded functional changes with explicit acceptance criteria; related repositories may be changed as one flow."},
             {"tag": "markdown", "content": "**Next step**\nLumen is reading the Jira context and resolving the target repository."},
         ])
     elif event in {"patch.blocked", "patch.failed"}:
@@ -337,6 +338,15 @@ def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]
         if panel:
             elements.append(panel)
         elements.append({"tag": "markdown", "content": "**Next step**\nReply in Jira; the next Auto Patch cycle will re-read the comments and retry automatically."})
+    elif event == "patch.skipped":
+        reason = _patch_text(patch.get("summary"), "Auto Patch made no code changes.")
+        elements.extend([
+            {"tag": "hr"},
+            {"tag": "markdown", "content": f"**Reason**\n{reason}"},
+            {"tag": "markdown", "content": "**Result**\nNo code was changed, committed, published, or transitioned in Jira."},
+        ])
+        if checks:
+            elements.append({"tag": "markdown", "content": f"**Self-check**\n✓ {counts['passed']} passed · ✕ {counts['failed']} failed · ⊘ {counts['skipped']} skipped"})
     else:
         summary = _patch_text(patch.get("summary"))
         if summary:

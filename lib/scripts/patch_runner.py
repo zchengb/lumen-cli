@@ -497,8 +497,12 @@ def main() -> int:
             return block(workspace, progress, progress["question"], str(result.get("summary") or "Agent could not determine a safe patch"))
         if status == "skipped":
             progress["self_checks"] = result.get("self_checks") or []
+            set_phase(workspace, progress, "self_check", "completed", "Agent self-check evidence recorded")
+            set_phase(workspace, progress, "publish", "skipped", "No code changes to publish")
+            set_phase(workspace, progress, "jira_notify", "completed", "Skipped result recorded; Jira status unchanged")
             write_terminal(workspace, progress, result)
-            notify(workspace, "patch.completed")
+            notify(workspace, "patch.skipped")
+            remove_worktrees(progress.get("repositories") or [])
             return 0
         if status != "completed":
             return block(workspace, progress, "Should Auto Patch retry after the Agent reported a failure?", str(result.get("question") or result.get("summary") or "Agent reported a failure"))

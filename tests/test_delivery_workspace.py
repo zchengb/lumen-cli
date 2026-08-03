@@ -1492,7 +1492,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         self.assertEqual("Lumen Auto Patch · Started", card["card"]["header"]["title"]["content"])
         self.assertIn("**Model:**  `cursor-grok-4.5-high`", rendered)
         self.assertIn("Jira context", rendered)
-        self.assertIn("Bug fixes and small copy adjustments only", rendered)
+        self.assertIn("bounded functional changes with explicit acceptance criteria", rendered)
         self.assertNotIn("No repository recorded", rendered)
 
     def test_patch_completed_notification_includes_changes_checks_and_publish(self) -> None:
@@ -1538,6 +1538,24 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         rendered = json.dumps(card, ensure_ascii=False)
         self.assertIn("mbpass-business", rendered)
         self.assertNotIn("Preparing", rendered)
+
+    def test_patch_skipped_notification_is_not_presented_as_completed(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        card = renderer.build_patch_feishu_card(
+            "patch.skipped",
+            {
+                "jira_key": "MBPAS-1548",
+                "jira_summary": "Bounded multi-repository change",
+                "patch_status": "skipped",
+                "summary": "No code change was made.",
+                "repositories": [{"name": "mbpass-admin"}],
+            },
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+        self.assertEqual("Lumen Auto Patch · Skipped", card["card"]["header"]["title"]["content"])
+        self.assertIn("**Reason**", rendered)
+        self.assertIn("No code was changed", rendered)
+        self.assertNotIn("Lumen Auto Patch · Completed", rendered)
 
     def test_patch_blocked_notification_makes_question_prominent(self) -> None:
         renderer = load_delivery_notification_renderer()

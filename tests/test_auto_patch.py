@@ -31,6 +31,15 @@ from patch_runtime import (  # noqa: E402
 
 
 class AutoPatchTests(unittest.TestCase):
+    def test_patch_prompt_allows_bounded_multi_repository_functional_changes(self) -> None:
+        templates = Path(__file__).resolve().parents[1] / "lib" / "templates" / "prompts" / "patch"
+        pipeline = (templates / "02-pipeline.md").read_text(encoding="utf-8")
+        implementation = (templates / "05-patch-implementation.md").read_text(encoding="utf-8")
+        self.assertIn("multiple registered repositories", pipeline)
+        self.assertIn("functional change with explicit acceptance criteria", pipeline)
+        self.assertIn("every selected repository", implementation)
+        self.assertNotIn("Do not implement a feature", pipeline)
+
     def test_candidate_jql_filters_configured_types_and_statuses(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
