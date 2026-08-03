@@ -36,7 +36,7 @@ class AutoPatchTests(unittest.TestCase):
             ), patch("patch_runtime.issue_types", return_value=["Task", "Bug"]):
                 query = candidate_jql(workspace)
         self.assertEqual(
-            'project = DEMO AND issuetype in ("Task", "Bug") AND status in ("To Do", "Ready") ORDER BY priority DESC, updated ASC',
+            'project = DEMO AND sprint in openSprints() AND issuetype in ("Task", "Bug") AND status in ("To Do", "Ready") ORDER BY priority DESC, updated ASC',
             query,
         )
 

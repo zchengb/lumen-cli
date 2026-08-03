@@ -119,7 +119,7 @@ def candidate_jql(workspace: Path, include_blocked: bool = False) -> str:
     if include_blocked:
         blocked = str(patch_config(workspace).get("blocked_status", "Block")).strip() or "Block"
         statuses = [*statuses, blocked]
-    return f"project = {jira_config(workspace).get('project_key', '')} AND issuetype in ({quote_jql_values(issue_types(workspace))}) AND status in ({quote_jql_values(statuses)}) ORDER BY priority DESC, updated ASC"
+    return f"project = {jira_config(workspace).get('project_key', '')} AND sprint in openSprints() AND issuetype in ({quote_jql_values(issue_types(workspace))}) AND status in ({quote_jql_values(statuses)}) ORDER BY priority DESC, updated ASC"
 
 
 def unwrap_jira(payload: Any) -> Any:

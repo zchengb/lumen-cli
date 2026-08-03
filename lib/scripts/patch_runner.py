@@ -20,6 +20,7 @@ from patch_jira import add_comment, transition_issue
 from patch_runtime import (
     comments,
     comment_fingerprint,
+    empty_progress,
     get_workitem,
     has_external_reply,
     history_dir,
@@ -218,7 +219,12 @@ def main() -> int:
         progress: dict[str, Any] | None = None
         item, resumed = choose_item(workspace, args.jira_key.strip().upper())
         if not item:
-            print("No eligible Auto Patch Jira card found.")
+            message = "No eligible Auto Patch Jira card found in the current active sprint."
+            idle = empty_progress()
+            idle.update({"patch_status": "idle", "current_step": message, "finished_at": utc_now()})
+            save_progress(workspace, idle)
+            write_json(result_path(workspace), {"schema_version": "1.0", "patch_status": "idle", "jira_key": "", "summary": message, "finished_at": idle["finished_at"]})
+            print(message)
             return 0
         key = jira_key(item)
         progress = new_progress(datetime.now().strftime("%Y%m%d-%H%M%S"), item, workspace)
