@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -19,10 +20,34 @@ from git_publish import (
     run_git,
 )
 from patch_runtime import load_delivery_config, publish_mode, read_json, result_path, write_json
+from sync_delivery_docs import lumen_commit_subject
+
+
+COMMIT_KINDS = "chore|docs|feat|fix|refactor|style|test"
+CANONICAL_SUBJECT = re.compile(
+    rf"^\[[^\]\r\n]+\]\s+#\S+\s+(?P<kind>{COMMIT_KINDS}):\s*(?P<summary>.+)$",
+    re.IGNORECASE,
+)
+CONVENTIONAL_SUBJECT = re.compile(
+    rf"^(?P<kind>{COMMIT_KINDS})(?:\([^\r\n)]*\))?\s*:\s*(?P<summary>.+)$",
+    re.IGNORECASE,
+)
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def normalize_subject(subject: str, key: str) -> str:
+    """Convert agent/history-style subjects to the repository's Lumen format."""
+    raw = " ".join(str(subject or "").strip().split())
+    kind = "fix"
+    summary = raw or "apply Auto Patch correction"
+    match = CANONICAL_SUBJECT.match(raw) or CONVENTIONAL_SUBJECT.match(raw)
+    if match:
+        kind = match.group("kind").lower()
+        summary = match.group("summary").strip()
+    return lumen_commit_subject(key, summary, kind=kind)
 
 
 def subject_for(agent_result: dict[str, Any], repository: str, key: str) -> str:
@@ -30,8 +55,8 @@ def subject_for(agent_result: dict[str, Any], repository: str, key: str) -> str:
         if isinstance(item, dict) and str(item.get("name") or "").strip() == repository:
             subject = str(item.get("commit_subject") or "").strip()
             if subject:
-                return subject
-    return f"fix({key}): apply Auto Patch correction"
+                return normalize_subject(subject, key)
+    return normalize_subject("", key)
 
 
 def main() -> int:
