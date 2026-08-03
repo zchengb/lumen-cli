@@ -1672,6 +1672,27 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("MBPAS-1548", runs[0]["jira_key"])
             self.assertEqual("AMG PL system bug collection", runs[0]["jira_summary"])
 
+    def test_patch_current_falls_back_to_latest_history_when_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            history = workspace / "history" / "patch"
+            results = workspace / "results"
+            history.mkdir(parents=True)
+            results.mkdir()
+            phases = [{"id": "capture", "label": "Capture", "status": "completed", "detail": "Captured"}]
+            (history / "run-1.json").write_text(json.dumps({
+                "progress": {"jira_key": "MBPAS-1552", "jira_summary": "Offline publish order collision", "phases": phases},
+                "patch": {"patch_status": "completed", "summary": "Assigned the next banner order."},
+            }), encoding="utf-8")
+            (results / "patch-progress.json").write_text(json.dumps({"patch_status": "idle"}), encoding="utf-8")
+            (results / "patch-result.json").write_text(json.dumps({"patch_status": "idle"}), encoding="utf-8")
+
+            current = patch_payload(workspace)["current"]
+
+            self.assertEqual("MBPAS-1552", current["jira_key"])
+            self.assertEqual("completed", current["patch_status"])
+            self.assertEqual("completed", current["stages"][0]["status"])
+
     def test_patch_history_delete_removes_record_and_log(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp) / "lumen"

@@ -790,11 +790,14 @@ def patch_stages(phases: object) -> list[dict[str, Any]]:
 def patch_payload(workspace: Path) -> dict[str, Any]:
     history_root = workspace / "history" / "patch"
     runs: list[dict[str, Any]] = []
+    latest_history_current: dict[str, Any] = {}
     if history_root.is_dir():
         for source in sorted(history_root.glob("*.json"), key=lambda path: path.stat().st_mtime, reverse=True)[:20]:
             item = read_delivery_json(source, {})
             patch = item.get("patch") if isinstance(item.get("patch"), dict) else item
             progress = item.get("progress") if isinstance(item.get("progress"), dict) else {}
+            if not latest_history_current:
+                latest_history_current = {**progress, **patch}
             runs.append({
                 "run_id": item.get("run_id") or source.stem,
                 "status": patch.get("patch_status") or progress.get("patch_status") or "unknown",
@@ -820,9 +823,12 @@ def patch_payload(workspace: Path) -> dict[str, Any]:
     else:
         current = progress or result
     current = dict(current)
-    current["stages"] = patch_stages(current.get("phases"))
     lock = workspace / "locks" / "patch-run"
     current["active"] = lock.exists()
+    current_status = str(current.get("patch_status") or "").strip().casefold()
+    if not current["active"] and latest_history_current and current_status in {"", "idle", "not_started"}:
+        current = {**latest_history_current, "active": False}
+    current["stages"] = patch_stages(current.get("phases"))
     activity_path = workspace / "state" / "patch-scheduler-activity.jsonl"
     activity: list[dict[str, Any]] = []
     if activity_path.is_file():
