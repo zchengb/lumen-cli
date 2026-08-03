@@ -310,6 +310,16 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
         self.assertEqual([str(repo / "gradlew"), "--no-daemon", "test"], run.call_args.args[0])
 
+    def test_codeartifact_gradle_command_uses_a_fresh_daemon(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "gradlew").write_text("#!/bin/sh\n", encoding="utf-8")
+            completed = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with patch("run_delivery_verification.subprocess.run", return_value=completed) as run:
+                run_command(repo, ["./gradlew", "compileJava"], {"CODEARTIFACT_AUTH_TOKEN": "token"})
+
+        self.assertEqual([str(repo / "gradlew"), "--no-daemon", "compileJava"], run.call_args.args[0])
+
     def test_codeartifact_token_uses_repository_helper_without_running_shell_wrapper(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)

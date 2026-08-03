@@ -335,7 +335,8 @@ def runtime_environment(
 def run_command(repo_path: Path, command: list[str], env: dict[str, str], isolated: bool = False) -> tuple[int, str]:
     if command and command[0] == "./gradlew":
         wrapper = gradle_wrapper(repo_path)
-        options = ["--no-daemon"] if isolated and "--no-daemon" not in command else []
+        fresh_gradle = isolated or bool(env.get("CODEARTIFACT_AUTH_TOKEN"))
+        options = ["--no-daemon"] if fresh_gradle and "--no-daemon" not in command else []
         command = [str(wrapper), *options, *command[1:]]
     completed = subprocess.run(
         command,
