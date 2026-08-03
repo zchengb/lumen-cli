@@ -80,6 +80,16 @@ def load_delivery_notification_renderer():
     return module
 
 
+def load_patch_runner():
+    path = SCRIPTS / "patch_runner.py"
+    spec = importlib.util.spec_from_file_location("patch_runner_test", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load patch runner")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_scan_notification_renderer():
     path = SCRIPTS / "render-report-and-notify.py"
     spec = importlib.util.spec_from_file_location("scan_notification_renderer_test", path)
@@ -1455,6 +1465,124 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         )
         overview = card["card"]["body"]["elements"][0]["content"]
         self.assertIn("**Duration:**  14m 25s", overview)
+
+    def test_patch_started_notification_uses_runtime_context(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        card = renderer.build_patch_feishu_card(
+            "patch.started",
+            {
+                "jira_key": "MBPAS-1548",
+                "jira_summary": "AMG PL system bug collection",
+                "patch_status": "running",
+                "jira_status": "In Progress",
+                "current_phase": "context",
+            },
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+        self.assertEqual("MBPAS-1548 · AMG PL system bug collection", card["card"]["header"]["subtitle"]["content"])
+        self.assertIn("Jira context", rendered)
+        self.assertIn("Bug fixes and small copy adjustments only", rendered)
+        self.assertNotIn("No repository recorded", rendered)
+
+    def test_patch_completed_notification_includes_changes_checks_and_publish(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        card = renderer.build_patch_feishu_card(
+            "patch.completed",
+            {
+                "jira_key": "MBPAS-1552",
+                "jira_summary": "Assign the next order column",
+                "patch_status": "completed",
+                "jira_status": "Done",
+                "current_phase": "jira_notify",
+                "branch": "patch/MBPAS-1552-order-column",
+                "summary": "Use the next published order column.",
+                "repos_touched": [{"name": "mbpass-business", "files_changed": ["src/OrderService.java"]}],
+                "self_checks": [
+                    {"label": "targeted test", "status": "passed", "summary": "Passed"},
+                    {"label": "full suite", "status": "skipped", "summary": "Out of scope"},
+                ],
+                "publish_mode": "pr",
+                "pr_urls": ["https://git.example.test/pull/14"],
+            },
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+        self.assertIn("**Change summary**", rendered)
+        self.assertIn("src/OrderService.java", rendered)
+        self.assertIn("✓ 1 passed · ✕ 0 failed · ⊘ 1 skipped", rendered)
+        self.assertIn("[Open pull request](https://git.example.test/pull/14)", rendered)
+        self.assertIn("wide_screen_mode", rendered)
+
+    def test_patch_blocked_notification_makes_question_prominent(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        card = renderer.build_patch_feishu_card(
+            "patch.blocked",
+            {
+                "jira_key": "MBPAS-1548",
+                "jira_summary": "AMG PL system bug collection",
+                "patch_status": "blocked",
+                "jira_status": "Block (migrated)",
+                "current_phase": "repository",
+                "summary": "Jira context does not identify exactly one registered repository.",
+                "question": "Which registered repository should Auto Patch modify?",
+            },
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+        self.assertIn("Action required", rendered)
+        self.assertIn("**Question**", rendered)
+        self.assertIn("Which registered repository should Auto Patch modify?", rendered)
+        self.assertIn("Reply in Jira", rendered)
+
+    def test_patch_notification_persists_feishu_result_to_history(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            lumen = root / "lumen"
+            results = lumen / "results"
+            history = lumen / "history" / "patch"
+            results.mkdir(parents=True)
+            history.mkdir(parents=True)
+            (results / "patch-progress.json").write_text(json.dumps({
+                "run_id": "20260803-135213",
+                "jira_key": "MBPAS-1548",
+                "jira_summary": "AMG PL system bug collection",
+                "current_phase": "repository",
+                "patch_status": "blocked",
+            }), encoding="utf-8")
+            result = results / "patch-result.json"
+            result.write_text(json.dumps({
+                "schema_version": "1.0",
+                "patch_status": "blocked",
+                "jira_key": "MBPAS-1548",
+                "summary": "Repository mapping is ambiguous.",
+                "question": "Which repository should be modified?",
+            }), encoding="utf-8")
+            history_file = history / "20260803-135213.json"
+            history_file.write_text(json.dumps({"progress": {}, "patch": {}}), encoding="utf-8")
+
+            with patch.dict(os.environ, {"LUMEN_DRY_RUN": "1"}), patch.object(
+                sys, "argv", ["render-delivery-and-notify.py", str(result), "--event", "patch.blocked"]
+            ):
+                self.assertEqual(0, renderer.main())
+
+            self.assertEqual("dry_run", json.loads(result.read_text(encoding="utf-8"))["feishu"]["status"])
+            saved_history = json.loads(history_file.read_text(encoding="utf-8"))
+            self.assertEqual("dry_run", saved_history["patch"]["feishu"]["status"])
+            self.assertEqual("dry_run", json.loads((results / "patch-progress.json").read_text(encoding="utf-8"))["feishu"]["status"])
+
+    def test_patch_block_writes_comment_even_when_transition_is_unavailable(self) -> None:
+        runner = load_patch_runner()
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            progress = {"run_id": "run-1", "jira_key": "MBPAS-1548", "phases": [], "failures": []}
+            with patch.object(runner, "transition_issue", side_effect=RuntimeError("transition unavailable")), \
+                    patch.object(runner, "add_comment") as add_comment, \
+                    patch.object(runner, "notify"), \
+                    patch.object(runner, "remove_worktrees"):
+                runner.block(workspace, progress, "Which repository?", "Repository mapping is ambiguous")
+
+            add_comment.assert_called_once()
+            self.assertEqual("failed", progress["jira"]["transition"])
+            self.assertEqual("sent", progress["jira"]["comment"])
 
     def test_installer_copies_delivery_coding_guideline(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

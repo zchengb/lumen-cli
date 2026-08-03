@@ -96,12 +96,16 @@ def result_from_progress(progress: dict[str, Any], status: str, summary: str, qu
         "schema_version": "1.0",
         "patch_status": status,
         "jira_key": progress.get("jira_key", ""),
+        "jira_summary": progress.get("jira_summary", ""),
+        "jira_status": progress.get("jira_status", ""),
         "summary": summary,
         "repository_decision": progress.get("repository_decision", {}),
         "repos_touched": progress.get("repositories", []),
         "self_checks": progress.get("self_checks", []),
         "question": question,
         "failures": failures or [],
+        "jira": progress.get("jira", {}),
+        "blocked_at": progress.get("blocked_at", ""),
         "started_at": progress.get("started_at", ""),
         "finished_at": utc_now(),
     }
@@ -141,14 +145,28 @@ def notify(workspace: Path, event: str) -> None:
 
 def block(workspace: Path, progress: dict[str, Any], question: str, reason: str) -> int:
     key = str(progress.get("jira_key") or "")
+    progress["blocked_at"] = utc_now()
+    transition_result = "sent"
+    comment_result = "sent"
     try:
-        transition_issue(workspace, key, str(patch_config(workspace).get("blocked_status", "Block")))
-        add_comment(workspace, key, blocked_comment(reason, question), "html")
-        registry = load_registry(workspace)
-        registry.setdefault("issues", {})[key] = {"status": "blocked", "blocked_at": utc_now(), "question_hash": comment_fingerprint({"body": question}), "updated": registry.get("issues", {}).get(key, {}).get("updated", "")}
-        save_registry(workspace, registry)
+        progress["jira_status"] = transition_issue(workspace, key, str(patch_config(workspace).get("blocked_status", "Block")))
     except Exception as exc:
+        transition_result = "failed"
         progress.setdefault("failures", []).append({"stage": "jira", "detail": str(exc)})
+    try:
+        add_comment(workspace, key, blocked_comment(reason, question), "html")
+    except Exception as exc:
+        comment_result = "failed"
+        progress.setdefault("failures", []).append({"stage": "jira_comment", "detail": str(exc)})
+    progress["jira"] = {
+        "status": "sent" if comment_result == "sent" else "failed",
+        "event": "patch.blocked",
+        "transition": transition_result,
+        "comment": comment_result,
+    }
+    registry = load_registry(workspace)
+    registry.setdefault("issues", {})[key] = {"status": "blocked", "blocked_at": utc_now(), "question_hash": comment_fingerprint({"body": question}), "updated": registry.get("issues", {}).get(key, {}).get("updated", "")}
+    save_registry(workspace, registry)
     result = result_from_progress(progress, "blocked", reason, question, progress.get("failures"))
     write_terminal(workspace, progress, result)
     notify(workspace, "patch.blocked")
@@ -274,9 +292,10 @@ def main() -> int:
             write_terminal(workspace, progress, result)
             return 0
         try:
-            transition_issue(workspace, key, str(patch_config(workspace).get("in_progress_status", "In Progress")))
+            progress["jira_status"] = transition_issue(workspace, key, str(patch_config(workspace).get("in_progress_status", "In Progress")))
         except Exception as exc:
             return block(workspace, progress, f"Can Auto Patch transition {key} to the configured In Progress status?", str(exc))
+        save_progress(workspace, progress)
         result_path(workspace).unlink(missing_ok=True)
         write_json(result_path(workspace), result_from_progress(progress, "running", f"Auto Patch started for {key}"))
         notify(workspace, "patch.started")
@@ -331,7 +350,7 @@ def main() -> int:
         set_phase(workspace, progress, "publish", "completed", "Changes published")
         set_phase(workspace, progress, "jira_notify", "in_progress", "Updating Jira and Feishu")
         done_status = str(patch_config(workspace).get("done_status", "Done"))
-        transition_issue(workspace, key, done_status)
+        progress["jira_status"] = transition_issue(workspace, key, done_status)
         pr_lines = ", ".join(result.get("pr_urls") or []) or ", ".join(item.get("sha", "") for item in result.get("commits") or [])
         add_comment(workspace, key, f"Lumen Auto Patch · Completed\n\n- Summary: {result.get('summary', '')}\n- Publish: {pr_lines or 'completed'}")
         registry = load_registry(workspace)

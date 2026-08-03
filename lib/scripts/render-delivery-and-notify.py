@@ -19,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from delivery_workspace import delivery_config_path, read_json, workspace_lumen_dir, write_json
 from delivery_progress import set_phase, update_notifications
 from jira_delivery_sync import sync_delivery_jira
+from jira_sync import jira_browse_url_from_config
 
 
 def load_render_helpers():
@@ -210,40 +211,161 @@ def build_delivery_feishu_card(
     return card
 
 
-def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]:
-    key = str(patch.get("jira_key") or "").strip()
-    title = str(patch.get("summary") or "Auto Patch").strip()
-    status = str(patch.get("patch_status") or "unknown").replace("_", " ").title()
-    repositories = patch.get("repos_touched") if isinstance(patch.get("repos_touched"), list) else []
-    repo_names = ", ".join(str(item.get("name") or "").strip() for item in repositories if isinstance(item, dict) and item.get("name")) or "No repository recorded"
-    checks = patch.get("self_checks") if isinstance(patch.get("self_checks"), list) else []
-    passed = sum(1 for item in checks if isinstance(item, dict) and item.get("status") == "passed")
-    failed = sum(1 for item in checks if isinstance(item, dict) and item.get("status") == "failed")
-    pr_urls = [str(url).strip() for url in patch.get("pr_urls") or [] if str(url).strip()]
-    event_meta = {
-        "patch.started": ("Patch Started", "blue"),
-        "patch.completed": ("Patch Completed", "green"),
-        "patch.blocked": ("Patch Blocked", "orange"),
-    }
-    event_title, template = event_meta.get(event, ("Patch Update", "grey"))
-    lines = [f"**Status:** {status}", f"**Repositories:** {repo_names}"]
-    if patch.get("branch"):
-        lines.append(f"**Branch:** `{patch['branch']}`")
-    if checks:
-        lines.append(f"**Self-check:** {passed} passed, {failed} failed")
-    elements: list[dict[str, Any]] = [{"tag": "markdown", "content": "\n".join(lines)}]
-    if patch.get("question"):
-        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": f"**Question**\n{patch['question']}"}])
-    if pr_urls:
-        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**Pull requests**\n" + "\n".join(pr_urls)}])
+PATCH_PHASE_LABELS = {
+    "capture": "Capture",
+    "screen": "Initial screening",
+    "context": "Jira context",
+    "repository": "Repository mapping",
+    "agent": "Patch agent",
+    "self_check": "Self-check",
+    "publish": "Publish",
+    "jira_notify": "Jira & Feishu",
+}
+
+
+def _patch_text(value: object, default: str = "") -> str:
+    return " ".join(str(value or default).split())
+
+
+def _patch_repositories(patch: dict[str, Any]) -> list[dict[str, Any]]:
+    for field in ("repos_touched", "repositories"):
+        value = patch.get(field)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def _patch_files(repositories: list[dict[str, Any]]) -> list[str]:
+    files: list[str] = []
+    for repository in repositories:
+        values = repository.get("files_changed")
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            name = _patch_text(value)
+            if name and name not in files:
+                files.append(name)
+    return files
+
+
+def _patch_panel(title: str, lines: list[str]) -> dict[str, Any] | None:
+    if not lines:
+        return None
     return {
+        "tag": "collapsible_panel",
+        "expanded": False,
+        "header": {"title": {"tag": "plain_text", "content": title}},
+        "elements": [{"tag": "markdown", "content": "\n".join(lines)}],
+    }
+
+
+def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]:
+    key = _patch_text(patch.get("jira_key"))
+    title = _patch_text(patch.get("jira_summary") or patch.get("jira_title"), "Auto Patch")
+    status = _patch_text(patch.get("patch_status"), "unknown").replace("_", " ").title()
+    jira_status = _patch_text(patch.get("jira_status"))
+    phase = PATCH_PHASE_LABELS.get(_patch_text(patch.get("current_phase")), _patch_text(patch.get("current_phase")))
+    repositories = _patch_repositories(patch)
+    repo_names = ", ".join(_patch_text(item.get("name")) for item in repositories if _patch_text(item.get("name")))
+    if not repo_names:
+        repo_names = "Resolving repository mapping" if phase == "Repository mapping" else "Preparing"
+    raw_checks = patch.get("self_checks")
+    checks = [item for item in raw_checks if isinstance(item, dict)] if isinstance(raw_checks, list) else []
+    counts = {state: sum(1 for item in checks if _patch_text(item.get("status")).casefold() == state) for state in ("passed", "failed", "skipped")}
+    files = _patch_files(repositories)
+    pr_urls = [str(url).strip() for url in patch.get("pr_urls") or [] if str(url).strip()]
+    commits = [item for item in patch.get("commits") or [] if isinstance(item, dict)]
+    jira_url = _patch_text(patch.get("jira_url"))
+    event_meta = {
+        "patch.started": ("🛠 Lumen Auto Patch · Started", "blue"),
+        "patch.completed": ("✓ Lumen Auto Patch · Completed", "green"),
+        "patch.blocked": ("⚠ Lumen Auto Patch · Action required", "orange"),
+        "patch.failed": ("✕ Lumen Auto Patch · Failed", "red"),
+    }
+    event_title, template = event_meta.get(event, ("Lumen Auto Patch · Update", "grey"))
+
+    overview = [f"**Status:**  {status}"]
+    if phase:
+        overview.append(f"**Stage:**  {phase}")
+    if jira_status:
+        overview.append(f"**Jira status:**  {jira_status}")
+    if repo_names:
+        overview.append(f"**Repository:**  {repo_names}")
+    if patch.get("branch"):
+        overview.append(f"**Branch:**  `{_patch_text(patch.get('branch'))}`")
+    if event in {"patch.blocked", "patch.failed"} and patch.get("blocked_at"):
+        overview.append(f"**Waiting since:**  {_patch_text(patch.get('blocked_at'))}")
+    duration = format_duration(patch.get("started_at"), patch.get("finished_at"))
+    if duration:
+        overview.append(f"**Duration:**  {duration}")
+    if jira_url and key:
+        overview.append(f"**Jira:**  [Open {key}]({jira_url})")
+    elements: list[dict[str, Any]] = [{"tag": "markdown", "content": "\n".join(overview)}]
+
+    if event == "patch.started":
+        elements.extend([
+            {"tag": "hr"},
+            {"tag": "markdown", "content": "**Scope**\nBug fixes and small copy adjustments only; work is isolated in a patch worktree."},
+            {"tag": "markdown", "content": "**Next step**\nLumen is reading the Jira context and resolving the target repository."},
+        ])
+    elif event in {"patch.blocked", "patch.failed"}:
+        reason = _patch_text(patch.get("summary"), "Auto Patch could not continue safely.")
+        question = _patch_text(patch.get("question"))
+        elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": f"**Confirmed**\n{reason}"}])
+        if question:
+            elements.append({"tag": "markdown", "content": f"**Question**\n{question}"})
+        raw_failures = patch.get("failures")
+        failures = [
+            f"• {_patch_text(item.get('stage'), 'patch')}: {_patch_text(item.get('detail'), 'failed')}"
+            for item in raw_failures if isinstance(item, dict)
+        ] if isinstance(raw_failures, list) else []
+        if isinstance(patch.get("jira"), dict) and patch["jira"].get("comment"):
+            failures.append(f"• Jira comment: {_patch_text(patch['jira'].get('comment'))}")
+        panel = _patch_panel("View attempts and failures", failures)
+        if panel:
+            elements.append(panel)
+        elements.append({"tag": "markdown", "content": "**Next step**\nReply in Jira; the next Auto Patch cycle will re-read the comments and retry automatically."})
+    else:
+        summary = _patch_text(patch.get("summary"))
+        if summary:
+            elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": f"**Change summary**\n{summary}"}])
+        if files:
+            elements.append({"tag": "markdown", "content": f"**Changes**\n{len(files)} file(s) changed"})
+            panel = _patch_panel("View changed files", [f"• `{name}`" for name in files])
+            if panel:
+                elements.append(panel)
+        if checks:
+            elements.append({"tag": "markdown", "content": f"**Self-check**\n✓ {counts['passed']} passed · ✕ {counts['failed']} failed · ⊘ {counts['skipped']} skipped"})
+            panel = _patch_panel(
+                "View self-check details",
+                [f"• {_patch_text(item.get('label'), 'check')}: {_patch_text(item.get('status'), 'unknown')} — {_patch_text(item.get('summary'))}" for item in checks],
+            )
+            if panel:
+                elements.append(panel)
+        publish_lines: list[str] = []
+        if patch.get("publish_mode"):
+            publish_lines.append(f"**Mode:** {_patch_text(patch.get('publish_mode')).upper()}")
+        publish_lines.extend(f"• [Open pull request]({url})" for url in pr_urls)
+        publish_lines.extend(f"• Commit `{_patch_text(item.get('sha'))}`" for item in commits if _patch_text(item.get("sha")))
+        if publish_lines:
+            elements.extend([{"tag": "hr"}, {"tag": "markdown", "content": "**Publish**\n" + "\n".join(publish_lines)}])
+
+    card: dict[str, Any] = {
         "msg_type": "interactive",
         "card": {
             "schema": "2.0",
-            "header": {"title": {"tag": "plain_text", "content": f"Lumen · {event_title}"}, "subtitle": {"tag": "plain_text", "content": " · ".join(part for part in (key, title) if part)}, "template": template},
+            "config": {"wide_screen_mode": True},
+            "header": {
+                "title": {"tag": "plain_text", "content": event_title},
+                "subtitle": {"tag": "plain_text", "content": " · ".join(part for part in (key, title) if part)},
+                "template": template,
+            },
             "body": {"elements": elements},
         },
     }
+    if jira_url:
+        card["card"]["card_link"] = {"url": jira_url}
+    return card
 
 
 def update_story_metadata(
@@ -296,18 +418,56 @@ def main() -> int:
     dry_run = os.environ.get("LUMEN_DRY_RUN", "").strip().lower() in {"1", "true", "yes"}
     delivery = load_delivery_result(result_path)
     if "patch_status" in delivery:
+        workspace_root = result_path.parent.parent.parent
+        progress_path = result_path.with_name("patch-progress.json")
+        progress = read_json(progress_path, {})
+        progress = progress if isinstance(progress, dict) else {}
+        notification = {**progress, **delivery}
+        key = _patch_text(notification.get("jira_key"))
+        common = read_json(workspace_lumen_dir(workspace_root) / "config" / "common.json", {})
+        jira_config = common.get("notifications", {}).get("jira", {}) if isinstance(common.get("notifications"), dict) else {}
+        if not notification.get("jira_url") and isinstance(jira_config, dict) and key:
+            jira_url = jira_browse_url_from_config(key, jira_config)
+            if jira_url:
+                notification["jira_url"] = jira_url
         webhook = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
         feishu_result = {"status": "skipped", "detail": "FEISHU_WEBHOOK_URL not set"}
         if dry_run:
             feishu_result = {"status": "dry_run", "event": event}
-        elif webhook and not os.environ.get("LUMEN_SKIP_FEISHU", "").strip().casefold() in {"1", "true", "yes"}:
-            try:
-                send_feishu(build_patch_feishu_card(event, delivery), webhook)
-                feishu_result = {"status": "sent", "event": event}
-            except Exception as exc:
-                feishu_result = {"status": "failed", "detail": redact(str(exc))}
+        else:
+            delivery_config = read_json(delivery_config_path(workspace_root), {})
+            notifications = delivery_config.get("notifications", {})
+            feishu_enabled = True
+            if isinstance(notifications, dict) and isinstance(notifications.get("feishu"), dict) and "enabled" in notifications["feishu"]:
+                feishu_enabled = bool(notifications["feishu"].get("enabled"))
+            common_notifications = common.get("notifications", {})
+            if isinstance(common_notifications, dict) and isinstance(common_notifications.get("feishu"), dict) and "enabled" in common_notifications["feishu"]:
+                feishu_enabled = bool(common_notifications["feishu"].get("enabled"))
+            skip_feishu = os.environ.get("LUMEN_SKIP_FEISHU", "").strip().casefold() in {"1", "true", "yes"}
+            if skip_feishu:
+                feishu_result = {"status": "skipped", "detail": "LUMEN_SKIP_FEISHU enabled"}
+            elif not feishu_enabled:
+                feishu_result = {"status": "skipped", "detail": "Feishu notifications are disabled"}
+            elif not webhook:
+                feishu_result = {"status": "skipped", "detail": "FEISHU_WEBHOOK_URL not set"}
+            else:
+                try:
+                    send_feishu(build_patch_feishu_card(event, notification), webhook)
+                    feishu_result = {"status": "sent", "event": event}
+                except Exception as exc:
+                    feishu_result = {"status": "failed", "detail": redact(str(exc))}
         delivery["feishu"] = feishu_result
+        progress["feishu"] = feishu_result
+        write_json(progress_path, progress)
         write_json(result_path, delivery)
+        run_id = _patch_text(progress.get("run_id"))
+        if run_id:
+            history_path = result_path.parent.parent / "history" / "patch" / f"{run_id}.json"
+            history = read_json(history_path, {})
+            if isinstance(history, dict):
+                history.setdefault("patch", {})["feishu"] = feishu_result
+                history.setdefault("progress", {})["feishu"] = feishu_result
+                write_json(history_path, history)
         print(json.dumps({"feishu": feishu_result}, indent=2, ensure_ascii=False))
         return 0
     docs_dir = resolve_docs_dir(delivery, result_path)
