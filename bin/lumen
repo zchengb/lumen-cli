@@ -2318,7 +2318,7 @@ else:
         rm -f "${server_state}"
       else
       server_url="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('url',''), end='')" "${server_state}" 2>/dev/null || true)"
-      if [[ "${server_url}" != *":${dashboard_port}/" ]] || ! curl -fsS --max-time 1 "${server_url%/}/api/state" >/dev/null 2>&1; then
+      if [[ "${server_url}" != *":${dashboard_port}/" ]] || ! curl -fsS --max-time 5 "${server_url%/}/api/state" >/dev/null 2>&1; then
         kill "${server_pid}" 2>/dev/null || true
         server_url=""
         rm -f "${server_state}"
@@ -2338,7 +2338,7 @@ else:
     for attempt in {1..30}; do
       if [[ -f "${server_state}" ]]; then
         server_url="$(python3 -c "import json; print(json.load(open('${server_state}')).get('url',''), end='')" 2>/dev/null || true)"
-        if [[ -n "${server_url}" ]] && curl -fsS --max-time 1 "${server_url%/}/api/state" >/dev/null 2>&1; then
+        if [[ -n "${server_url}" ]] && curl -fsS --max-time 5 "${server_url%/}/api/state" >/dev/null 2>&1; then
           break
         fi
         server_url=""
