@@ -382,7 +382,7 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 @media(max-width:420px){.repository-config-actions{flex-direction:column-reverse}.repository-config-actions .button{width:100%}}
 
 .patch-history-scroll{overflow-x:auto}
-.patch-history-table{min-width:1130px;table-layout:fixed}
+.patch-history-table{min-width:1200px;table-layout:fixed}
 .patch-history-table th:nth-child(1),.patch-history-table td:nth-child(1){width:220px}
 .patch-history-table th:nth-child(2),.patch-history-table td:nth-child(2){width:330px}
 .patch-history-table th:nth-child(3),.patch-history-table td:nth-child(3){width:100px}
@@ -390,6 +390,7 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .patch-history-table th:nth-child(5),.patch-history-table td:nth-child(5){width:100px}
 .patch-history-table th:nth-child(6),.patch-history-table td:nth-child(6){width:130px}
 .patch-history-table th:nth-child(7),.patch-history-table td:nth-child(7){width:80px}
+.patch-history-table th:nth-child(8),.patch-history-table td:nth-child(8){width:70px}
 .patch-history-table td{vertical-align:top;overflow-wrap:anywhere}
 .patch-history-jira{display:flex;flex-direction:column;gap:5px;min-width:0}
 .patch-history-key,.patch-history-finished{white-space:nowrap;word-break:normal}

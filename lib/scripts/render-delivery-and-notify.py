@@ -147,6 +147,7 @@ def build_delivery_feishu_card(
 
     overview = [
         f"**Status:**  {status_label}",
+        f"**Model:**  `{_notification_model(delivery.get('model'))}`",
         f"**Assignee:**  {assignee or 'Unassigned'}",
         f"**Scope:**  {repos or 'No repository recorded'}",
     ]
@@ -227,11 +228,22 @@ def _patch_text(value: object, default: str = "") -> str:
     return " ".join(str(value or default).split())
 
 
+def _notification_model(value: object, config: dict[str, Any] | None = None, patch: bool = False) -> str:
+    execution = config.get("execution") if isinstance(config, dict) and isinstance(config.get("execution"), dict) else {}
+    configured = execution.get("patch_model") if patch else execution.get("model")
+    return _patch_text(
+        value or os.environ.get("LUMEN_MODEL") or os.environ.get("CURSOR_AGENT_MODEL") or configured,
+        "cursor-grok-4.5-medium",
+    )
+
+
 def _patch_repositories(patch: dict[str, Any]) -> list[dict[str, Any]]:
     for field in ("repos_touched", "repositories"):
         value = patch.get(field)
         if isinstance(value, list):
-            return [item for item in value if isinstance(item, dict)]
+            repositories = [item for item in value if isinstance(item, dict)]
+            if repositories:
+                return repositories
     return []
 
 
@@ -268,7 +280,7 @@ def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]
     repositories = _patch_repositories(patch)
     repo_names = ", ".join(_patch_text(item.get("name")) for item in repositories if _patch_text(item.get("name")))
     if not repo_names:
-        repo_names = "Resolving repository mapping" if phase == "Repository mapping" else "Preparing"
+        repo_names = "Resolving repository mapping" if phase == "Repository mapping" else ("Preparing" if event == "patch.started" else "No repository recorded")
     raw_checks = patch.get("self_checks")
     checks = [item for item in raw_checks if isinstance(item, dict)] if isinstance(raw_checks, list) else []
     counts = {state: sum(1 for item in checks if _patch_text(item.get("status")).casefold() == state) for state in ("passed", "failed", "skipped")}
@@ -277,14 +289,14 @@ def build_patch_feishu_card(event: str, patch: dict[str, Any]) -> dict[str, Any]
     commits = [item for item in patch.get("commits") or [] if isinstance(item, dict)]
     jira_url = _patch_text(patch.get("jira_url"))
     event_meta = {
-        "patch.started": ("🛠 Lumen Auto Patch · Started", "blue"),
-        "patch.completed": ("✓ Lumen Auto Patch · Completed", "green"),
-        "patch.blocked": ("⚠ Lumen Auto Patch · Action required", "orange"),
-        "patch.failed": ("✕ Lumen Auto Patch · Failed", "red"),
+        "patch.started": ("Lumen Auto Patch · Started", "blue"),
+        "patch.completed": ("Lumen Auto Patch · Completed", "green"),
+        "patch.blocked": ("Lumen Auto Patch · Action required", "orange"),
+        "patch.failed": ("Lumen Auto Patch · Failed", "red"),
     }
     event_title, template = event_meta.get(event, ("Lumen Auto Patch · Update", "grey"))
 
-    overview = [f"**Status:**  {status}"]
+    overview = [f"**Status:**  {status}", f"**Model:**  `{_notification_model(patch.get('model'), {}, patch=True)}`"]
     if phase:
         overview.append(f"**Stage:**  {phase}")
     if jira_status:
@@ -423,6 +435,8 @@ def main() -> int:
         progress = read_json(progress_path, {})
         progress = progress if isinstance(progress, dict) else {}
         notification = {**progress, **delivery}
+        delivery_config = read_json(delivery_config_path(workspace_root), {})
+        notification["model"] = _notification_model(notification.get("model"), delivery_config, patch=True)
         key = _patch_text(notification.get("jira_key"))
         common = read_json(workspace_lumen_dir(workspace_root) / "config" / "common.json", {})
         jira_config = common.get("notifications", {}).get("jira", {}) if isinstance(common.get("notifications"), dict) else {}
@@ -435,7 +449,6 @@ def main() -> int:
         if dry_run:
             feishu_result = {"status": "dry_run", "event": event}
         else:
-            delivery_config = read_json(delivery_config_path(workspace_root), {})
             notifications = delivery_config.get("notifications", {})
             feishu_enabled = True
             if isinstance(notifications, dict) and isinstance(notifications.get("feishu"), dict) and "enabled" in notifications["feishu"]:
@@ -473,6 +486,7 @@ def main() -> int:
     docs_dir = resolve_docs_dir(delivery, result_path)
     workspace_root = Path(str(delivery.get("workspace_root", "")).strip() or docs_dir).expanduser().resolve()
     delivery_config = read_json(delivery_config_path(workspace_root))
+    delivery["model"] = _notification_model(delivery.get("model"), delivery_config)
     align_delivery_timing(delivery, workspace_root)
     story_path = delivery.get("story_path")
     if story_path:

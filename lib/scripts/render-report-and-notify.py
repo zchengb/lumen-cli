@@ -510,6 +510,8 @@ def build_feishu_card(
     common: Optional[dict] = None,
     docs_root: Optional[Path] = None,
 ) -> dict:
+    execution = (common or {}).get("execution", {}) if isinstance((common or {}).get("execution", {}), dict) else {}
+    model = str(scan.get("model") or os.environ.get("LUMEN_MODEL") or os.environ.get("CURSOR_AGENT_MODEL") or execution.get("model") or "cursor-grok-4.5-medium").strip()
     counts = severity_counts(scan.get("findings", []))
     elements = [
         {
@@ -517,6 +519,7 @@ def build_feishu_card(
             "content": (
                 f"**Scan Window:** {scan.get('scan_window', 'Last 7 Days')}\n"
                 f"**Repositories Scanned:** {scan.get('repositories_scanned', 0)}\n"
+                f"**Model:**  `{model}`\n"
                 f"**Status:** {scan_status_label(scan.get('scan_status', 'completed'))}"
             ),
         },
@@ -843,6 +846,8 @@ def main() -> int:
             stale_after_days = 7
 
     scan = apply_scan_window_policy(scan, common)
+    execution = common.get("execution", {}) if isinstance(common.get("execution"), dict) else {}
+    scan["model"] = str(scan.get("model") or os.environ.get("LUMEN_MODEL") or os.environ.get("CURSOR_AGENT_MODEL") or execution.get("model") or "cursor-grok-4.5-medium").strip()
 
     registry = reconcile_issue_registry(
         scan,

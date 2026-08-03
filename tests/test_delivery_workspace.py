@@ -348,11 +348,12 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             )
             card = renderer.build_feishu_card(
                 {"findings": [{"title": "Demo", "severity": "High", "jira_key": "DEMO-42"}]},
-                common={},
+                common={"execution": {"model": "cursor-grok-4.5-high"}},
                 docs_root=docs,
             )
         rendered = json.dumps(card)
         self.assertIn("[DEMO-42](https://example.atlassian.net/browse/DEMO-42)", rendered)
+        self.assertIn("**Model:**  `cursor-grok-4.5-high`", rendered)
 
     def test_archived_scan_result_keeps_jira_links_from_processed_result(self) -> None:
         renderer = load_scan_notification_renderer()
@@ -1435,6 +1436,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             {
                 "jira_key": "MBPAS-1456",
                 "delivery_status": "in_progress",
+                "model": "cursor-grok-4.5-high",
                 "branch": "feature/MBPAS-1456-demo",
                 "repos_touched": [{"name": "mbpass-admin"}],
             },
@@ -1451,6 +1453,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             card["card"]["card_link"],
         )
         self.assertIn("**Status:**", rendered)
+        self.assertIn("**Model:**  `cursor-grok-4.5-high`", rendered)
         self.assertIn("**Scope:**", rendered)
         self.assertIn("**Branch:**", rendered)
         self.assertNotIn("Open MBPAS-1456", rendered)
@@ -1479,12 +1482,15 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 "jira_key": "MBPAS-1548",
                 "jira_summary": "AMG PL system bug collection",
                 "patch_status": "running",
+                "model": "cursor-grok-4.5-high",
                 "jira_status": "In Progress",
                 "current_phase": "context",
             },
         )
         rendered = json.dumps(card, ensure_ascii=False)
         self.assertEqual("MBPAS-1548 · AMG PL system bug collection", card["card"]["header"]["subtitle"]["content"])
+        self.assertEqual("Lumen Auto Patch · Started", card["card"]["header"]["title"]["content"])
+        self.assertIn("**Model:**  `cursor-grok-4.5-high`", rendered)
         self.assertIn("Jira context", rendered)
         self.assertIn("Bug fixes and small copy adjustments only", rendered)
         self.assertNotIn("No repository recorded", rendered)
@@ -1497,6 +1503,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 "jira_key": "MBPAS-1552",
                 "jira_summary": "Assign the next order column",
                 "patch_status": "completed",
+                "model": "cursor-grok-4.5-high",
                 "jira_status": "Done",
                 "current_phase": "jira_notify",
                 "branch": "patch/MBPAS-1552-order-column",
@@ -1515,7 +1522,22 @@ class DeliveryWorkspaceTests(unittest.TestCase):
         self.assertIn("src/OrderService.java", rendered)
         self.assertIn("✓ 1 passed · ✕ 0 failed · ⊘ 1 skipped", rendered)
         self.assertIn("[Open pull request](https://git.example.test/pull/14)", rendered)
+        self.assertNotIn("Preparing", rendered)
         self.assertIn("wide_screen_mode", rendered)
+
+    def test_patch_completed_notification_uses_progress_repositories_when_result_is_empty(self) -> None:
+        renderer = load_delivery_notification_renderer()
+        card = renderer.build_patch_feishu_card(
+            "patch.completed",
+            {
+                "patch_status": "completed",
+                "repos_touched": [],
+                "repositories": [{"name": "mbpass-business"}],
+            },
+        )
+        rendered = json.dumps(card, ensure_ascii=False)
+        self.assertIn("mbpass-business", rendered)
+        self.assertNotIn("Preparing", rendered)
 
     def test_patch_blocked_notification_makes_question_prominent(self) -> None:
         renderer = load_delivery_notification_renderer()
@@ -1588,6 +1610,24 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
             self.assertEqual("MBPAS-1548", runs[0]["jira_key"])
             self.assertEqual("AMG PL system bug collection", runs[0]["jira_summary"])
+
+    def test_patch_history_delete_removes_record_and_log(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "lumen"
+            history = workspace / "history" / "patch"
+            log = workspace / "logs" / "patch" / "run-1.log"
+            history.mkdir(parents=True)
+            log.parent.mkdir(parents=True)
+            log.write_text("agent output\n", encoding="utf-8")
+            history_file = history / "run-1.json"
+            history_file.write_text(json.dumps({"progress": {"log_file": str(log)}, "patch": {"jira_key": "DEMO-1"}}), encoding="utf-8")
+
+            server = DashboardServer.__new__(DashboardServer)
+            removed = server.delete_patch_history(workspace, "run-1")
+
+            self.assertEqual("run-1", removed["run_id"])
+            self.assertFalse(history_file.exists())
+            self.assertFalse(log.exists())
 
     def test_patch_block_writes_comment_even_when_transition_is_unavailable(self) -> None:
         runner = load_patch_runner()

@@ -979,6 +979,9 @@ function PatchView({ data, project, notify, reload }: { data: DashboardData; pro
   const [logError, setLogError] = useState("");
   const [logOpen, setLogOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [deleteCandidate, setDeleteCandidate] = useState<RecordValue | null>(null);
+  const [deletingHistoryId, setDeletingHistoryId] = useState("");
+  const [historyError, setHistoryError] = useState("");
   const loadLog = async (runId = String(current.run_id || "")) => {
     setLogOpen(true); setLog(""); setLogError("");
     try { const response = await request(`/api/patch/log?run_id=${encodeURIComponent(runId)}`, project); setLog(response.content || "No log content recorded."); }
@@ -996,6 +999,18 @@ function PatchView({ data, project, notify, reload }: { data: DashboardData; pro
     catch (err) { notify(err instanceof Error ? err.message : "Unable to stop Auto Patch", "error"); }
     finally { setBusy(false); }
   };
+  const removeHistory = async () => {
+    const runId = String(deleteCandidate?.run_id || "").trim();
+    if (!runId) return;
+    setDeletingHistoryId(runId); setHistoryError("");
+    try {
+      await request("/api/patch/history/delete", project, { method: "POST", json: { run_id: runId } });
+      setDeleteCandidate(null);
+      notify("Patch history deleted", "success");
+      await reload().catch(() => undefined);
+    } catch (err) { const message = err instanceof Error ? err.message : "Unable to delete Auto Patch history"; setHistoryError(message); notify(message, "error"); }
+    finally { setDeletingHistoryId(""); }
+  };
   const checks = Array.isArray(current.self_checks) ? current.self_checks : [];
   return <>
     <Panel title="Current Progress" action={<span className="panel-actions">{running ? <button className="button danger secondary" disabled={busy} onClick={() => void stop()}>Stop</button> : <button className="button secondary" disabled={busy} onClick={() => void start()}><Play size={14} />Run one cycle</button>}</span>}>
@@ -1003,12 +1018,13 @@ function PatchView({ data, project, notify, reload }: { data: DashboardData; pro
       {current.question && <div className="status-note"><CircleHelp size={15} />{current.question}</div>}
       <PatchFlow phases={Array.isArray(current.stages) ? current.stages : []} />
     </Panel>
-    <Panel title="Patch History" action={<span className="muted">{runs.length} runs</span>}><div className="table-scroll patch-history-scroll"><table className="patch-history-table"><thead><tr><th>Jira</th><th>Summary</th><th>Status</th><th>Repositories</th><th>Self-check</th><th>Finished</th><th>Log</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => <tr key={run.run_id}><td><div className="patch-history-jira"><code className="patch-history-key">{text(run.jira_key)}</code>{run.jira_summary && <span className="patch-history-jira-title" title={text(run.jira_summary)}>{text(run.jira_summary)}</span>}</div></td><td><span className="patch-history-summary" title={text(run.summary)}>{text(run.summary)}</span></td><td><Badge value={run.status} /></td><td>{(run.repositories || []).map((item: RecordValue) => item.name).filter(Boolean).join(", ") || "—"}</td><td>{(run.self_checks || []).length ? `${(run.self_checks || []).filter((item: RecordValue) => item.status === "passed").length}/${(run.self_checks || []).length}` : "—"}</td><td><span className="patch-history-finished">{when(run.finished_at)}</span></td><td><button className="text-button" onClick={() => void loadLog(run.run_id)}>View log</button></td></tr>) : <tr><td colSpan={7}><Empty label="No Auto Patch history yet." /></td></tr>}</tbody></table></div></Panel>
+    <Panel title="Patch History" action={<span className="muted">{runs.length} runs</span>}>{historyError && <div className="status-note">{historyError}</div>}<div className="table-scroll patch-history-scroll"><table className="patch-history-table"><thead><tr><th>Jira</th><th>Summary</th><th>Status</th><th>Repositories</th><th>Self-check</th><th>Finished</th><th>Log</th><th>Operation</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => <tr key={run.run_id}><td><div className="patch-history-jira"><code className="patch-history-key">{text(run.jira_key)}</code>{run.jira_summary && <span className="patch-history-jira-title" title={text(run.jira_summary)}>{text(run.jira_summary)}</span>}</div></td><td><span className="patch-history-summary" title={text(run.summary)}>{text(run.summary)}</span></td><td><Badge value={run.status} /></td><td>{(run.repositories || []).map((item: RecordValue) => item.name).filter(Boolean).join(", ") || "—"}</td><td>{(run.self_checks || []).length ? `${(run.self_checks || []).filter((item: RecordValue) => item.status === "passed").length}/${(run.self_checks || []).length}` : "—"}</td><td><span className="patch-history-finished">{when(run.finished_at)}</span></td><td><button className="text-button" onClick={() => void loadLog(run.run_id)}>View log</button></td><td><IconButton label="Delete Auto Patch record" danger disabled={deletingHistoryId === run.run_id} onClick={() => setDeleteCandidate(run)}><Trash2 size={15} /></IconButton></td></tr>) : <tr><td colSpan={8}><Empty label="No Auto Patch history yet." /></td></tr>}</tbody></table></div></Panel>
     <div className="two-column">
       <Panel title="Patch Evidence"><div className="rows"><div className="info-row"><span>Summary</span><div>{text(current.summary || current.jira_summary)}</div></div><div className="info-row"><span>Self-checks</span><div>{checks.length ? `${checks.filter((item: RecordValue) => item.status === "passed").length}/${checks.length} passed` : "—"}</div></div><div className="info-row"><span>Pull requests</span><div><PrLinks items={(current.pr_urls || []).map((url: string) => ({ url, repository: "Pull request" }))} /></div></div><div className="info-row"><span>Files changed</span><div>{(current.repositories || []).flatMap((item: RecordValue) => item.files_changed || []).length || "—"}</div></div></div></Panel>
       <Panel title="Scheduler Activity"><div className="scheduler-activity">{activity.length ? activity.map((event: RecordValue, index: number) => <article className="scheduler-event" key={`${event.at}-${index}`}><Badge value={event.outcome} /><div><strong>{text(event.jira_key || event.card, "Workspace")}</strong><p>{text(event.message)}</p></div><time>{when(event.at)}</time></article>) : <Empty label="No Auto Patch activity recorded yet." />}</div></Panel>
     </div>
     {logOpen && <DeliveryLogDialog stage={{ label: "Auto Patch log", detail: "Recent Auto Patch agent output" }} content={log} error={logError} loading={!log && !logError} onClose={() => setLogOpen(false)} />}
+    {deleteCandidate && <DeleteHistoryDialog kind="patch" run={deleteCandidate} busy={Boolean(deletingHistoryId)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void removeHistory()} />}
   </>;
 }
 
@@ -1026,9 +1042,10 @@ function RetryDeliveryDialog({ story, busy, error, onClose, onConfirm }: { story
   return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal" role="dialog" aria-modal="true" aria-label="Reset and retry delivery" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Reset and retry {story}?</strong><p>This removes the Story worktrees, resets its Delivery and JIRA status, then starts a new run. The failed run and logs stay in history.</p>{error && <p className="status-note">{error}</p>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button primary" disabled={busy} onClick={onConfirm}><RotateCcw size={14} />{busy ? "Starting…" : "Retry"}</button></footer></section></div>;
 }
 
-function DeleteHistoryDialog({ run, busy, onClose, onConfirm }: { run: RecordValue; busy: boolean; onClose: () => void; onConfirm: () => void }) {
+function DeleteHistoryDialog({ kind = "delivery", run, busy, onClose, onConfirm }: { kind?: "delivery" | "patch"; run: RecordValue; busy: boolean; onClose: () => void; onConfirm: () => void }) {
+  const patch = kind === "patch";
   const story = text(run.jira_key || run.story || run.run_id);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal delete-history-modal" role="dialog" aria-modal="true" aria-label="Delete delivery history" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Delete delivery history?</strong><p className="modal-copy">This removes the {story} record, log, and trace files. This action cannot be undone.</p></div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button danger delete-confirm" disabled={busy} onClick={onConfirm}><Trash2 size={14} />{busy ? "Deleting…" : "Delete record"}</button></footer></section></div>;
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal delete-history-modal" role="dialog" aria-modal="true" aria-label={`Delete ${patch ? "Auto Patch" : "delivery"} history`} onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Delete {patch ? "Auto Patch" : "delivery"} history?</strong><p className="modal-copy">This removes the {story} record, log, and trace files. This action cannot be undone.</p></div><footer><button className="button" disabled={busy} onClick={onClose}>Cancel</button><button className="button danger delete-confirm" disabled={busy} onClick={onConfirm}><Trash2 size={14} />{busy ? "Deleting…" : "Delete record"}</button></footer></section></div>;
 }
 
 function ObservatoryView({ project, notify, onDirtyChange }: { project: string; notify: Notify; onDirtyChange: (dirty: boolean) => void }) {

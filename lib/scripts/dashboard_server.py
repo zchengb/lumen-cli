@@ -1497,6 +1497,33 @@ class DashboardServer(ThreadingHTTPServer):
                 removed.append(str(path))
         return {"run_id": run_id, "removed": removed}
 
+    def delete_patch_history(self, workspace: Path, run_id: str) -> dict[str, Any]:
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+            raise ValueError("Invalid patch run id")
+        current = patch_payload(workspace).get("current") or {}
+        if run_id == str(current.get("run_id") or "") and (workspace / "locks" / "patch-run").exists():
+            raise ValueError("The active Auto Patch cannot be deleted")
+        history_json = workspace / "history" / "patch" / f"{run_id}.json"
+        if not history_json.is_file():
+            raise ValueError("Patch history record was not found")
+        item = read_delivery_json(history_json, {})
+        progress = item.get("progress") if isinstance(item.get("progress"), dict) else {}
+        patch = item.get("patch") if isinstance(item.get("patch"), dict) else item
+        removed: list[str] = []
+        log_value = str(progress.get("log_file") or patch.get("log_file") or item.get("log_file") or "").strip()
+        if log_value:
+            log_path = Path(log_value).expanduser()
+            try:
+                log_path.resolve().relative_to(workspace.resolve())
+                if log_path.is_file():
+                    log_path.unlink()
+                    removed.append(str(log_path))
+            except ValueError:
+                pass
+        history_json.unlink()
+        removed.append(str(history_json))
+        return {"run_id": run_id, "removed": removed}
+
     def update_observability(self, workspace: Path, body: dict[str, Any]) -> dict[str, Any]:
         mode = str(body.get("capture_mode") or "").strip().lower()
         if mode not in {"off", "metadata", "full"}:
@@ -1788,6 +1815,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_json(HTTPStatus.ACCEPTED, {"patch": self.server.start_patch(workspace, project, str(body.get("jira_key") or ""))})
             if parsed.path == "/api/patch/stop":
                 return self.respond_json(HTTPStatus.ACCEPTED, {"patch": self.server.stop_patch(workspace)})
+            if parsed.path == "/api/patch/history/delete":
+                return self.respond_json(HTTPStatus.OK, {"patch": self.server.delete_patch_history(workspace, str(body.get("run_id") or ""))})
             if parsed.path == "/api/delivery/retry":
                 return self.respond_json(HTTPStatus.ACCEPTED, {"delivery": self.server.retry_delivery(workspace)})
             if parsed.path == "/api/delivery/start":

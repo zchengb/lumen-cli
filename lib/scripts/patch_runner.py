@@ -29,6 +29,7 @@ from patch_runtime import (
     jira_key,
     jira_status,
     jira_summary,
+    load_delivery_config,
     load_registry,
     logs_dir,
     new_progress,
@@ -64,6 +65,12 @@ def load_env(workspace: Path) -> None:
 
 def lock_path(workspace: Path) -> Path:
     return workspace_lumen_dir(workspace) / "locks" / "patch-run"
+
+
+def patch_model(workspace: Path) -> str:
+    execution = load_delivery_config(workspace).get("execution", {})
+    execution = execution if isinstance(execution, dict) else {}
+    return str(execution.get("patch_model") or execution.get("model") or os.environ.get("CURSOR_AGENT_MODEL") or "cursor-grok-4.5-medium").strip()
 
 
 REPOSITORY_STOPWORDS = {
@@ -253,6 +260,7 @@ def result_from_progress(progress: dict[str, Any], status: str, summary: str, qu
         "jira_key": progress.get("jira_key", ""),
         "jira_summary": progress.get("jira_summary", ""),
         "jira_status": progress.get("jira_status", ""),
+        "model": progress.get("model", ""),
         "summary": summary,
         "repository_decision": progress.get("repository_decision", {}),
         "repos_touched": progress.get("repositories", []),
@@ -330,14 +338,7 @@ def block(workspace: Path, progress: dict[str, Any], question: str, reason: str)
 
 
 def run_agent(workspace: Path, prompt: str, log_file: Path) -> int:
-    execution = (workspace_lumen_dir(workspace) / "config" / "delivery.json")
-    config: dict[str, Any] = {}
-    try:
-        config = json.loads(execution.read_text(encoding="utf-8")) if execution.is_file() else {}
-    except (OSError, json.JSONDecodeError):
-        pass
-    execution_config = config.get("execution", {}) if isinstance(config.get("execution"), dict) else {}
-    model = str(execution_config.get("patch_model") or execution_config.get("model") or os.environ.get("CURSOR_AGENT_MODEL") or "cursor-grok-4.5-medium")
+    model = patch_model(workspace)
     sandbox = os.environ.get("CURSOR_AGENT_SANDBOX", "disabled")
     output_format = os.environ.get("CURSOR_AGENT_OUTPUT_FORMAT", "stream-json")
     args = ["agent", "--workspace", str(workspace), "--sandbox", sandbox, "--trust", "-p", "-f", "--output-format", output_format, "--model", model, prompt]
@@ -412,6 +413,7 @@ def main() -> int:
             return 0
         key = jira_key(item)
         progress = new_progress(datetime.now().strftime("%Y%m%d-%H%M%S"), item, workspace)
+        progress["model"] = patch_model(workspace)
         save_progress(workspace, progress)
         set_phase(workspace, progress, "capture", "in_progress", f"Selected {key}")
         set_phase(workspace, progress, "capture", "completed", "Primary Jira workitem captured")

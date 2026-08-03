@@ -325,7 +325,7 @@ def remove_worktrees(repositories: list[dict[str, Any]]) -> None:
 
 
 def empty_progress() -> dict[str, Any]:
-    return {"schema_version": "1.0", "run_id": "", "patch_status": "not_started", "current_phase": "", "current_step": "", "jira_key": "", "jira_summary": "", "jira_type": "", "jira_status": "", "branch": "", "repositories": [], "started_at": "", "updated_at": "", "finished_at": "", "phases": [], "self_checks": [], "question": "", "failures": [], "jira": {}, "feishu": {}, "messages": []}
+    return {"schema_version": "1.0", "run_id": "", "patch_status": "not_started", "current_phase": "", "current_step": "", "jira_key": "", "jira_summary": "", "jira_type": "", "jira_status": "", "model": "", "branch": "", "repositories": [], "started_at": "", "updated_at": "", "finished_at": "", "phases": [], "self_checks": [], "question": "", "failures": [], "jira": {}, "feishu": {}, "messages": []}
 
 
 def new_progress(run_id: str, item: dict[str, Any], workspace: Path) -> dict[str, Any]:
