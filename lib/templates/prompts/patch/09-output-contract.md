@@ -16,4 +16,6 @@ Write `<workspace-root>/lumen/results/patch-result.json` with this shape:
 }
 ```
 
+For a multi-repository patch, include one `repos_touched` entry per changed repository and report the exact files and commit subject for each one.
+
 Allowed `patch_status` values are `completed`, `blocked`, `skipped`, and `failed`. Never invent commit SHAs, PR URLs, Jira status, notification status, or test results.

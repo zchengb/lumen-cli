@@ -186,16 +186,37 @@ def _candidate_summary(candidate: dict[str, Any]) -> str:
     return f"{name} (score {candidate['score']}; {'; '.join(details) or 'no local evidence'})"
 
 
-def select_repository(workspace: Path, item: dict[str, Any], context_path: Path | None = None) -> tuple[dict[str, Any] | None, str]:
+def _explicit_reply_repositories(item: dict[str, Any], eligible: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Use the latest human Jira reply when it names exact registered repositories."""
+    for comment in reversed(comments(item)):
+        if not isinstance(comment, dict):
+            continue
+        comment_json = json.dumps(comment, ensure_ascii=False)
+        if "Lumen Auto Patch" in comment_json:
+            continue
+        comment_text = _jira_context_text(comment)
+        matches = [
+            repo for repo in eligible
+            if re.search(rf"(?<![A-Za-z0-9_-]){re.escape(str(repo.get('name') or '').strip())}(?![A-Za-z0-9_-])", comment_text, re.IGNORECASE)
+        ]
+        return matches
+    return []
+
+
+def select_repositories(workspace: Path, item: dict[str, Any], context_path: Path | None = None) -> tuple[list[dict[str, Any]], str]:
     repositories = repo_registry(workspace)
     eligible = [repo for repo in repositories if repository_enabled(repo)]
     if not eligible:
-        return None, "Auto Patch is disabled for every registered repository."
+        return [], "Auto Patch is disabled for every registered repository."
     if len(eligible) == 1:
         repo = eligible[0]
-        return repo, "Only one Auto Patch-authorized repository is available."
+        return [repo], "Only one Auto Patch-authorized repository is available."
     if not repositories:
-        return None, "No registered repository is available."
+        return [], "No registered repository is available."
+    explicit = _explicit_reply_repositories(item, eligible)
+    if explicit:
+        names = ", ".join(str(repo.get("name") or "") for repo in explicit)
+        return explicit, f"Latest human Jira reply explicitly selected registered repositories: {names}."
     context = read_json(context_path, {}) if context_path else {}
     context = context if isinstance(context, dict) else {}
     search_text = json.dumps(item, ensure_ascii=False)
@@ -206,17 +227,23 @@ def select_repository(workspace: Path, item: dict[str, Any], context_path: Path 
     direct = [candidate for candidate in candidates if candidate["direct"]]
     if len(direct) == 1:
         candidate = direct[0]
-        return candidate["repo"], f"High-confidence Jira repository name match: {candidate['repo'].get('name')}."
+        return [candidate["repo"]], f"High-confidence Jira repository name match: {candidate['repo'].get('name')}."
     if len(direct) > 1:
-        return None, "Multiple registered repositories appear explicitly in Jira context: " + ", ".join(_candidate_summary(candidate) for candidate in direct[:5])
+        return [], "Multiple registered repositories appear explicitly in Jira context. Reply with the exact repository name(s) Auto Patch should modify: " + ", ".join(_candidate_summary(candidate) for candidate in direct[:5])
     ranked = sorted((candidate for candidate in candidates if candidate["score"] > 0), key=lambda candidate: candidate["score"], reverse=True)
     if ranked and ranked[0]["high"] and (len(ranked) == 1 or ranked[0]["score"] > ranked[1]["score"] + 8):
         candidate = ranked[0]
         evidence = candidate["evidence"]
-        return candidate["repo"], f"High-confidence Jira keyword and local code match: {candidate['repo'].get('name')} ({', '.join(evidence['keywords'])} in {evidence['files']} file(s))."
+        return [candidate["repo"]], f"High-confidence Jira keyword and local code match: {candidate['repo'].get('name')} ({', '.join(evidence['keywords'])} in {evidence['files']} file(s))."
     keyword_text = ", ".join(keywords) or "none"
     candidate_text = "; ".join(_candidate_summary(candidate) for candidate in ranked[:5]) or "none"
-    return None, f"Jira keywords and local code search did not identify one high-confidence registered repository. Keywords: {keyword_text}. Candidates: {candidate_text}."
+    return [], f"Jira keywords and local code search did not identify one high-confidence registered repository. Keywords: {keyword_text}. Candidates: {candidate_text}."
+
+
+def select_repository(workspace: Path, item: dict[str, Any], context_path: Path | None = None) -> tuple[dict[str, Any] | None, str]:
+    """Compatibility wrapper for callers that still require a single repository."""
+    repositories, reason = select_repositories(workspace, item, context_path)
+    return (repositories[0], reason) if len(repositories) == 1 else (None, reason)
 
 
 def result_from_progress(progress: dict[str, Any], status: str, summary: str, question: str = "", failures: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -404,17 +431,17 @@ def main() -> int:
             set_phase(workspace, progress, "context", "in_progress", "Dry run: reading Jira context")
             context_path = capture(workspace, key)
             set_phase(workspace, progress, "context", "completed", f"Context captured at {context_path}")
-            repo, repo_reason = select_repository(workspace, item, context_path)
-            if repo is None:
-                result = result_from_progress(progress, "blocked", "Dry run could not resolve one registered repository", "Which registered repository should Auto Patch modify?")
+            repositories, repo_reason = select_repositories(workspace, item, context_path)
+            if not repositories:
+                result = result_from_progress(progress, "blocked", "Dry run could not resolve registered repositories", "Which registered repository or repositories should Auto Patch modify?")
                 write_terminal(workspace, progress, result)
                 return 0
-            progress["repository_decision"] = {"repositories": [repo.get("name")], "reason": repo_reason}
-            prompt = compose(workspace, key, jira_summary(item), context_path, [repo])
+            progress["repository_decision"] = {"repositories": [repo.get("name") for repo in repositories], "reason": repo_reason}
+            prompt = compose(workspace, key, jira_summary(item), context_path, repositories)
             prompt_path = results_dir(workspace) / "patch-prompt.txt"
             prompt_path.write_text(prompt, encoding="utf-8")
             progress["prompt_path"] = str(prompt_path)
-            set_phase(workspace, progress, "repository", "completed", f"Dry run mapped {repo.get('name')}")
+            set_phase(workspace, progress, "repository", "completed", f"Dry run mapped {len(repositories)} repository(ies): {', '.join(str(repo.get('name')) for repo in repositories)}")
             set_phase(workspace, progress, "agent", "skipped", "Dry run")
             result = result_from_progress(progress, "skipped", f"Dry run completed; composed prompt at {prompt_path}")
             write_terminal(workspace, progress, result)
@@ -430,18 +457,24 @@ def main() -> int:
         set_phase(workspace, progress, "context", "in_progress", "Reading primary and related Jira context")
         context_path = capture(workspace, key)
         set_phase(workspace, progress, "context", "completed", f"Context captured at {context_path}")
-        set_phase(workspace, progress, "repository", "in_progress", "Resolving one registered repository")
-        repo, repo_reason = select_repository(workspace, item, context_path)
-        if repo is None:
-            return block(workspace, progress, "Which registered repository should Auto Patch modify?", repo_reason)
-        progress["repository_decision"] = {"repositories": [repo.get("name")], "reason": repo_reason}
-        prepared = prepare_worktree(workspace, key, jira_summary(item), repo)
-        progress["repositories"] = [prepared]
-        progress["branch"] = prepared.get("branch", "")
+        set_phase(workspace, progress, "repository", "in_progress", "Resolving registered repositories")
+        repositories, repo_reason = select_repositories(workspace, item, context_path)
+        if not repositories:
+            return block(workspace, progress, "Which registered repository or repositories should Auto Patch modify?", repo_reason)
+        progress["repository_decision"] = {"repositories": [repo.get("name") for repo in repositories], "reason": repo_reason}
+        prepared: list[dict[str, Any]] = []
+        try:
+            for repo in repositories:
+                prepared.append(prepare_worktree(workspace, key, jira_summary(item), repo))
+        except Exception as exc:
+            remove_worktrees(prepared)
+            return block(workspace, progress, "Should Auto Patch retry after preparing all selected repositories?", str(exc))
+        progress["repositories"] = prepared
+        progress["branch"] = prepared[0].get("branch", "") if prepared else ""
         save_progress(workspace, progress)
-        set_phase(workspace, progress, "repository", "completed", f"Prepared {prepared.get('worktree_path')}")
+        set_phase(workspace, progress, "repository", "completed", f"Prepared {len(prepared)} patch worktree(s)")
         set_phase(workspace, progress, "agent", "in_progress", "Running Auto Patch Agent")
-        prompt = compose(workspace, key, jira_summary(item), context_path, [repo])
+        prompt = compose(workspace, key, jira_summary(item), context_path, repositories)
         log_file = logs_dir(workspace) / f"run-{progress['run_id']}.log"
         progress["log_file"] = str(log_file)
         save_progress(workspace, progress)

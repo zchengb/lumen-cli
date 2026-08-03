@@ -1641,6 +1641,29 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertIn("orders-service", reason)
             self.assertIn("payments-service", runner.blocked_comment(reason, "Which repository should be modified?"))
 
+    def test_patch_repository_mapping_accepts_multiple_repositories_from_latest_human_reply(self) -> None:
+        runner = load_patch_runner()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repositories = [
+                {"name": "digital-platform-admin", "path": str(root / "digital-platform-admin")},
+                {"name": "mbpass-admin", "path": str(root / "mbpass-admin")},
+                {"name": "mbpass-data-proxy", "path": str(root / "mbpass-data-proxy")},
+            ]
+            item = {"key": "MBPAS-1548", "fields": {"summary": "Existing bug collection", "comment": {"comments": [
+                {"body": "Lumen Auto Patch · Blocked"},
+                {"body": "digital-platform-admin\nmbpass-admin\nmbpass-data-proxy"},
+                {"body": "Lumen Auto Patch · Blocked"},
+            ]}}}
+            with patch.object(runner, "repo_registry", return_value=repositories):
+                selected, reason = runner.select_repositories(root, item)
+
+            self.assertEqual(
+                ["digital-platform-admin", "mbpass-admin", "mbpass-data-proxy"],
+                [repository["name"] for repository in selected],
+            )
+            self.assertIn("Latest human Jira reply explicitly selected", reason)
+
     def test_installer_copies_delivery_coding_guideline(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
