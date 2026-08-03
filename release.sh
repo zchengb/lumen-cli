@@ -19,6 +19,15 @@ RESET="$(printf '\033[0m')"
 fail() { printf '%sError:%s %s\n' "${RED}" "${RESET}" "$1" >&2; exit 1; }
 ok()   { printf '%s✓%s %s\n' "${GREEN}" "${RESET}" "$1"; }
 
+sync_dashboard_ui_version() {
+  [[ -f "dashboard-ui/package.json" ]] || return 0
+  command -v npm >/dev/null 2>&1 || fail "npm is required to build the Dashboard for a release."
+
+  npm --prefix dashboard-ui version --no-git-tag-version "${NEW_VERSION}" >/dev/null
+  npm --prefix dashboard-ui run build >/dev/null
+  git add dashboard-ui/package.json dashboard-ui/package-lock.json lib/templates/dashboard-app
+}
+
 [[ -n "${NEW_VERSION}" ]] || fail "Usage: ./release.sh <new-version> (e.g. 1.6.1)"
 [[ "${NEW_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "Version must look like X.Y.Z (got: ${NEW_VERSION})"
 
@@ -39,6 +48,7 @@ if git rev-parse "${TAG}" >/dev/null 2>&1; then
 fi
 
 printf '%s' "${NEW_VERSION}" > VERSION
+sync_dashboard_ui_version
 git add VERSION
 git commit -m "chore: release ${TAG}"
 git tag -a "${TAG}" -m "Lumen ${TAG}"
