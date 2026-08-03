@@ -52,6 +52,7 @@ from dashboard_server import (  # noqa: E402
     feishu_notifications_enabled,
     list_observatory_stories,
     observatory_story_content,
+    patch_payload,
     repository_branches,
     save_delivery_steps,
     save_feishu_notifications,
@@ -1572,6 +1573,21 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             saved_history = json.loads(history_file.read_text(encoding="utf-8"))
             self.assertEqual("dry_run", saved_history["patch"]["feishu"]["status"])
             self.assertEqual("dry_run", json.loads((results / "patch-progress.json").read_text(encoding="utf-8"))["feishu"]["status"])
+
+    def test_patch_history_exposes_jira_card_title(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            history = workspace / "history" / "patch"
+            history.mkdir(parents=True)
+            (history / "run-1.json").write_text(json.dumps({
+                "progress": {"jira_summary": "AMG PL system bug collection"},
+                "patch": {"jira_key": "MBPAS-1548", "summary": "Repository mapping is ambiguous.", "patch_status": "blocked"},
+            }), encoding="utf-8")
+
+            runs = patch_payload(workspace)["runs"]
+
+            self.assertEqual("MBPAS-1548", runs[0]["jira_key"])
+            self.assertEqual("AMG PL system bug collection", runs[0]["jira_summary"])
 
     def test_patch_block_writes_comment_even_when_transition_is_unavailable(self) -> None:
         runner = load_patch_runner()

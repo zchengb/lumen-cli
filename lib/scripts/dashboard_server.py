@@ -799,6 +799,7 @@ def patch_payload(workspace: Path) -> dict[str, Any]:
                 "run_id": item.get("run_id") or source.stem,
                 "status": patch.get("patch_status") or progress.get("patch_status") or "unknown",
                 "jira_key": patch.get("jira_key") or progress.get("jira_key") or "",
+                "jira_summary": patch.get("jira_summary") or progress.get("jira_summary") or "",
                 "summary": patch.get("summary") or progress.get("jira_summary") or "",
                 "jira_type": progress.get("jira_type") or "",
                 "jira_status": progress.get("jira_status") or "",
