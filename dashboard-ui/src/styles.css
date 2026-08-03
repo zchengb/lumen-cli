@@ -319,3 +319,36 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .patch-flow .flow-copy{width:min(100%,170px);min-width:0}
 .patch-flow .flow-copy strong,.patch-flow .flow-copy span{max-width:100%;overflow-wrap:anywhere;word-break:break-word}
 .patch-flow .flow-copy span{min-height:2.7em;line-height:1.35}
+
+/* Repository cards keep the overview scannable; detailed governance stays in one focused dialog. */
+.repository-list{border-top:1px solid #ececea;background:#fcfcfb}
+.repository-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;padding:16px 18px 18px}
+.repository-grid>.empty{grid-column:1/-1}
+.repository-card{min-width:0}
+.repository-card-button{display:grid;align-content:space-between;gap:15px;width:100%;min-height:152px;padding:16px;border:1px solid #e2e2df;border-radius:10px;background:#fff;color:#29292e;text-align:left;transition:transform 160ms cubic-bezier(.23,1,.32,1),border-color 160ms ease,box-shadow 160ms ease}
+.repository-card-button:hover{border-color:#cfcfca;transform:translateY(-1px);box-shadow:0 7px 18px rgba(28,28,30,.08)}
+.repository-card-button:active{transform:scale(.985)}
+.repository-card-button:focus-visible{outline:2px solid #0071e3;outline-offset:2px}
+.repository-card-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;min-width:0}
+.repository-card-heading>div{display:grid;gap:5px;min-width:0}
+.repository-card-heading strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.repository-card-heading span{color:#777780;font-size:11px;line-height:1.35}
+.repository-card-heading svg{flex:none;color:#8a8a91;margin-top:1px}
+.repository-card-meta{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.repository-card-meta .badge{font-size:9px}
+.repository-card-meta>span{display:inline-flex;align-items:center;gap:5px;color:#777780;font-size:11px}
+.repository-card-permissions{display:flex;flex-wrap:wrap;gap:6px;color:#777780;font-size:10px}
+.repository-card-permissions span{padding:4px 7px;border-radius:999px;background:#f1f1ef}
+.repository-card-permissions .enabled{color:#137547;background:#edf9f0}
+.repository-card-permissions .disabled{color:#b42318;background:#fff0ef}
+.repository-config-backdrop{place-items:start center;padding:24px;overflow:auto}
+.repository-config-modal{display:grid;grid-template-rows:auto minmax(0,1fr);width:min(940px,100%);max-height:calc(100vh - 48px);border-radius:12px}
+.repository-config-header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:20px 21px 16px;border-bottom:1px solid #e3e3e6;background:#fff}
+.repository-config-header>div{display:grid;gap:4px;min-width:0}
+.repository-config-header>div>span{color:#9a5b2c;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.repository-config-header strong{font-size:18px;font-weight:600;overflow-wrap:anywhere}
+.repository-config-header p{margin:0;color:#73737b;font-size:12px;line-height:1.45}
+.repository-config-header .icon-button{flex:none}
+.repository-config-body{min-height:0;padding:18px;overflow:auto;background:#fcfcfb}
+.repository-config-body .repository-editor{padding:0;background:transparent}
+@media(max-width:700px){.repository-grid{grid-template-columns:1fr;padding:12px}.repository-config-backdrop{padding:10px}.repository-config-modal{max-height:calc(100vh - 20px)}.repository-config-header{padding:16px}.repository-config-body{padding:12px}}
