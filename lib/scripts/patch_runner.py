@@ -19,6 +19,7 @@ from compose_patch_prompt import compose
 from patch_jira import add_comment, blocked_comment, transition_issue
 from patch_runtime import (
     comments,
+    blocked_statuses,
     comment_fingerprint,
     empty_progress,
     get_workitem,
@@ -190,7 +191,7 @@ def choose_item(workspace: Path, requested: str) -> tuple[dict[str, Any] | None,
         key = jira_key(candidate)
         item = get_workitem(workspace, key)
         record = registry.get(key, {}) if isinstance(registry, dict) else {}
-        blocked = jira_status(item).casefold() == str(patch_config(workspace).get("blocked_status", "Block")).casefold()
+        blocked = jira_status(item).casefold() in {status.casefold() for status in blocked_statuses(workspace)}
         waiting_for_reply = blocked or record.get("status") == "blocked"
         resumed = False
         if waiting_for_reply:

@@ -20,6 +20,7 @@ from patch_launchd import interval_minutes_from_cron, status as patch_schedule_s
 from patch_jira import blocked_comment  # noqa: E402
 from jira_sync import resolve_board_id, workspace_jira_config  # noqa: E402
 from patch_runtime import (  # noqa: E402
+    blocked_statuses,
     candidate_jql,
     has_external_reply,
     jira_config,
@@ -41,6 +42,18 @@ class AutoPatchTests(unittest.TestCase):
             'project = DEMO AND sprint = 10025 AND issuetype in ("Task", "Bug") AND status in ("To Do", "Ready") ORDER BY priority DESC, updated ASC',
             query,
         )
+
+    def test_blocked_jql_includes_jira_migrated_status_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            with patch("patch_runtime.jira_config", return_value={"project_key": "DEMO"}), patch(
+                "patch_runtime.eligible_statuses", return_value=["To Do"]
+            ), patch("patch_runtime.issue_types", return_value=["Task", "Bug"]), patch(
+                "patch_runtime.patch_config", return_value={"blocked_status": "Block"}
+            ):
+                query = candidate_jql(workspace, "10025", include_blocked=True)
+        self.assertIn('status in ("To Do", "Block", "Block (migrated)")', query)
+        self.assertEqual(["Block", "Block (migrated)"], blocked_statuses(workspace))
 
     def test_candidate_jql_rejects_missing_or_non_numeric_sprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -89,6 +102,13 @@ class AutoPatchTests(unittest.TestCase):
         ]}}}
         self.assertTrue(has_external_reply(item, {"blocked_at": "2026-07-30T10:01:00Z"}))
         self.assertFalse(has_external_reply(item, {"blocked_at": "2026-07-30T10:06:00Z"}))
+
+    def test_blocked_reply_is_found_when_primary_comment_page_is_empty(self) -> None:
+        item = {
+            "fields": {"comment": {"comments": []}},
+            "comments": [{"body": {"type": "doc", "content": [{"text": "I have allowed the related repositories to auto patch. Please try again."}]}, "created": "2026-08-03T11:11:00.000+0800"}],
+        }
+        self.assertTrue(has_external_reply(item, {"blocked_at": "2026-08-03T03:09:02Z"}))
 
     def test_blocked_comment_matches_jira_readable_format(self) -> None:
         comment = blocked_comment("Repository <service> is ambiguous", "Should we modify service & api?")

@@ -110,6 +110,14 @@ def issue_types(workspace: Path) -> list[str]:
     return normalize_values(patch_config(workspace).get("issue_types"), DEFAULT_PATCH_TYPES)
 
 
+def blocked_statuses(workspace: Path) -> list[str]:
+    configured = str(patch_config(workspace).get("blocked_status", "Block")).strip() or "Block"
+    statuses = [configured]
+    if not configured.casefold().endswith("(migrated)"):
+        statuses.append(f"{configured} (migrated)")
+    return list(dict.fromkeys(statuses))
+
+
 def quote_jql_values(values: list[str]) -> str:
     return ", ".join('"' + value.replace('"', '\\"') + '"' for value in values)
 
@@ -120,8 +128,7 @@ def candidate_jql(workspace: Path, sprint_id: str, include_blocked: bool = False
         raise ValueError("Auto Patch requires a numeric active sprint ID")
     statuses = eligible_statuses(workspace)
     if include_blocked:
-        blocked = str(patch_config(workspace).get("blocked_status", "Block")).strip() or "Block"
-        statuses = [*statuses, blocked]
+        statuses = [*statuses, *blocked_statuses(workspace)]
     return f"project = {jira_config(workspace).get('project_key', '')} AND sprint = {sprint_id} AND issuetype in ({quote_jql_values(issue_types(workspace))}) AND status in ({quote_jql_values(statuses)}) ORDER BY priority DESC, updated ASC"
 
 
@@ -181,7 +188,7 @@ def get_workitem(workspace: Path, key: str) -> dict[str, Any]:
     ready, reason = twg_ready()
     if not ready:
         raise RuntimeError(reason)
-    code, output = run_twg(["jira", "workitem", "get", key, "--full", "-o", "json", *site_args(jira_config(workspace))])
+    code, output = run_twg(["jira", "workitem", "get", key, "--full", "--comments", "-o", "json", *site_args(jira_config(workspace))])
     if code != 0:
         raise RuntimeError((output or f"Unable to read Jira {key}").strip()[-1000:])
     payload = unwrap_jira(parse_twg_json(output) or {})
@@ -206,10 +213,28 @@ def comment_fingerprint(comment: Any) -> str:
 
 def comments(item: dict[str, Any]) -> list[Any]:
     fields = jira_fields(item)
-    raw = fields.get("comment") or fields.get("comments") or item.get("comments") or item.get("comment")
-    if isinstance(raw, dict):
-        raw = raw.get("comments") or raw.get("content") or []
-    return raw if isinstance(raw, list) else []
+    sources = (fields.get("comment"), fields.get("comments"), item.get("comments"), item.get("comment"))
+    for raw in sources:
+        if isinstance(raw, dict):
+            raw = raw.get("comments") or raw.get("content") or []
+        if isinstance(raw, list) and raw:
+            return raw
+    return []
+
+
+def timestamp_after(value: str, boundary: str) -> bool:
+    if not boundary or not value:
+        return True
+    try:
+        parsed_value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed_boundary = datetime.fromisoformat(boundary.replace("Z", "+00:00"))
+        if parsed_value.tzinfo is None:
+            parsed_value = parsed_value.replace(tzinfo=timezone.utc)
+        if parsed_boundary.tzinfo is None:
+            parsed_boundary = parsed_boundary.replace(tzinfo=timezone.utc)
+        return parsed_value.astimezone(timezone.utc) > parsed_boundary.astimezone(timezone.utc)
+    except ValueError:
+        return value > boundary
 
 
 def has_external_reply(item: dict[str, Any], record: dict[str, Any]) -> bool:
@@ -225,7 +250,7 @@ def has_external_reply(item: dict[str, Any], record: dict[str, Any]) -> bool:
         fingerprint = comment_fingerprint(comment)
         if fingerprint == question_hash:
             continue
-        if question_at and created and created <= question_at:
+        if not timestamp_after(created, question_at):
             continue
         return True
     return False
