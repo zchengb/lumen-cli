@@ -26,6 +26,15 @@ def scan_entry(repo: dict[str, Any], existing: dict[str, Any]) -> dict[str, Any]
             "patch": {"enabled": True},
         },
     }
+    if isinstance(existing.get("automation"), dict):
+        automation = existing["automation"]
+        entry["automation"] = {
+            **automation,
+            "patch": {
+                "enabled": True,
+                **(automation.get("patch") if isinstance(automation.get("patch"), dict) else {}),
+            },
+        }
     if isinstance(existing.get("runtime"), dict):
         entry["runtime_profile"] = existing.get("runtime_profile", entry["runtime_profile"])
         entry["runtime"] = existing["runtime"]

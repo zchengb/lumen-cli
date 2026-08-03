@@ -310,6 +310,10 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .git-sync-conflict-modal{width:min(560px,100%)}.git-sync-conflict-details{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px 12px;padding:11px 12px;border:1px solid #e2e2e5;border-radius:6px;background:#fafafa;color:#74747c;font-size:11px}.git-sync-conflict-details code{min-width:0;color:#36363c;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .custom-model-edit{align-self:flex-start;margin-top:6px;padding:0;border:0;background:transparent;color:#0071e3;font-size:11px;cursor:pointer}.custom-model-edit:hover{text-decoration:underline}.custom-model-modal{width:min(480px,calc(100vw - 36px))}.custom-model-header{display:grid;gap:4px;padding:20px 21px 0}.custom-model-header strong{font-size:18px;font-weight:600;letter-spacing:-.02em}.custom-model-header p{margin:0;color:#73737b;font-size:12px;line-height:1.45}
 .git-sync-error{margin:0;padding:9px 11px;border:1px solid #efc5c2;border-radius:6px;background:#fff0ef;color:#b42318;font-size:11px;line-height:1.45}
+.repository-footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;flex-wrap:wrap;padding:16px 18px}
+.repository-footer .settings-save-status{min-width:0;overflow-wrap:anywhere;text-align:right}
+.repository-footer .button{flex:0 0 auto}
+@media(max-width:520px){.repository-footer{align-items:stretch;flex-direction:column}.repository-footer .settings-save-status{text-align:left}.repository-footer .button{width:100%}}
 .patch-flow .flow-track{left:calc(6.25% + 14px);right:calc(6.25% + 14px)}
 .patch-flow .flow-steps{grid-template-columns:repeat(var(--flow-count),minmax(170px,1fr))}
 .patch-flow .flow-copy{width:min(100%,170px);min-width:0}

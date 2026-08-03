@@ -17,6 +17,7 @@ from dashboard_server import save_repositories, workspace_payload  # noqa: E402
 from delivery_workspace import repository_delivery_disabled_reasons  # noqa: E402
 from auto_fix_sync import is_pr_candidate  # noqa: E402
 from patch_runner import select_repository  # noqa: E402
+from sync_workspace_repositories import scan_entry  # noqa: E402
 
 
 class RepositoryGovernanceTests(unittest.TestCase):
@@ -95,6 +96,16 @@ class RepositoryGovernanceTests(unittest.TestCase):
             selected, reason = select_repository(workspace.parent, {"fields": {"labels": ["service"]}})
             self.assertIsNone(selected)
             self.assertIn("Auto Patch is disabled", reason)
+
+    def test_repository_sync_defaults_auto_patch_to_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace, repository = self.make_workspace(Path(directory))
+            entry = scan_entry(
+                {"name": "service", "path": str(repository), "default_branch": "main"},
+                {"allow_auto_fix": False, "automation": {"delivery": {"enabled": False}}},
+            )
+            self.assertFalse(entry["automation"]["delivery"]["enabled"])
+            self.assertTrue(entry["automation"]["patch"]["enabled"])
 
     def test_patch_and_delivery_respect_repository_authorization(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

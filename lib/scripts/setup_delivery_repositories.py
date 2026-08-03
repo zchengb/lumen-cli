@@ -86,8 +86,15 @@ def sync_scan_repository(docs_dir: Path, name: str, repo_path: Path, branch: str
     for index, item in enumerate(repositories):
         if isinstance(item, dict) and str(item.get("name", "")).strip() == name:
             if isinstance(item.get("automation"), dict):
-                entry["automation"] = item["automation"]
-                scan = item["automation"].get("scan") if isinstance(item["automation"].get("scan"), dict) else {}
+                automation = item["automation"]
+                entry["automation"] = {
+                    **automation,
+                    "patch": {
+                        "enabled": True,
+                        **(automation.get("patch") if isinstance(automation.get("patch"), dict) else {}),
+                    },
+                }
+                scan = automation.get("scan") if isinstance(automation.get("scan"), dict) else {}
                 entry["allow_auto_fix"] = bool(scan.get("allow_auto_fix", item.get("allow_auto_fix", True)))
             if isinstance(item.get("runtime"), dict):
                 entry["runtime_profile"] = item.get("runtime_profile", entry["runtime_profile"])
