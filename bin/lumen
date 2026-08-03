@@ -2212,6 +2212,36 @@ cmd_scan() {
   bash "${LUMEN_LIB_DIR}/run-scan.sh" "${RESOLVED_WORKSPACE}"
 }
 
+clear_dashboard_port() {
+  local port="$1" occupied="" pid="" attempt=""
+  command -v lsof >/dev/null 2>&1 || {
+    err "Cannot clear dashboard port ${port}: lsof is required."
+    return 1
+  }
+  occupied="$(lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  [[ -z "${occupied}" ]] && return 0
+
+  for pid in ${occupied}; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    kill "${pid}" 2>/dev/null || true
+  done
+  for attempt in {1..30}; do
+    occupied="$(lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+    [[ -z "${occupied}" ]] && return 0
+    sleep 0.1
+  done
+
+  for pid in ${occupied}; do
+    [[ "${pid}" =~ ^[0-9]+$ ]] || continue
+    kill -KILL "${pid}" 2>/dev/null || true
+  done
+  occupied="$(lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)"
+  [[ -z "${occupied}" ]] || {
+    err "Dashboard port ${port} is still occupied by PID(s): ${occupied}"
+    return 1
+  }
+}
+
 cmd_dashboard() {
   if [[ "${1:-}" == "stop" ]]; then
     shift
@@ -2262,6 +2292,7 @@ cmd_dashboard() {
   dashboard_port="${LUMEN_DASHBOARD_PORT:-4173}"
   project_json="$(registry_cmd resolve-workspace "${workspace}")" || { err "Workspace is not registered. Run: lumen register ${workspace}"; exit 1; }
   project_slug="$(json_get "${project_json}" slug)"
+  clear_dashboard_port "${dashboard_port}" || exit 1
   server_state="${workspace}/state/dashboard-server.json"
   dashboard_version="$(lumen_version)"
   server_url=""
