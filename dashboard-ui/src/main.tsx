@@ -1516,7 +1516,11 @@ function RepositoryView({ data, interact }: { data: DashboardData; interact: (pa
     if (health.sync_status === "diverged") reasons.push("Sync diverged");
     return Array.from(new Set(reasons));
   };
-  const runtimeVersions = (health: RecordValue) => [health.java_version && `Java ${health.java_version}`, health.node_version && `Node ${health.node_version}`].filter(Boolean) as string[];
+  const runtimeSummary = (health: RecordValue) => {
+    const runtime = health.java_version ? `Java ${health.java_version}` : health.node_version ? `Node.js ${health.node_version}` : health.language || "Generic";
+    const buildTools = health.build_tools?.join(", ") || "No build tool detected";
+    return `${runtime} · ${buildTools}`;
+  };
   const repositoryValue = (value: unknown) => { const display = text(value, "Not configured"); return <span className="repository-fact-value" data-tooltip={display} title={display} tabIndex={0} aria-label={display}><code>{display}</code></span>; };
   const attention = repositories.filter((repository) => attentionReasons(repository).length > 0).length;
   const scanEnabled = repositories.filter((repository) => automationFor(repository).scan.allow_auto_fix).length;
@@ -1536,14 +1540,10 @@ function RepositoryView({ data, interact }: { data: DashboardData; interact: (pa
       <div className="repository-list"><div className="repository-grid">{visible.map((repository) => {
         const health = repository.health || {};
         const automation = automationFor(repository);
-        const reasons = attentionReasons(repository);
-        const versions = runtimeVersions(health);
         return <article className="repository-card" key={repository.name}>
           <button type="button" className="repository-card-button" onClick={() => setEditing(repository.name)} aria-label={`Edit ${repository.name || "repository"}`}>
-            <div className="repository-card-heading"><div><strong>{repository.name || "Unnamed repository"}</strong><span>{health.language || "Generic"} · {health.build_tools?.join(", ") || "No build tool detected"}</span></div><ChevronRight size={16} aria-hidden="true" /></div>
-            <div className="repository-card-meta"><span className="repository-card-branch"><GitBranch size={12} aria-hidden="true" />{repository.default_branch || "main"}</span>{reasons.length > 0 && <span className="repository-card-attention" title={reasons.join(" · ")}><CircleAlert size={12} aria-hidden="true" />{reasons.join(" · ")}</span>}</div>
-            <div className="repository-card-runtime">{(versions.length ? versions : ["Runtime version not detected"]).map((version) => <span key={version}>{version}</span>)}</div>
-            <div className="repository-card-permissions"><span className={automation.scan.allow_auto_fix ? "enabled" : "disabled"}>Auto Scan {automation.scan.allow_auto_fix ? "enabled" : "disabled"}</span><span className={automation.delivery.enabled ? "enabled" : "disabled"}>Auto Delivery {automation.delivery.enabled ? "enabled" : "disabled"}</span><span className={automation.patch.enabled ? "enabled" : "disabled"}>Auto Patch {automation.patch.enabled ? "enabled" : "disabled"}</span></div>
+            <div className="repository-card-heading"><div><strong>{repository.name || "Unnamed repository"}</strong><span>{runtimeSummary(health)}</span></div><ChevronRight size={16} aria-hidden="true" /></div>
+            <div className="repository-card-bottom"><div className="repository-card-permissions"><span className={automation.scan.allow_auto_fix ? "enabled" : "disabled"}>Auto Scan {automation.scan.allow_auto_fix ? "enabled" : "disabled"}</span><span className={automation.delivery.enabled ? "enabled" : "disabled"}>Auto Delivery {automation.delivery.enabled ? "enabled" : "disabled"}</span><span className={automation.patch.enabled ? "enabled" : "disabled"}>Auto Patch {automation.patch.enabled ? "enabled" : "disabled"}</span></div><span className="repository-card-branch"><GitBranch size={12} aria-hidden="true" />{repository.default_branch || "main"}</span></div>
           </button>
         </article>;
       })}{visible.length === 0 && <Empty label="No repositories match this view." />}</div></div>
