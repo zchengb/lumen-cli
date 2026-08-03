@@ -25,12 +25,18 @@ def main() -> int:
 
     try:
         context = load_story_context(Path(args.docs_dir), args.story)
-        policy_reasons = frontend_delivery_disabled_reasons(context) + repository_delivery_disabled_reasons(context)
+        frontend_reasons = frontend_delivery_disabled_reasons(context)
+        policy_reasons = repository_delivery_disabled_reasons(context)
         if policy_reasons:
             raise RuntimeError(
                 "Delivery is disabled by policy: " + "; ".join(policy_reasons)
             )
         messages = [] if args.dry_run else prepare_story_for_delivery(context)
+        if frontend_reasons:
+            messages.append(
+                "Frontend delivery skipped by policy; non-frontend delivery continues: "
+                + "; ".join(frontend_reasons)
+            )
         payload = {
             "docs_dir": str(context.docs_dir),
             "workspace_root": str(context.workspace_root),

@@ -236,7 +236,7 @@ class VisualDeliveryTests(unittest.TestCase):
             self.assertEqual(1, len(payload["verification_results"]))
             self.assertEqual("passed", payload["verification_results"][0]["status"])
 
-    def test_visual_execution_is_blocked_before_runtime_start(self) -> None:
+    def test_visual_execution_is_skipped_before_runtime_start(self) -> None:
         from delivery_workspace import RepoTarget, StoryContext
 
         with tempfile.TemporaryDirectory() as temp:
@@ -265,7 +265,8 @@ class VisualDeliveryTests(unittest.TestCase):
             results = execute(context, result)
 
             self.assertEqual("frontend_delivery_disabled", results[0]["failure_category"])
-            self.assertEqual("failed", json.loads(result.read_text(encoding="utf-8"))["visual_verification"]["status"])
+            self.assertEqual("skipped", results[0]["status"])
+            self.assertEqual("skipped", json.loads(result.read_text(encoding="utf-8"))["visual_verification"]["status"])
 
     def test_secret_redaction_covers_visual_runtime_values(self) -> None:
         self.assertEqual(

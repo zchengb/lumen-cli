@@ -88,7 +88,7 @@ def has_ui_runtime(context: StoryContext | None) -> bool:
 def frontend_delivery_policy_block() -> str:
     return """# Frontend Delivery Policy
 
-Frontend/Web/Native UI delivery is disabled. Do not modify frontend or UI source, implement Figma-to-code work, start a browser/device runtime, run visual QA, or claim visual delivery completion. Keep frontend work out of scope and report it as blocked for human review. Backend-only work may proceed only when it is independently deliverable without frontend changes."""
+Frontend/Web/Native UI delivery is disabled for this workspace. Skip frontend/UI files, UI-only plan steps, Figma-to-code work, browser/device startup, visual QA, and frontend verification. Do not modify frontend code or claim visual delivery completion. Continue all independently deliverable backend, service, data, and other non-frontend work in the same Story. Record skipped frontend scope as skipped in the delivery summary; do not block the entire delivery merely because the Story contains frontend work."""
 
 
 def render_prompt_catalog(prompts_dir: Path, manifest: dict, context: StoryContext | None) -> str:

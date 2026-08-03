@@ -836,6 +836,11 @@ def stage_result(category: str, detail: str, scenario: dict[str, Any]) -> dict[s
     return {**scenario, "status": "failed", "failure_category": category, "summary": detail, "stages": stages}
 
 
+def skipped_result(detail: str, scenario: dict[str, Any]) -> dict[str, Any]:
+    stages = {key: "skipped" for key in ("environment", "runtime", "authentication", "fixture", "navigation", "stability", "capture", "visual_comparison", "cleanup")}
+    return {**scenario, "status": "skipped", "failure_category": "frontend_delivery_disabled", "summary": detail, "stages": stages}
+
+
 def execute(
     context: StoryContext,
     result_path: Path,
@@ -849,8 +854,8 @@ def execute(
         return []
     if disabled_reasons:
         scenarios = scenarios if scenarios is not None else contract.get("scenarios", [])
-        detail = "Frontend delivery is disabled by policy: " + "; ".join(disabled_reasons)
-        results = [stage_result("frontend_delivery_disabled", detail, item) for item in scenarios]
+        detail = "Frontend delivery skipped by policy: " + "; ".join(disabled_reasons)
+        results = [skipped_result(detail, item) for item in scenarios]
         merge_visual_result(result_path, contract["runtime"].get("runtime_profile", ""), results)
         return results
     runtime_contract = contract["runtime"]
@@ -997,7 +1002,13 @@ def execute(
 
 def merge_visual_result(result_path: Path, profile: str, results: list[dict[str, Any]]) -> None:
     payload = read_json(result_path, {})
-    status = "passed" if results and all(item.get("status") == "passed" for item in results) else "needs_review" if results and all(item.get("status") in {"passed", "needs_review"} for item in results) else "failed"
+    statuses = {item.get("status") for item in results}
+    status = (
+        "passed" if results and statuses == {"passed"}
+        else "skipped" if results and statuses == {"skipped"}
+        else "needs_review" if results and statuses <= {"passed", "needs_review", "skipped"}
+        else "failed"
+    )
     payload["visual_verification"] = {"status": status, "runtime_profile": profile, "results": results}
     repositories = {str(item.get("repository", "")) for item in results}
     verification = [
@@ -1006,7 +1017,7 @@ def merge_visual_result(result_path: Path, profile: str, results: list[dict[str,
     ]
     verification.extend({
         "repository": item.get("repository", ""), "id": "visual", "label": f"Visual: {item.get('screen', '')} / {item.get('state', '')}",
-        "command": "internal visual delivery", "exit_code": 0 if item.get("status") == "passed" else 1,
+        "command": "internal visual delivery", "exit_code": 0 if item.get("status") in {"passed", "skipped"} else 1,
         "summary": item.get("summary") or (f"Difference {item.get('difference_ratio', 0):.2%}" if "difference_ratio" in item else item.get("failure_category", "")),
         "status": item.get("status", "failed"), "failure_category": item.get("failure_category", ""),
         "expected": item.get("expected", ""), "actual": item.get("actual", ""), "diff": item.get("diff", ""),
@@ -1040,7 +1051,7 @@ def main() -> int:
             write_json(result_path, {"delivery_status": "visual_check"})
         results = execute(context, result_path, scenarios)
         print(json.dumps(results, indent=2, ensure_ascii=False))
-        return 0 if all(item.get("status") == "passed" for item in results) else 1
+        return 0 if all(item.get("status") in {"passed", "skipped"} for item in results) else 1
     root = Path(args.workspace_root).expanduser().resolve()
     if root.name in {"lumen", ".lumen"}:
         root = root.parent

@@ -15,7 +15,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-from delivery_workspace import load_story_context, read_json, workspace_lumen_dir, write_json
+from delivery_workspace import frontend_repository_names, load_story_context, read_json, workspace_lumen_dir, write_json
 from visual_delivery import (
     dependencies_installed,
     local_runtime_port_in_use,
@@ -103,7 +103,14 @@ def repository_configs(workspace_root: Path) -> dict[str, dict[str, Any]]:
 
 
 def selected_repositories(context: Any, configs: dict[str, dict[str, Any]]) -> list[Any]:
-    web = [repo for repo in context.repos if isinstance(configs.get(repo.name, {}).get("runtime"), dict) and configs[repo.name]["runtime"].get("platform") == "web"]
+    frontend_repos = frontend_repository_names(context)
+    web = [
+        repo
+        for repo in context.repos
+        if repo.name not in frontend_repos
+        and isinstance(configs.get(repo.name, {}).get("runtime"), dict)
+        and configs[repo.name]["runtime"].get("platform") == "web"
+    ]
     try:
         from visual_delivery import visual_contract
 

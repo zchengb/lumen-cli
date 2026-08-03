@@ -42,6 +42,26 @@ FRONTEND_RUNTIME_PLATFORMS = {"web", "react-native", "ios", "android", "native"}
 FRONTEND_PROFILE_MARKERS = ("frontend", "web-", "web_", "react-native", "ios-", "android-")
 
 
+def frontend_repository_names(context: StoryContext) -> set[str]:
+    """Return repositories whose configured runtime belongs to the disabled UI scope."""
+    config = read_json(workspace_lumen_dir(context.workspace_root) / "config" / "repos.json", {"repositories": []})
+    entries = config.get("repositories") if isinstance(config.get("repositories"), list) else []
+    by_name = {
+        str(item.get("name", "")).strip(): item
+        for item in entries
+        if isinstance(item, dict) and str(item.get("name", "")).strip()
+    }
+    names: set[str] = set()
+    for repo in context.repos:
+        entry = by_name.get(repo.name, {})
+        runtime = entry.get("runtime") if isinstance(entry, dict) else None
+        platform = str(runtime.get("platform", "")).strip().casefold() if isinstance(runtime, dict) else ""
+        profile = str(entry.get("runtime_profile", "")).strip().casefold() if isinstance(entry, dict) else ""
+        if platform in FRONTEND_RUNTIME_PLATFORMS or any(marker in profile for marker in FRONTEND_PROFILE_MARKERS):
+            names.add(repo.name)
+    return names
+
+
 def frontend_delivery_disabled_reasons(context: StoryContext) -> list[str]:
     """Return the explicit reasons this delivery belongs to the disabled UI scope."""
     reasons: list[str] = []

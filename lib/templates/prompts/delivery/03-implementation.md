@@ -14,6 +14,10 @@ Lumen runs the configured verification profile after the Agent exits. Do not dup
 
 When given `# Verification Remediation Context`, diagnose only the listed failure, make the smallest correction, preserve all existing `repos_touched` entries and commit subjects, and do not restart, broaden scope, commit, push, or weaken verification.
 
+## Frontend scope
+
+Frontend/Web/Native UI delivery is disabled. Skip frontend/UI files, UI-only plan steps, browser/device startup, visual QA, and frontend verification. Continue independently deliverable backend, service, data, and other non-frontend work in the same Story. Record the skipped frontend scope in the delivery summary and do not block the whole delivery solely because the Story contains frontend work.
+
 ## Stop conditions
 
-Set `delivery_status` to `blocked` when the plan lacks required detail, a required concept or identifier is ambiguous, a worktree is unavailable, frontend/UI delivery is requested, or a required environment cannot be established. Do not move Jira status manually.
+Set `delivery_status` to `blocked` only when the plan lacks required detail, a required concept or identifier is ambiguous, a worktree is unavailable, or a required environment cannot be established. Do not move Jira status manually.

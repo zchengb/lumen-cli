@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from delivery_progress import docker_available
-from delivery_workspace import load_story_context, read_json, workspace_lumen_dir
+from delivery_workspace import frontend_repository_names, load_story_context, read_json, workspace_lumen_dir
 from jira_sync import refresh_twg_auth
 from run_delivery_verification import colima_environment, verification_steps
 from workspace_config import read_cursor_api_key
@@ -84,13 +84,15 @@ def main() -> int:
             if error:
                 errors.append(error)
 
-        for repo in context.repos:
+        frontend_repos = frontend_repository_names(context)
+        active_repos = [repo for repo in context.repos if repo.name not in frontend_repos]
+        for repo in active_repos:
             error = check(["git", "ls-remote", "origin", "HEAD"], f"Git remote ({repo.name})", repo.path)
             if error:
                 errors.append(error)
 
         verification = config.get("verification") if isinstance(config.get("verification"), dict) else {}
-        docker_required = requires_docker_verification(config, context.repos)
+        docker_required = requires_docker_verification(config, active_repos)
         if docker_required and bool((verification.get("docker") or {}).get("check_before_run", True)):
             available, reason = docker_available()
             if available and shutil.which("colima"):

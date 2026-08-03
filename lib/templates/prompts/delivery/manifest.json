@@ -25,8 +25,8 @@
     },
     {
       "file": "05-visual-delivery.md",
-      "title": "Frontend delivery disabled",
-      "description": "Frontend visual delivery is disabled by policy.",
+      "title": "Frontend delivery skipped",
+      "description": "Frontend visual delivery is skipped while non-frontend delivery continues.",
       "when": "ui_runtime"
     }
   ]

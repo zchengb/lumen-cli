@@ -1,5 +1,5 @@
-# Frontend Delivery Disabled
+# Frontend Delivery Skipped
 
-Frontend/Web/Native UI delivery is disabled by policy. Do not modify frontend or UI source, implement Figma-to-code work, start a browser/device runtime, run visual QA, or claim visual delivery completion.
+Frontend/Web/Native UI delivery is disabled by policy. Skip frontend/UI source changes, Figma-to-code work, browser/device startup, visual QA, and frontend verification. Do not claim visual delivery completion.
 
-Keep frontend work out of scope and report it as blocked for human review. Backend-only work may proceed only when it is independently deliverable without frontend changes.
+Record the frontend scope as skipped, then continue independently deliverable backend, service, data, and other non-frontend work. Do not block the whole delivery solely because the Story contains frontend work.

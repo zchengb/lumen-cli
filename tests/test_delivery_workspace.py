@@ -29,6 +29,7 @@ from delivery_workspace import (  # noqa: E402
     discover_git_repos,
     ensure_feature_worktree,
     frontend_delivery_disabled_reasons,
+    frontend_repository_names,
     load_workspace_config,
     story_worktrees_dir,
     validate_story_gates,
@@ -916,7 +917,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertNotIn("05-visual-delivery.md", prompt)
             self.assertNotIn("# Visual QA", prompt)
 
-    def test_frontend_delivery_is_disabled_before_worktree_creation(self) -> None:
+    def test_frontend_delivery_scope_is_identified_for_skipping(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             workspace = Path(temp)
             story_dir = workspace / "stories" / "DEMO-ui"
@@ -943,6 +944,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             reasons = frontend_delivery_disabled_reasons(context)
 
             self.assertEqual(["repository 'portal' uses web"], reasons)
+            self.assertEqual({"portal"}, frontend_repository_names(context))
 
     def test_workspace_prompt_overrides_are_mode_isolated(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

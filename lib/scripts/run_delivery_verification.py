@@ -18,6 +18,7 @@ from delivery_progress import append_verification, docker_available
 from delivery_workspace import (
     StoryContext,
     delivery_result_path,
+    frontend_repository_names,
     load_delivery_config,
     load_story_context,
     read_json,
@@ -485,8 +486,22 @@ def run_verification(
             print(f"[verification] Docker: unavailable — {docker_detail}", flush=True)
 
     progress_root = workspace_root or context.workspace_root
+    frontend_repos = frontend_repository_names(context)
 
     for repo in context.repos:
+        if repo.name in frontend_repos:
+            item = {
+                "repository": repo.name,
+                "id": "frontend_delivery",
+                "label": "Frontend delivery",
+                "command": "",
+                "exit_code": 0,
+                "summary": "Skipped by global frontend delivery policy",
+                "status": "skipped",
+            }
+            results.append(item)
+            append_verification(progress_root, item)
+            continue
         worktree = repo.worktree_path
         if not worktree.is_dir():
             item = {
