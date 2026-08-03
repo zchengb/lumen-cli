@@ -1584,6 +1584,59 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("failed", progress["jira"]["transition"])
             self.assertEqual("sent", progress["jira"]["comment"])
 
+    def test_patch_repository_mapping_uses_unique_local_code_match(self) -> None:
+        runner = load_patch_runner()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            payments = root / "payments-service"
+            profile = root / "profile-service"
+            payments.mkdir()
+            profile.mkdir()
+            (payments / "GatewayTimeout.java").write_text(
+                "payment gateway timeout retry authorization\n", encoding="utf-8"
+            )
+            repositories = [
+                {"name": "payments-service", "path": str(payments)},
+                {"name": "profile-service", "path": str(profile)},
+            ]
+            item = {"key": "MBPAS-2000", "fields": {
+                "summary": "Payment gateway timeout during authorization",
+                "description": "Retry the authorization request after a gateway timeout.",
+            }}
+            with patch.object(runner, "repo_registry", return_value=repositories):
+                selected, reason = runner.select_repository(root, item)
+
+            self.assertEqual("payments-service", selected["name"])
+            self.assertIn("local code match", reason)
+            self.assertIn("payment", reason)
+
+    def test_patch_repository_mapping_blocks_tied_local_matches_with_candidates(self) -> None:
+        runner = load_patch_runner()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            first = root / "payments-service"
+            second = root / "orders-service"
+            first.mkdir()
+            second.mkdir()
+            for repository in (first, second):
+                (repository / "gateway.txt").write_text("payment gateway timeout\n", encoding="utf-8")
+            repositories = [
+                {"name": "payments-service", "path": str(first)},
+                {"name": "orders-service", "path": str(second)},
+            ]
+            item = {"key": "MBPAS-2001", "fields": {
+                "summary": "Payment gateway timeout",
+                "description": "The gateway timeout affects the payment flow.",
+            }}
+            with patch.object(runner, "repo_registry", return_value=repositories):
+                selected, reason = runner.select_repository(root, item)
+
+            self.assertIsNone(selected)
+            self.assertIn("high-confidence", reason)
+            self.assertIn("payments-service", reason)
+            self.assertIn("orders-service", reason)
+            self.assertIn("payments-service", runner.blocked_comment(reason, "Which repository should be modified?"))
+
     def test_installer_copies_delivery_coding_guideline(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

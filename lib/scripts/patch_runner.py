@@ -36,6 +36,7 @@ from patch_runtime import (
     prepare_worktree,
     progress_path,
     query_candidates,
+    read_json,
     remove_worktrees,
     repo_registry,
     result_path,
@@ -65,30 +66,157 @@ def lock_path(workspace: Path) -> Path:
     return workspace_lumen_dir(workspace) / "locks" / "patch-run"
 
 
-def select_repository(workspace: Path, item: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
-    repositories = repo_registry(workspace)
-    def enabled(repo: dict[str, Any]) -> bool:
-        automation = repo.get("automation") if isinstance(repo.get("automation"), dict) else {}
-        patch = automation.get("patch") if isinstance(automation.get("patch"), dict) else {}
-        return bool(patch.get("enabled", True))
+REPOSITORY_STOPWORDS = {
+    "after", "again", "auto", "before", "cannot", "change", "check", "could", "current", "data",
+    "ensure", "error", "existing", "fix", "from", "handle", "issue", "make", "need", "new", "old",
+    "patch", "please", "request", "response", "should", "support", "task", "this", "that", "their",
+    "there", "these", "they", "update", "value", "when", "where", "which", "with", "would",
+    "jira", "lumen", "repository", "repositories", "registered", "context", "related", "workitem",
+}
+REPOSITORY_SEARCH_GLOBS = (
+    "!.git/**", "!node_modules/**", "!vendor/**", "!build/**", "!dist/**", "!target/**", "!coverage/**",
+    "!out/**", "!tmp/**", "!*.lock", "!*.map", "!*.min.js", "!*.png", "!*.jpg", "!*.jpeg", "!*.gif",
+    "!*.zip",
+)
 
-    eligible = [repo for repo in repositories if enabled(repo)]
+
+def repository_enabled(repo: dict[str, Any]) -> bool:
+    automation = repo.get("automation") if isinstance(repo.get("automation"), dict) else {}
+    patch = automation.get("patch") if isinstance(automation.get("patch"), dict) else {}
+    return bool(patch.get("enabled", True))
+
+
+def _jira_context_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return " ".join(_jira_context_text(item) for item in value.values())
+    if isinstance(value, list):
+        return " ".join(_jira_context_text(item) for item in value)
+    return ""
+
+
+def _repository_keywords(item: dict[str, Any], context: dict[str, Any] | None = None) -> list[str]:
+    fields = jira_fields(item)
+    source_values: list[tuple[str, int]] = [(jira_summary(item), 3)]
+    for name in ("description", "labels", "components", "environment", "parent", "issuelinks", "subtasks"):
+        if name in fields:
+            source_values.append((_jira_context_text(fields.get(name)), 2 if name in {"labels", "components"} else 1))
+    if isinstance(context, dict):
+        workitems = [context.get("workitem"), *(context.get("related_workitems") or [])]
+        for related in workitems:
+            if not isinstance(related, dict):
+                continue
+            related_fields = jira_fields(related)
+            source_values.append((jira_summary(related), 1))
+            source_values.append((_jira_context_text(related_fields.get("description")), 1))
+            source_values.append((_jira_context_text(related_fields.get("labels")), 1))
+
+    weights: dict[str, int] = {}
+    for text, weight in source_values:
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]*", text):
+            normalized = token.strip("-_").casefold()
+            if not normalized or normalized in REPOSITORY_STOPWORDS or normalized.isdigit():
+                continue
+            if re.fullmatch(r"[a-z]+-\d+", normalized):
+                continue
+            if len(normalized) < 4 and not token.isupper():
+                continue
+            weights[normalized] = weights.get(normalized, 0) + weight
+    return sorted(weights, key=lambda token: (-weights[token], -len(token), token))[:8]
+
+
+def _repository_code_search(repo: dict[str, Any], keywords: list[str]) -> dict[str, Any]:
+    path = Path(str(repo.get("path") or "")).expanduser()
+    rg = shutil.which("rg")
+    if not rg or not path.is_dir() or not keywords:
+        return {"keywords": [], "files": 0, "sample_files": []}
+    pattern = "(?i)(?:" + "|".join(re.escape(keyword) for keyword in keywords) + ")"
+    args = [rg, "--hidden", "--no-messages", "--files-with-matches"]
+    for glob in REPOSITORY_SEARCH_GLOBS:
+        args.extend(["--glob", glob])
+    args.extend(["-e", pattern, str(path)])
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=4, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"keywords": [], "files": 0, "sample_files": []}
+    if result.returncode not in {0, 1}:
+        return {"keywords": [], "files": 0, "sample_files": []}
+    files = [Path(line.strip()) for line in result.stdout.splitlines() if line.strip()][:40]
+    matched: set[str] = set()
+    samples: list[str] = []
+    for file_path in files[:20]:
+        try:
+            if file_path.stat().st_size > 1_000_000:
+                continue
+            text = file_path.read_text(encoding="utf-8", errors="ignore")[:200_000].casefold()
+        except OSError:
+            continue
+        matched.update(keyword for keyword in keywords if keyword in text)
+        if len(samples) < 3:
+            try:
+                samples.append(str(file_path.relative_to(path)))
+            except ValueError:
+                samples.append(str(file_path))
+    return {"keywords": sorted(matched), "files": len(files), "sample_files": samples}
+
+
+def _repository_candidate(repo: dict[str, Any], search_text: str, keywords: list[str]) -> dict[str, Any]:
+    name = str(repo.get("name") or "").strip()
+    direct_match = bool(name and name.casefold() in search_text.casefold())
+    evidence = _repository_code_search(repo, keywords)
+    matched_keywords = evidence["keywords"]
+    score = (100 if direct_match else 0) + len(matched_keywords) * 10 + min(int(evidence["files"]), 5)
+    high_confidence = direct_match or len(matched_keywords) >= 2 or any(len(keyword) >= 8 for keyword in matched_keywords)
+    return {"repo": repo, "direct": direct_match, "score": score, "high": high_confidence, "evidence": evidence}
+
+
+def _candidate_summary(candidate: dict[str, Any]) -> str:
+    name = str(candidate["repo"].get("name") or "unknown")
+    evidence = candidate["evidence"]
+    details: list[str] = []
+    if candidate["direct"]:
+        details.append("Jira name match")
+    if evidence["keywords"]:
+        details.append(f"code keywords: {', '.join(evidence['keywords'][:4])}")
+    if evidence["files"]:
+        details.append(f"{evidence['files']} file(s)")
+    if evidence["sample_files"]:
+        details.append(f"e.g. {', '.join(evidence['sample_files'][:2])}")
+    return f"{name} (score {candidate['score']}; {'; '.join(details) or 'no local evidence'})"
+
+
+def select_repository(workspace: Path, item: dict[str, Any], context_path: Path | None = None) -> tuple[dict[str, Any] | None, str]:
+    repositories = repo_registry(workspace)
+    eligible = [repo for repo in repositories if repository_enabled(repo)]
     if not eligible:
         return None, "Auto Patch is disabled for every registered repository."
     if len(eligible) == 1:
         repo = eligible[0]
         return repo, "Only one Auto Patch-authorized repository is available."
-    raw = json.dumps(item, ensure_ascii=False).casefold()
-    labels = jira_fields(item).get("labels") or []
-    label_text = " ".join(str(value) for value in labels) if isinstance(labels, list) else str(labels)
-    matches = [repo for repo in repositories if str(repo.get("name") or "").casefold() in raw or str(repo.get("name") or "").casefold() in label_text.casefold()]
-    if len(matches) == 1:
-        if enabled(matches[0]):
-            return matches[0], f"Repository name appears in Jira context: {matches[0].get('name')}."
-        return None, f"Auto Patch is disabled for registered repository '{matches[0].get('name')}'."
     if not repositories:
         return None, "No registered repository is available."
-    return None, "Jira context does not identify exactly one registered repository."
+    context = read_json(context_path, {}) if context_path else {}
+    context = context if isinstance(context, dict) else {}
+    search_text = json.dumps(item, ensure_ascii=False)
+    if context:
+        search_text += json.dumps(context, ensure_ascii=False)
+    keywords = _repository_keywords(item, context)
+    candidates = [_repository_candidate(repo, search_text, keywords) for repo in eligible]
+    direct = [candidate for candidate in candidates if candidate["direct"]]
+    if len(direct) == 1:
+        candidate = direct[0]
+        return candidate["repo"], f"High-confidence Jira repository name match: {candidate['repo'].get('name')}."
+    if len(direct) > 1:
+        return None, "Multiple registered repositories appear explicitly in Jira context: " + ", ".join(_candidate_summary(candidate) for candidate in direct[:5])
+    ranked = sorted((candidate for candidate in candidates if candidate["score"] > 0), key=lambda candidate: candidate["score"], reverse=True)
+    if ranked and ranked[0]["high"] and (len(ranked) == 1 or ranked[0]["score"] > ranked[1]["score"] + 8):
+        candidate = ranked[0]
+        evidence = candidate["evidence"]
+        return candidate["repo"], f"High-confidence Jira keyword and local code match: {candidate['repo'].get('name')} ({', '.join(evidence['keywords'])} in {evidence['files']} file(s))."
+    keyword_text = ", ".join(keywords) or "none"
+    candidate_text = "; ".join(_candidate_summary(candidate) for candidate in ranked[:5]) or "none"
+    return None, f"Jira keywords and local code search did not identify one high-confidence registered repository. Keywords: {keyword_text}. Candidates: {candidate_text}."
 
 
 def result_from_progress(progress: dict[str, Any], status: str, summary: str, question: str = "", failures: list[dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -218,8 +346,8 @@ def choose_item(workspace: Path, requested: str) -> tuple[dict[str, Any] | None,
             resumed = record.get("status") == "blocked"
         if record.get("status") in {"completed", "skipped"} and record.get("updated") == str(jira_fields(item).get("updated") or ""):
             continue
-        _, reason = select_repository(workspace, item)
-        if reason.startswith("Auto Patch is disabled"):
+        registered = repo_registry(workspace)
+        if registered and not any(repository_enabled(repo) for repo in registered):
             continue
         return item, resumed
     return None, False
@@ -276,7 +404,7 @@ def main() -> int:
             set_phase(workspace, progress, "context", "in_progress", "Dry run: reading Jira context")
             context_path = capture(workspace, key)
             set_phase(workspace, progress, "context", "completed", f"Context captured at {context_path}")
-            repo, repo_reason = select_repository(workspace, item)
+            repo, repo_reason = select_repository(workspace, item, context_path)
             if repo is None:
                 result = result_from_progress(progress, "blocked", "Dry run could not resolve one registered repository", "Which registered repository should Auto Patch modify?")
                 write_terminal(workspace, progress, result)
@@ -303,7 +431,7 @@ def main() -> int:
         context_path = capture(workspace, key)
         set_phase(workspace, progress, "context", "completed", f"Context captured at {context_path}")
         set_phase(workspace, progress, "repository", "in_progress", "Resolving one registered repository")
-        repo, repo_reason = select_repository(workspace, item)
+        repo, repo_reason = select_repository(workspace, item, context_path)
         if repo is None:
             return block(workspace, progress, "Which registered repository should Auto Patch modify?", repo_reason)
         progress["repository_decision"] = {"repositories": [repo.get("name")], "reason": repo_reason}
