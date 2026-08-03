@@ -998,12 +998,6 @@ function PatchView({ data, project, notify, reload }: { data: DashboardData; pro
   };
   const checks = Array.isArray(current.self_checks) ? current.self_checks : [];
   return <>
-    <section className="metrics">
-      <Metric label="Current card" value={text(current.jira_key, "—")} />
-      <Metric label="Status" value={titleStatus(current.patch_status || "not started")} />
-      <Metric label="Recent runs" value={runs.length} />
-      <Metric label="Blocked question" value={current.question ? "Yes" : "No"} />
-    </section>
     <Panel title="Current Progress" action={<span className="panel-actions">{running ? <button className="button danger secondary" disabled={busy} onClick={() => void stop()}>Stop</button> : <button className="button secondary" disabled={busy} onClick={() => void start()}><Play size={14} />Run one cycle</button>}</span>}>
       <div className="delivery-facts"><Fact label="Jira card" value={<StoryReference jiraKey={current.jira_key} title={current.jira_summary} />} /><Fact label="Status" value={<Badge value={current.patch_status || "not started"} />} /><Fact label="Branch" value={<code>{text(current.branch)}</code>} /><Fact label="Repositories" value={Array.isArray(current.repositories) ? current.repositories.map((item: RecordValue) => item.name).filter(Boolean).join(", ") || "—" : "—"} /></div>
       {current.question && <div className="status-note"><CircleHelp size={15} />{current.question}</div>}
