@@ -366,11 +366,10 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .repository-fact-value code{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .repository-fact-value::after{position:absolute;z-index:20;top:calc(100% + 8px);left:0;display:none;width:max-content;max-width:min(520px,calc(100vw - 80px));padding:8px 10px;border:1px solid #45454d;border-radius:7px;background:#25252a;color:#fff;box-shadow:0 8px 22px rgba(0,0,0,.2);content:attr(data-tooltip);font-size:11px;font-weight:400;line-height:1.45;overflow-wrap:anywhere;white-space:normal}
 .repository-fact-value:hover::after,.repository-fact-value:focus-visible::after{display:block}
-.repository-config-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-top:1px solid #e3e3e6;background:#fff}
-.repository-config-footer .settings-save-status{min-width:0;overflow-wrap:anywhere}
+.repository-config-footer{display:flex;align-items:center;justify-content:flex-end;gap:12px;padding:12px 18px;border-top:1px solid #e3e3e6;background:#fff}
 .repository-config-actions{display:flex;align-items:center;gap:8px;flex:none}
 @media(max-width:900px){.repository-overview{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:700px){.repository-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.repository-config-footer{align-items:stretch;flex-direction:column}.repository-config-footer .settings-save-status{text-align:left}.repository-config-actions{justify-content:flex-end}}
+@media(max-width:700px){.repository-overview{grid-template-columns:repeat(2,minmax(0,1fr))}.repository-config-footer{align-items:stretch;flex-direction:column}.repository-config-actions{justify-content:flex-end}}
 @media(max-width:420px){.repository-config-actions{flex-direction:column-reverse}.repository-config-actions .button{width:100%}}
 
 .patch-history-scroll{overflow-x:auto}
