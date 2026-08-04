@@ -395,3 +395,24 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .patch-history-summary{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-height:1.45;overflow-wrap:anywhere}
 .patch-history-table .text-button{margin-top:0;white-space:nowrap}
 .verification-mode-grid,.verification-source-toggle,.verification-check-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.verification-mode-card,.verification-source-toggle label,.verification-check-grid label{display:flex;align-items:flex-start;gap:9px;padding:10px;border:1px solid #e4e4e1;border-radius:6px;background:#fff;color:#323237;cursor:pointer}.verification-mode-card.selected{border-color:#b8b8b3;background:#fafaf8}.verification-mode-card input,.verification-source-toggle input,.verification-check-grid input{margin-top:2px;accent-color:#464646}.verification-mode-card span,.verification-source-toggle span,.verification-check-grid span{display:grid;gap:3px}.verification-mode-card strong,.verification-source-toggle strong,.verification-check-grid strong{font-size:11px;font-weight:600}.verification-mode-card small,.verification-source-toggle small,.verification-check-grid small{color:#777780;font-size:10px;line-height:1.4}.verification-source-toggle{grid-template-columns:repeat(2,minmax(0,1fr));padding-top:2px}.verification-check-grid{padding-top:2px}.repository-section .verification-mode-grid + .verification-source-toggle{border-top:1px solid #ececea;padding-top:10px}@media(max-width:800px){.verification-mode-grid,.verification-source-toggle,.verification-check-grid{grid-template-columns:1fr}}
+
+/* Repository configuration keeps identity prominent, actions visible, and verification grouped by decision. */
+.repository-config-backdrop{place-items:center;padding:24px;overflow:auto}
+.repository-config-modal{height:min(900px,calc(100vh - 48px));min-height:0;overflow:hidden}
+.repository-config-header>div>span{order:2;color:#777780;font-size:10px;letter-spacing:.06em}
+.repository-config-header>div>strong{order:1}
+.repository-config-header>div>p{order:3}
+.repository-config-footer{position:sticky;bottom:0;z-index:2;min-height:62px;box-shadow:0 -5px 16px rgba(25,25,30,.06)}
+.repository-verification-section{gap:14px}
+.repository-section-heading{display:grid;gap:4px}
+.verification-group{display:grid;gap:7px}
+.verification-group-label{color:#85858c;font-size:9px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}
+.verification-mode-grid,.verification-source-toggle{padding:4px;border:1px solid #e5e5e2;border-radius:8px;background:#f7f7f5}
+.verification-mode-card,.verification-source-toggle label{border-color:transparent;background:transparent;transition:background 160ms ease-out,border-color 160ms ease-out,box-shadow 160ms ease-out}
+.verification-mode-card.selected,.verification-source-toggle label:has(input:checked){border-color:#d8d8d4;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.verification-check-grid{grid-template-columns:1fr;padding:0;border:0;background:transparent}
+.verification-check-grid label{border-color:#e5e5e2;padding:10px;background:#fff}
+.verification-command-editor{display:grid;gap:8px;padding:10px;border:1px solid #e5e5e2;border-radius:8px;background:#f7f7f5}
+.verification-suggested-button{margin:0}
+.repository-verification-section .repository-commands{margin:0}
+@media(max-width:700px){.repository-config-modal{height:calc(100vh - 20px)}}
