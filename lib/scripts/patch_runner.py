@@ -184,24 +184,17 @@ def _repository_history(repo: dict[str, Any], keys: list[str]) -> dict[str, Any]
     path = Path(str(repo.get("path") or "")).expanduser()
     if not path.is_dir() or not (path / ".git").exists() or not keys:
         return {"jira_keys": [], "subjects": []}
-    matched_keys: list[str] = []
-    subjects: list[str] = []
-    for key in keys[:10]:
-        try:
-            result = subprocess.run(
-                ["git", "-C", str(path), "log", "--all", "-n", "20", "--format=%s", "--regexp-ignore-case", "--grep", key],
-                capture_output=True,
-                text=True,
-                timeout=3,
-                check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        rows = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-        if rows:
-            matched_keys.append(key)
-            subjects.extend(rows[:3])
-    return {"jira_keys": matched_keys, "subjects": list(dict.fromkeys(subjects))[:6]}
+    search_keys = keys[:10]
+    args = ["git", "-C", str(path), "log", "--all", "-n", "50", "--format=%s", "--regexp-ignore-case"]
+    for key in search_keys:
+        args.extend(["--grep", key])
+    try:
+        result = subprocess.run(args, capture_output=True, text=True, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return {"jira_keys": [], "subjects": []}
+    subjects = list(dict.fromkeys(line.strip() for line in result.stdout.splitlines() if line.strip()))[:6]
+    matched_keys = [key for key in search_keys if any(re.search(re.escape(key), subject, re.IGNORECASE) for subject in subjects)]
+    return {"jira_keys": matched_keys, "subjects": subjects}
 
 
 def _repository_code_search(repo: dict[str, Any], keywords: list[str]) -> dict[str, Any]:
