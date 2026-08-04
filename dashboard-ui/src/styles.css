@@ -390,7 +390,7 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .patch-history-table th:nth-child(7),.patch-history-table td:nth-child(7){width:70px}
 .patch-history-table td{vertical-align:top;overflow-wrap:anywhere}
 .patch-history-jira{display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden;white-space:nowrap}
-.patch-history-key,.patch-history-finished{white-space:nowrap;word-break:normal}
+.patch-history-key,.patch-history-finished{white-space:nowrap;word-break:normal}.patch-history-key{font-weight:500}
 .patch-history-jira-title{min-width:0;overflow:hidden;color:#686971;font-size:12px;line-height:1.4;text-overflow:ellipsis;white-space:nowrap}
 .patch-history-summary{display:-webkit-box;overflow:hidden;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-height:1.45;overflow-wrap:anywhere}
 .patch-history-table .text-button{margin-top:0;white-space:nowrap}
