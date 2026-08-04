@@ -67,7 +67,7 @@ import import_jira_story  # noqa: E402
 from jira_delivery_sync import completion_comment  # noqa: E402
 from auto_fix_sync import extract_pr_url, record_merge_success  # noqa: E402
 from finalize_delivery import branch_has_commits  # noqa: E402
-from run_delivery_verification import java_gradle_steps, resolve_codeartifact_token, run_command  # noqa: E402
+from run_delivery_verification import java_gradle_steps, resolve_codeartifact_token, run_command, verification_steps  # noqa: E402
 from delivery_preflight import requires_docker_verification  # noqa: E402
 from delivery_runtime import runtime_values  # noqa: E402
 
@@ -315,6 +315,19 @@ class DeliveryWorkspaceTests(unittest.TestCase):
 
         self.assertTrue(next(step for step in steps if step["id"] == "test_suite")["requires_docker"])
 
+    def test_repository_verification_can_run_compile_without_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "build.gradle").write_text("plugins { id 'java' }\n", encoding="utf-8")
+
+            compile_only = verification_steps({}, repo, mode="auto", compile_enabled=True, tests_enabled=False)
+            tests_only = verification_steps({}, repo, mode="auto", compile_enabled=False, tests_enabled=True)
+            skipped = verification_steps({}, repo, mode="skip")
+
+        self.assertEqual(["language_grammar"], [step["id"] for step in compile_only])
+        self.assertEqual(["test_suite"], [step["id"] for step in tests_only])
+        self.assertEqual([], skipped)
+
     def test_preflight_detects_automatic_testcontainers_verification(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp)
@@ -323,6 +336,19 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             required = requires_docker_verification({}, [SimpleNamespace(path=repo)])
 
         self.assertTrue(required)
+
+    def test_preflight_does_not_require_docker_when_repository_tests_are_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+            (repo / "build.gradle").write_text("testImplementation 'org.testcontainers:junit-jupiter:1.20.0'\n", encoding="utf-8")
+
+            required = requires_docker_verification(
+                {},
+                [SimpleNamespace(name="service", path=repo)],
+                {"service": {"verification": {"mode": "auto", "tests": False}}},
+            )
+
+        self.assertFalse(required)
 
     def test_docker_gradle_command_uses_a_fresh_daemon(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

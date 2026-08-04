@@ -29,7 +29,7 @@ from patch_launchd import install as install_patch_schedule
 from patch_launchd import remove as remove_patch_schedule
 from patch_launchd import status as patch_schedule_status
 from cleanup_delivery_worktrees import cleanup as cleanup_delivery_worktrees
-from delivery_workspace import find_story_dir, load_story_context, read_json as read_delivery_json, workspace_lumen_dir
+from delivery_workspace import find_story_dir, load_story_context, normalize_verification_settings, read_json as read_delivery_json, workspace_lumen_dir
 from jira_delivery_sync import add_delivery_comment, jira_delivery_config, should_sync_jira, transition_issue
 from jira_sync import parse_twg_json, refresh_twg_auth, run_twg, twg_ready, workspace_jira_config
 from issue_registry import set_issue_status
@@ -260,7 +260,13 @@ def workspace_payload(workspace: Path) -> dict[str, Any]:
         runtime = runtime if isinstance(runtime, dict) else {}
         entry["runtime_configured"] = bool(runtime)
         entry["automation"] = repository_automation(entry)
-        entry["delivery_steps"] = steps.get(str(entry.get("name", "")), [])
+        repository_name = str(entry.get("name", ""))
+        delivery_steps = steps.get(repository_name, [])
+        entry["delivery_steps"] = delivery_steps
+        entry["verification"] = normalize_verification_settings(
+            repository.get("verification"),
+            has_custom_commands=bool(delivery_steps),
+        )
         path = Path(str(entry.get("path", "")))
         entry["branches"] = repository_branches(path, str(entry.get("default_branch", "main")))
         entry["health"] = repository_health(path, str(entry.get("default_branch", "main")), runtime, str(entry.get("runtime_profile", "")))
@@ -473,6 +479,17 @@ def save_repositories(workspace: Path, repositories: object, *, include_payload:
             for key in ("scan", "delivery", "patch")
         }
         automation = repository_automation(automation_source)
+        existing_steps = steps.get(name, [])
+        raw_verification = repository.get("verification")
+        if not isinstance(raw_verification, dict):
+            raw_verification = existing.get("verification") if isinstance(existing, dict) else {}
+        incoming_commands = repository.get("delivery_commands")
+        incoming_lines = incoming_commands.splitlines() if isinstance(incoming_commands, str) else incoming_commands
+        has_incoming_commands = isinstance(incoming_lines, list) and any(str(command).strip() for command in incoming_lines)
+        verification_settings = normalize_verification_settings(
+            raw_verification,
+            has_custom_commands=(isinstance(existing_steps, list) and bool(existing_steps)) or has_incoming_commands,
+        )
         cleaned.append({
             "name": name,
             "path": str(path.resolve()),
@@ -481,6 +498,7 @@ def save_repositories(workspace: Path, repositories: object, *, include_payload:
             "runtime_profile": profile,
             "allow_auto_fix": automation["scan"]["allow_auto_fix"],
             "automation": automation,
+            "verification": verification_settings,
         })
         if "generate_tests" in repository:
             cleaned[-1]["generate_tests"] = bool(repository.get("generate_tests"))
@@ -497,16 +515,22 @@ def save_repositories(workspace: Path, repositories: object, *, include_payload:
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"Runtime configuration for {name} must contain JSON values") from exc
             cleaned[-1]["runtime"] = stored_runtime
-        if "delivery_commands" in repository:
+        if verification_settings["mode"] in {"auto", "skip"}:
+            steps.pop(name, None)
+        elif "delivery_commands" in repository:
             commands = repository["delivery_commands"]
             lines = commands.splitlines() if isinstance(commands, str) else commands
             if not isinstance(lines, list):
                 raise ValueError("Delivery commands must be a list or text")
             parsed = [shlex.split(str(command)) for command in lines if str(command).strip()]
+            if not parsed:
+                raise ValueError(f"Custom verification for {name} requires at least one command")
             steps[name] = [
                 {"id": f"configured-{index + 1}", "label": f"Configured verification {index + 1}", "command": command, "optional": False}
                 for index, command in enumerate(parsed)
             ]
+        elif not isinstance(existing_steps, list) or not existing_steps:
+            raise ValueError(f"Custom verification for {name} requires at least one command")
     write_json(workspace / "config" / "repos.json", {"repositories": cleaned})
     write_json(workspace / "config" / "delivery.json", delivery)
     # Repository governance is edited interactively; do not block the Save

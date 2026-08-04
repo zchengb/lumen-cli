@@ -21,6 +21,8 @@ from delivery_workspace import (
     frontend_repository_names,
     load_delivery_config,
     load_story_context,
+    normalize_verification_settings,
+    repos_registry,
     read_json,
     write_json,
 )
@@ -29,18 +31,21 @@ DEFAULT_JAVA_GRADLE_STEPS = [
         "id": "language_grammar",
         "label": "Language Grammar Check",
         "command": ["./gradlew", "compileJava", "compileTestJava", "-x", "test"],
+        "group": "compile",
         "optional": False,
     },
     {
         "id": "pmd",
         "label": "PMD Check",
         "command": ["./gradlew", "pmdMain", "pmdTest"],
+        "group": "compile",
         "optional": False,
     },
     {
         "id": "test_suite",
         "label": "Unit, Integration, And Architecture Tests",
         "command": ["./gradlew", "test"],
+        "group": "tests",
         "optional": False,
         "allow_no_tests": True,
         "requires_docker": False,
@@ -86,7 +91,7 @@ def java_gradle_steps(repo_path: Path) -> list[dict[str, Any]]:
 def php_lint_step(repo_path: Path) -> Optional[dict[str, Any]]:
     if not any(path.suffix == ".php" and "node_modules" not in path.parts for path in repo_path.rglob("*.php")):
         return None
-    return {"id": "php_syntax", "label": "PHP Syntax Check", "kind": "php_lint"}
+    return {"id": "php_syntax", "label": "PHP Syntax Check", "kind": "php_lint", "group": "compile"}
 
 
 def frontend_syntax_step(repo_path: Path) -> Optional[dict[str, Any]]:
@@ -98,6 +103,7 @@ def frontend_syntax_step(repo_path: Path) -> Optional[dict[str, Any]]:
             "id": "typecheck",
             "label": "TypeScript Syntax Check",
             "command": [str(local_bin / "tsc"), "--noEmit"],
+            "group": "compile",
             "allow_no_tests": True,
         }
     if (local_bin / "eslint").is_file():
@@ -105,9 +111,10 @@ def frontend_syntax_step(repo_path: Path) -> Optional[dict[str, Any]]:
             "id": "lint",
             "label": "ESLint Syntax Check",
             "command": [str(local_bin / "eslint"), "."],
+            "group": "compile",
             "allow_no_tests": True,
         }
-    return {"id": "syntax_profile", "label": "Syntax Profile", "kind": "missing_local_tooling"}
+    return {"id": "syntax_profile", "label": "Syntax Profile", "kind": "missing_local_tooling", "group": "compile"}
 
 
 def gradle_wrapper(repo_path: Path) -> Path:
@@ -140,28 +147,49 @@ def docker_policy(delivery_config: dict) -> dict[str, Any]:
     }
 
 
-def verification_steps(delivery_config: dict, repo_path: Path) -> list[dict[str, Any]]:
+def verification_steps(
+    delivery_config: dict,
+    repo_path: Path,
+    *,
+    mode: str = "",
+    compile_enabled: bool = True,
+    tests_enabled: bool = True,
+) -> list[dict[str, Any]]:
     verification = delivery_config.get("verification", {})
     if not isinstance(verification, dict):
         verification = {}
 
     configured_steps = verification.get("steps", {}).get(repo_path.name)
-    if isinstance(configured_steps, list) and configured_steps:
+    if mode == "skip":
+        return []
+    if mode == "custom":
+        return configured_steps if isinstance(configured_steps, list) else []
+
+    if not mode and isinstance(configured_steps, list) and configured_steps:
         return configured_steps
 
     if detect_java_gradle(repo_path):
         configured = verification.get("java_gradle", {}).get("steps")
         if isinstance(configured, list) and configured:
-            return configured
-        return java_gradle_steps(repo_path)
+            steps = configured
+        else:
+            steps = java_gradle_steps(repo_path)
+    else:
+        php_step = php_lint_step(repo_path)
+        if php_step:
+            steps = [php_step]
+        else:
+            frontend_step = frontend_syntax_step(repo_path)
+            if frontend_step:
+                steps = [frontend_step]
+            else:
+                steps = []
 
-    php_step = php_lint_step(repo_path)
-    if php_step:
-        return [php_step]
-    frontend_step = frontend_syntax_step(repo_path)
-    if frontend_step:
-        return [frontend_step]
-    return []
+    return [
+        step for step in steps
+        if (compile_enabled or step.get("group") != "compile")
+        and (tests_enabled or step.get("group") != "tests")
+    ]
 
 
 def looks_like_no_tests(output: str) -> bool:
@@ -514,8 +542,30 @@ def run_verification(
 
     progress_root = workspace_root or context.workspace_root
     frontend_repos = frontend_repository_names(context)
+    repository_registry = repos_registry(context.workspace_root)
+    verification_config = delivery_config.get("verification", {})
+    verification_steps_config = verification_config.get("steps", {}) if isinstance(verification_config, dict) else {}
 
     for repo in context.repos:
+        repository_config = repository_registry.get(repo.name, {})
+        configured_steps = verification_steps_config.get(repo.name) if isinstance(verification_steps_config, dict) else []
+        repository_verification = normalize_verification_settings(
+            repository_config.get("verification"),
+            has_custom_commands=isinstance(configured_steps, list) and bool(configured_steps),
+        )
+        if repository_verification["mode"] == "skip":
+            item = {
+                "repository": repo.name,
+                "id": "repository_verification",
+                "label": "Verification",
+                "command": "",
+                "exit_code": 0,
+                "summary": "Skipped by repository configuration",
+                "status": "skipped",
+            }
+            results.append(item)
+            append_verification(progress_root, item)
+            continue
         if repo.name in frontend_repos:
             item = {
                 "repository": repo.name,
@@ -544,7 +594,13 @@ def run_verification(
             append_verification(progress_root, item)
             continue
 
-        steps = verification_steps(delivery_config, repo.path)
+        steps = verification_steps(
+            delivery_config,
+            repo.path,
+            mode=repository_verification["mode"],
+            compile_enabled=repository_verification["compile"],
+            tests_enabled=repository_verification["tests"],
+        )
         if not steps:
             item = {
                 "repository": repo.name,

@@ -561,7 +561,7 @@ run_real_delivery() {
   [[ -f "${RESULT_FILE}" ]] || fail "Delivery agent did not write ${RESULT_FILE}"
   progress_phase agent completed "Agent finished; result written"
 
-  progress_phase verification in_progress "Compile, PMD, unit and integration tests"
+  progress_phase verification in_progress "Configured repository verification checks"
   printf '\n[delivery] Phase 5/8 — Verification\n'
   if ! run_verification_profile; then
     progress_phase verification failed "Verification failed; bounded remediation required"

@@ -40,6 +40,19 @@ class StoryContext:
 
 FRONTEND_RUNTIME_PLATFORMS = {"web", "react-native", "ios", "android", "native"}
 FRONTEND_PROFILE_MARKERS = ("frontend", "web-", "web_", "react-native", "ios-", "android-")
+VERIFICATION_MODES = {"auto", "custom", "skip"}
+
+
+def normalize_verification_settings(value: Any, *, has_custom_commands: bool = False) -> dict[str, Any]:
+    settings = value if isinstance(value, dict) else {}
+    mode = str(settings.get("mode") or ("custom" if has_custom_commands else "auto")).strip().casefold()
+    if mode not in VERIFICATION_MODES:
+        mode = "auto"
+    return {
+        "mode": mode,
+        "compile": settings.get("compile") is not False,
+        "tests": settings.get("tests") is not False,
+    }
 
 
 def frontend_repository_names(context: StoryContext) -> set[str]:

@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from delivery_progress import docker_available
-from delivery_workspace import frontend_repository_names, load_story_context, read_json, workspace_lumen_dir
+from delivery_workspace import frontend_repository_names, load_story_context, normalize_verification_settings, read_json, repos_registry, workspace_lumen_dir
 from jira_sync import refresh_twg_auth
 from run_delivery_verification import colima_environment, verification_steps
 from workspace_config import read_cursor_api_key
@@ -38,14 +38,32 @@ def cursor_auth_error(*, scheduled: bool, api_key: str, env_local: Path) -> str:
     return check(["agent", "status"], "Cursor authentication")
 
 
-def requires_docker_verification(config: dict, repos: list) -> bool:
+def requires_docker_verification(config: dict, repos: list, repository_registry: dict | None = None) -> bool:
     verification = config.get("verification") if isinstance(config.get("verification"), dict) else {}
     docker = verification.get("docker") if isinstance(verification.get("docker"), dict) else {}
     required_for = set(docker.get("required_for") or [])
+    steps_config = verification.get("steps") if isinstance(verification.get("steps"), dict) else {}
+    repository_registry = repository_registry or {}
+    required_steps = []
+    for repo in repos:
+        repository_config = repository_registry.get(str(getattr(repo, "name", "")), {})
+        configured_steps = steps_config.get(str(getattr(repo, "name", "")), [])
+        settings = normalize_verification_settings(
+            repository_config.get("verification"),
+            has_custom_commands=isinstance(configured_steps, list) and bool(configured_steps),
+        )
+        required_steps.extend(
+            verification_steps(
+                config,
+                repo.path,
+                mode=settings["mode"],
+                compile_enabled=settings["compile"],
+                tests_enabled=settings["tests"],
+            )
+        )
     return any(
         bool(step.get("requires_docker")) or str(step.get("id")) in required_for
-        for repo in repos
-        for step in verification_steps(config, repo.path)
+        for step in required_steps
         if isinstance(step, dict)
     )
 
@@ -92,7 +110,7 @@ def main() -> int:
                 errors.append(error)
 
         verification = config.get("verification") if isinstance(config.get("verification"), dict) else {}
-        docker_required = requires_docker_verification(config, active_repos)
+        docker_required = requires_docker_verification(config, active_repos, repos_registry(context.workspace_root))
         if docker_required and bool((verification.get("docker") or {}).get("check_before_run", True)):
             available, reason = docker_available()
             if available and shutil.which("colima"):
