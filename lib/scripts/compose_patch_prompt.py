@@ -52,6 +52,10 @@ Patch result file: {result_path(workspace)}
 ## Registered repositories
 
 {chr(10).join(repo_lines) or '- No registered repositories'}
+
+## Repository mapping policy
+
+The runtime has already resolved the target set from authoritative Jira labels/fields, explicit `Repository:` lines, related Jira context, matching Jira-key history, and focused local code evidence. Do not block merely because an unrelated repository name appears in a suggestion or example. Inspect the selected worktrees and `git log --all --grep=<current-or-related-Jira-key>` before asking a human. Multiple selected repositories are valid when they implement the same bounded flow.
 """
     parts.extend([runtime, "# Jira Context Snapshot\n\nRead the complete JSON snapshot at:\n\n" + str(context_path)])
     return "\n\n".join(parts).strip() + "\n"

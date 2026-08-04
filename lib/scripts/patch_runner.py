@@ -79,6 +79,8 @@ REPOSITORY_STOPWORDS = {
     "patch", "please", "request", "response", "should", "support", "task", "this", "that", "their",
     "there", "these", "they", "update", "value", "when", "where", "which", "with", "would",
     "jira", "lumen", "repository", "repositories", "registered", "context", "related", "workitem",
+    "text", "paragraph", "heading", "content", "type", "marks", "strong", "code", "version",
+    "public", "optional", "return", "fromfilterjson", "readstringlist", "created", "automatically",
 }
 REPOSITORY_SEARCH_GLOBS = (
     "!.git/**", "!node_modules/**", "!vendor/**", "!build/**", "!dist/**", "!target/**", "!coverage/**",
@@ -133,6 +135,75 @@ def _repository_keywords(item: dict[str, Any], context: dict[str, Any] | None = 
     return sorted(weights, key=lambda token: (-weights[token], -len(token), token))[:8]
 
 
+def _repository_name_matches(value: Any, eligible: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    text = _jira_context_text(value)
+    matches: list[dict[str, Any]] = []
+    for repo in eligible:
+        name = str(repo.get("name") or "").strip()
+        if name and re.search(rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])", text, re.IGNORECASE):
+            matches.append(repo)
+    return matches
+
+
+def _authoritative_repository_matches(item: dict[str, Any], eligible: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Read repository labels/fields and explicit `Repository:` lines only.
+
+    A plain mention in a suggestion or code example is deliberately not an
+    explicit selection; those mentions are weak evidence for the scorer.
+    """
+    fields = jira_fields(item)
+    matches: list[dict[str, Any]] = []
+
+    def add(values: list[dict[str, Any]]) -> None:
+        for repo in values:
+            if repo not in matches:
+                matches.append(repo)
+
+    labels = fields.get("labels")
+    if isinstance(labels, list):
+        for label in labels:
+            add(_repository_name_matches(str(label), eligible))
+
+    for field_name, value in fields.items():
+        lowered = str(field_name).casefold()
+        if "repo" in lowered or lowered in {"labels", "components"}:
+            add(_repository_name_matches(value, eligible))
+
+    for value in (fields.get("description"), fields.get("environment")):
+        text = _jira_context_text(value)
+        for match in re.finditer(r"(?im)\b(?:repositories?|repos?)\s*:\s*([^\n]+)", text):
+            add(_repository_name_matches(match.group(1), eligible))
+    return matches
+
+
+def _jira_keys(value: Any) -> list[str]:
+    return sorted(set(re.findall(r"\b[A-Z][A-Z0-9_]+-\d+\b", json.dumps(value, ensure_ascii=False))))
+
+
+def _repository_history(repo: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    path = Path(str(repo.get("path") or "")).expanduser()
+    if not path.is_dir() or not (path / ".git").exists() or not keys:
+        return {"jira_keys": [], "subjects": []}
+    matched_keys: list[str] = []
+    subjects: list[str] = []
+    for key in keys[:10]:
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(path), "log", "--all", "-n", "20", "--format=%s", "--regexp-ignore-case", "--grep", key],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        rows = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        if rows:
+            matched_keys.append(key)
+            subjects.extend(rows[:3])
+    return {"jira_keys": matched_keys, "subjects": list(dict.fromkeys(subjects))[:6]}
+
+
 def _repository_code_search(repo: dict[str, Any], keywords: list[str]) -> dict[str, Any]:
     path = Path(str(repo.get("path") or "")).expanduser()
     rg = shutil.which("rg")
@@ -168,22 +239,25 @@ def _repository_code_search(repo: dict[str, Any], keywords: list[str]) -> dict[s
     return {"keywords": sorted(matched), "files": len(files), "sample_files": samples}
 
 
-def _repository_candidate(repo: dict[str, Any], search_text: str, keywords: list[str]) -> dict[str, Any]:
+def _repository_candidate(repo: dict[str, Any], search_text: str, keywords: list[str], history_keys: list[str]) -> dict[str, Any]:
     name = str(repo.get("name") or "").strip()
-    direct_match = bool(name and name.casefold() in search_text.casefold())
+    mention = bool(name and re.search(rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])", search_text, re.IGNORECASE))
     evidence = _repository_code_search(repo, keywords)
+    history = _repository_history(repo, history_keys)
     matched_keywords = evidence["keywords"]
-    score = (100 if direct_match else 0) + len(matched_keywords) * 10 + min(int(evidence["files"]), 5)
-    high_confidence = direct_match or len(matched_keywords) >= 2 or any(len(keyword) >= 8 for keyword in matched_keywords)
-    return {"repo": repo, "direct": direct_match, "score": score, "high": high_confidence, "evidence": evidence}
+    score = (70 if history["jira_keys"] else 0) + (3 if mention else 0) + len(matched_keywords) * 10 + min(int(evidence["files"]), 5)
+    high_confidence = bool(history["jira_keys"]) or len(matched_keywords) >= 2 or any(len(keyword) >= 8 for keyword in matched_keywords)
+    return {"repo": repo, "mention": mention, "score": score, "high": high_confidence, "evidence": evidence, "history": history}
 
 
 def _candidate_summary(candidate: dict[str, Any]) -> str:
     name = str(candidate["repo"].get("name") or "unknown")
     evidence = candidate["evidence"]
     details: list[str] = []
-    if candidate["direct"]:
-        details.append("Jira name match")
+    if candidate["mention"]:
+        details.append("Jira name mention")
+    if candidate["history"]["jira_keys"]:
+        details.append(f"history: {', '.join(candidate['history']['jira_keys'])}")
     if evidence["keywords"]:
         details.append(f"code keywords: {', '.join(evidence['keywords'][:4])}")
     if evidence["files"]:
@@ -226,18 +300,35 @@ def select_repositories(workspace: Path, item: dict[str, Any], context_path: Pat
         return explicit, f"Latest human Jira reply explicitly selected registered repositories: {names}."
     context = read_json(context_path, {}) if context_path else {}
     context = context if isinstance(context, dict) else {}
+    primary_explicit = _authoritative_repository_matches(item, eligible)
+    if primary_explicit:
+        names = ", ".join(str(repo.get("name") or "") for repo in primary_explicit)
+        return primary_explicit, f"Jira labels and explicit Repository fields identify: {names}."
+    related_explicit: list[dict[str, Any]] = []
+    for related in context.get("related_workitems") or []:
+        if isinstance(related, dict):
+            for repo in _authoritative_repository_matches(related, eligible):
+                if repo not in related_explicit:
+                    related_explicit.append(repo)
+    if related_explicit:
+        names = ", ".join(str(repo.get("name") or "") for repo in related_explicit)
+        return related_explicit, f"Related Jira context identifies registered repositories: {names}."
     search_text = json.dumps(item, ensure_ascii=False)
     if context:
         search_text += json.dumps(context, ensure_ascii=False)
     keywords = _repository_keywords(item, context)
-    candidates = [_repository_candidate(repo, search_text, keywords) for repo in eligible]
-    direct = [candidate for candidate in candidates if candidate["direct"]]
-    if len(direct) == 1:
-        candidate = direct[0]
-        return [candidate["repo"]], f"High-confidence Jira repository name match: {candidate['repo'].get('name')}."
-    if len(direct) > 1:
-        return [], "Multiple registered repositories appear explicitly in Jira context. Reply with the exact repository name(s) Auto Patch should modify: " + ", ".join(_candidate_summary(candidate) for candidate in direct[:5])
+    history_keys = _jira_keys({"item": item, "context": context})
+    candidates = [_repository_candidate(repo, search_text, keywords, history_keys) for repo in eligible]
+    historical = [candidate for candidate in candidates if candidate["history"]["jira_keys"]]
+    if historical:
+        names = ", ".join(str(candidate["repo"].get("name") or "") for candidate in historical)
+        keys = sorted({key for candidate in historical for key in candidate["history"]["jira_keys"]})
+        return [candidate["repo"] for candidate in historical], f"Local Git history matches Jira key(s) {', '.join(keys)} in: {names}."
     ranked = sorted((candidate for candidate in candidates if candidate["score"] > 0), key=lambda candidate: candidate["score"], reverse=True)
+    strong = [candidate for candidate in ranked if candidate["high"] and len(candidate["evidence"]["keywords"]) >= 2 and candidate["score"] >= 20]
+    if len(strong) >= 2 and strong[0]["score"] - strong[-1]["score"] <= 20:
+        names = ", ".join(str(candidate["repo"].get("name") or "") for candidate in strong[:5])
+        return [candidate["repo"] for candidate in strong[:5]], f"Multiple registered repositories have strong local code evidence for the same Jira flow: {names}."
     if ranked and ranked[0]["high"] and (len(ranked) == 1 or ranked[0]["score"] > ranked[1]["score"] + 8):
         candidate = ranked[0]
         evidence = candidate["evidence"]
@@ -250,7 +341,11 @@ def select_repositories(workspace: Path, item: dict[str, Any], context_path: Pat
 def select_repository(workspace: Path, item: dict[str, Any], context_path: Path | None = None) -> tuple[dict[str, Any] | None, str]:
     """Compatibility wrapper for callers that still require a single repository."""
     repositories, reason = select_repositories(workspace, item, context_path)
-    return (repositories[0], reason) if len(repositories) == 1 else (None, reason)
+    if len(repositories) == 1:
+        return repositories[0], reason
+    if len(repositories) > 1:
+        return None, f"Multiple high-confidence repositories were selected by the multi-repository mapper: {reason}"
+    return None, reason
 
 
 def result_from_progress(progress: dict[str, Any], status: str, summary: str, question: str = "", failures: list[dict[str, Any]] | None = None) -> dict[str, Any]:

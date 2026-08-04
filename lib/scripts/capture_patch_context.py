@@ -42,10 +42,18 @@ def related_candidates(workspace: Path, item: dict[str, Any]) -> list[str]:
     keys = [key for key in nested_keys(item) if key != jira_key(item)]
     summary = jira_summary(item)
     project = str(jira_config(workspace).get("project_key") or "").strip()
-    words = [word for word in re.findall(r"[A-Za-z0-9_-]{4,}", summary) if word.casefold() not in {"error", "issue", "fix", "task", "bug"}][:4]
+    ignored = {"after", "auto", "bug", "error", "fix", "issue", "legacy", "lumen", "migration", "task"}
+    words = []
+    for word in re.findall(r"[A-Za-z0-9_-]{4,}", summary):
+        if word.casefold() in ignored or word.casefold() in {entry.casefold() for entry in words}:
+            continue
+        words.append(word)
+    words = words[:6]
     if project and words:
-        terms = " ".join(words).replace('"', "")
-        jql = f'project = {project} AND text ~ "{terms}" ORDER BY updated DESC'
+        clauses = " OR ".join('text ~ "' + word.replace('"', '') + '"' for word in words)
+        current_key = jira_key(item)
+        exclude = f" AND key != {current_key}" if current_key else ""
+        jql = f"project = {project}{exclude} AND ({clauses}) ORDER BY updated DESC"
         code, output = run_twg(["jira", "workitem", "query", "--jql", jql, "--limit", "10", "-o", "json", *site_args(jira_config(workspace))])
         if code == 0:
             payload = parse_twg_json(output) or {}

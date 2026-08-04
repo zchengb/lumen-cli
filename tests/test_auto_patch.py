@@ -28,9 +28,55 @@ from patch_runtime import (  # noqa: E402
     patch_worktree_path,
     query_candidates,
 )
+from patch_runner import select_repositories  # noqa: E402
 
 
 class AutoPatchTests(unittest.TestCase):
+    def test_repository_mapping_prioritizes_labels_and_repository_field(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repos = [
+                {"name": "digital-platform-admin", "path": str(root / "digital-platform-admin")},
+                {"name": "mbpass-admin", "path": str(root / "mbpass-admin")},
+            ]
+            for repo in repos:
+                Path(repo["path"]).mkdir()
+            item = {
+                "key": "MBPAS-1555",
+                "fields": {
+                    "summary": "Legacy BEV filter fallback",
+                    "labels": ["mbpass-admin"],
+                    "description": "Repository: mbpass-admin\nSuggestion: mirror the fallback in digital-platform-admin.",
+                },
+            }
+            with patch("patch_runner.repo_registry", return_value=repos):
+                selected, reason = select_repositories(root, item)
+        self.assertEqual(["mbpass-admin"], [repo["name"] for repo in selected])
+        self.assertIn("explicit Repository fields", reason)
+
+    def test_repository_mapping_uses_related_jira_history_when_scope_is_not_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repos = [
+                {"name": "service", "path": str(root / "service")},
+                {"name": "web", "path": str(root / "web")},
+            ]
+            for repo in repos:
+                Path(repo["path"]).mkdir()
+            item = {"key": "MBPAS-1556", "fields": {"summary": "Related behavior regression", "description": "See MBPAS-1548."}}
+            context = root / "context.json"
+            context.write_text(json.dumps({"related_keys": ["MBPAS-1548"], "related_workitems": []}), encoding="utf-8")
+
+            def history(repo: dict, keys: list[str]) -> dict:
+                return {"jira_keys": ["MBPAS-1548"] if repo["name"] == "service" else [], "subjects": []}
+
+            with patch("patch_runner.repo_registry", return_value=repos), patch(
+                "patch_runner._repository_code_search", return_value={"keywords": [], "files": 0, "sample_files": []}
+            ), patch("patch_runner._repository_history", side_effect=history):
+                selected, reason = select_repositories(root, item, context)
+        self.assertEqual(["service"], [repo["name"] for repo in selected])
+        self.assertIn("MBPAS-1548", reason)
+
     def test_patch_prompt_allows_bounded_multi_repository_functional_changes(self) -> None:
         templates = Path(__file__).resolve().parents[1] / "lib" / "templates" / "prompts" / "patch"
         pipeline = (templates / "02-pipeline.md").read_text(encoding="utf-8")
