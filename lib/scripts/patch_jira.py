@@ -67,8 +67,8 @@ def blocked_comment(reason: str, question: str) -> str:
     )
 
 
-def skipped_comment(reason: str, restored_status: str = "") -> str:
-    status_detail = f" Jira status was restored to {escape(restored_status)}." if restored_status else " Jira status was not changed."
+def skipped_comment(reason: str, final_status: str = "") -> str:
+    status_detail = f" Jira status was moved to {escape(final_status)}." if final_status else " Jira status was not changed."
     return "".join(
         [
             "<p>Lumen Auto Patch · <strong><span style=\"color: #5e6c84\">Skipped</span></strong></p>",

@@ -160,14 +160,14 @@ class AutoPatchTests(unittest.TestCase):
         self.assertFalse(has_external_reply(item, {"blocked_at": "2026-07-30T10:06:00Z"}))
 
     def test_skipped_comment_records_reason_and_no_publish(self) -> None:
-        comment = skipped_comment("The current code already implements the reported behavior.", "To Do")
+        comment = skipped_comment("The current code already implements the reported behavior.", "DEV DONE")
         self.assertIn("Lumen Auto Patch", comment)
         self.assertIn("Skipped", comment)
         self.assertIn("current code already implements", comment)
         self.assertIn("No code, commit, or pull request was produced", comment)
-        self.assertIn("restored to To Do", comment)
+        self.assertIn("moved to DEV DONE", comment)
 
-    def test_skip_restores_jira_status_and_records_registry(self) -> None:
+    def test_skip_moves_jira_to_done_status_and_records_registry(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory)
             progress = {
@@ -180,13 +180,15 @@ class AutoPatchTests(unittest.TestCase):
                 "phases": [],
             }
             result = {"patch_status": "skipped", "summary": "Expected behavior", "self_checks": []}
-            with patch("patch_runner.transition_issue", return_value="To Do") as transition, patch(
+            with patch("patch_runner.patch_config", return_value={"done_status": "DEV DONE"}), patch(
+                "patch_runner.transition_issue", return_value="DEV DONE"
+            ) as transition, patch(
                 "patch_runner.add_comment"
             ) as comment, patch(
                 "patch_runner.get_workitem", return_value={"fields": {"updated": "2026-08-04T00:00:00Z"}}
             ), patch("patch_runner.notify"), patch("patch_runner.remove_worktrees"):
                 self.assertEqual(0, skip(workspace, progress, result))
-            transition.assert_called_once_with(workspace, "DEMO-1", "To Do")
+            transition.assert_called_once_with(workspace, "DEMO-1", "DEV DONE")
             comment.assert_called_once()
             self.assertEqual("sent", progress["jira"]["comment"])
             registry = json.loads((workspace / "lumen" / "state" / "patch-registry.json").read_text(encoding="utf-8"))

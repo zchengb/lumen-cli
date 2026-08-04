@@ -429,17 +429,19 @@ def skip(workspace: Path, progress: dict[str, Any], result: dict[str, Any]) -> i
     key = str(progress.get("jira_key") or "")
     reason = str(result.get("summary") or "Agent found no actionable Auto Patch change.").strip()
     original_status = str(progress.get("original_jira_status") or "").strip()
+    final_status = str(patch_config(workspace).get("done_status", "Done")).strip()
+    current_status = str(progress.get("jira_status") or "").strip()
     transition_result = "unchanged"
     comment_result = "sent"
-    if original_status and str(progress.get("jira_status") or "").casefold() != original_status.casefold():
+    if final_status and current_status.casefold() != final_status.casefold():
         try:
-            progress["jira_status"] = transition_issue(workspace, key, original_status)
-            transition_result = "restored"
+            progress["jira_status"] = transition_issue(workspace, key, final_status)
+            transition_result = "moved"
         except Exception as exc:
             transition_result = "failed"
             progress.setdefault("failures", []).append({"stage": "jira", "detail": str(exc)})
     try:
-        comment_status = original_status if transition_result in {"restored", "unchanged"} else ""
+        comment_status = final_status if transition_result in {"moved", "unchanged"} else ""
         add_comment(workspace, key, skipped_comment(reason, comment_status), "html")
     except Exception as exc:
         comment_result = "failed"
@@ -471,7 +473,7 @@ def skip(workspace: Path, progress: dict[str, Any], result: dict[str, Any]) -> i
         "jira_notify",
         "completed" if comment_result == "sent" else "failed",
         "Skip reason recorded in Jira; no code was published" if comment_result == "sent" and transition_result != "failed" else (
-            "Skip reason recorded in Jira; Jira status could not be restored" if comment_result == "sent" else "Unable to record the skip reason in Jira"
+            "Skip reason recorded in Jira; Jira status could not be moved to the configured done status" if comment_result == "sent" else "Unable to record the skip reason in Jira"
         ),
     )
     result.update({"jira": progress["jira"], "failures": progress.get("failures", []), "finished_at": utc_now()})
