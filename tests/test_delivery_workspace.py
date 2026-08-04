@@ -561,6 +561,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             results.mkdir(parents=True)
             progress = {
                 "run_id": "20260718-010000",
+                "story_id": "DEMO-1",
                 "delivery_status": "in_progress",
                 "phases": [
                     {"id": "agent", "status": "completed", "started_at": "2026-07-18T01:00:00Z", "finished_at": "2026-07-18T01:02:00Z"},
@@ -568,7 +569,7 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 ],
             }
             (results / "delivery-progress.json").write_text(json.dumps(progress), encoding="utf-8")
-            (results / "delivery-remediation.json").write_text(json.dumps({"attempt": 2, "max_attempts": 3, "status": "in_progress"}), encoding="utf-8")
+            (results / "delivery-remediation.json").write_text(json.dumps({"run_id": progress["run_id"], "story_id": "DEMO-1", "attempt": 2, "max_attempts": 3, "status": "in_progress"}), encoding="utf-8")
 
             set_phase(docs, "agent", "in_progress", "Remediation attempt 2/3")
             updated = json.loads((results / "delivery-progress.json").read_text(encoding="utf-8"))
@@ -580,6 +581,22 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual(2, current["remediation"]["attempt"])
             self.assertEqual("in_progress", next(stage for stage in current["stages"] if stage["id"] == "implement")["status"])
             self.assertEqual("failed", next(stage for stage in current["stages"] if stage["id"] == "verification")["status"])
+
+    def test_dashboard_ignores_remediation_from_another_delivery_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp) / "lumen"
+            results = workspace / "results"
+            results.mkdir(parents=True)
+            (results / "delivery-progress.json").write_text(json.dumps({
+                "run_id": "current-run", "delivery_status": "in_progress", "story_id": "MBPAS-1276",
+            }), encoding="utf-8")
+            (results / "delivery-remediation.json").write_text(json.dumps({
+                "run_id": "old-run", "story_id": "MBPAS-1276", "attempt": 2, "max_attempts": 2, "status": "in_progress",
+            }), encoding="utf-8")
+
+            current = delivery_payload(workspace)["current"]
+
+            self.assertNotIn("remediation", current)
 
     def test_phase_attempts_preserve_remediation_timing(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -1228,6 +1245,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
                 json.dumps(
                     {
                         "delivery_status": "ready_for_finalize",
+                        "run_id": "run-1",
+                        "story_id": "DEMO-1",
                         "verification_results": [{"label": "Tests", "status": "failed"}],
                     }
                 ),
@@ -1252,6 +1271,8 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("in_progress", payload["delivery_status"])
             self.assertEqual([], payload["verification_results"])
             self.assertEqual("in_progress", payload["remediation"]["status"])
+            self.assertEqual("run-1", payload["remediation"]["run_id"])
+            self.assertEqual("DEMO-1", payload["remediation"]["story_id"])
             self.assertEqual("Tests", payload["remediation"]["attempts"][0]["failed_verification"][0]["label"])
 
             result.write_text(json.dumps({"delivery_status": "ready_for_finalize"}), encoding="utf-8")

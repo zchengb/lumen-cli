@@ -921,9 +921,29 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
     remediation = read_delivery_json(workspace / "results" / "delivery-remediation.json", {})
     if not remediation and isinstance(result.get("remediation"), dict):
         remediation = result["remediation"]
+    run_ids = {
+        str(item.get("run_id") or "").strip()
+        for item in (current, progress, result)
+        if isinstance(item, dict) and str(item.get("run_id") or "").strip()
+    }
+    story_ids = {
+        str(item.get(key) or "").strip()
+        for item in (current, progress, result)
+        for key in ("jira_key", "story_id", "story")
+        if isinstance(item, dict) and str(item.get(key) or "").strip()
+    }
+    remediation_run_id = str(remediation.get("run_id") or "").strip() if isinstance(remediation, dict) else ""
+    remediation_story_id = next(
+        (str(remediation.get(key) or "").strip() for key in ("jira_key", "story_id", "story") if str(remediation.get(key) or "").strip()),
+        "",
+    ) if isinstance(remediation, dict) else ""
+    remediation_matches = bool(
+        remediation
+        and ((remediation_run_id and remediation_run_id in run_ids) or (not remediation_run_id and remediation_story_id and remediation_story_id in story_ids))
+    )
     if str(current.get("delivery_status") or "").lower() == "blocked" and str(current.get("current_step") or "").lower() == "stopped from dashboard":
-        remediation = {}
-    if remediation:
+        remediation_matches = False
+    if remediation_matches:
         current["remediation"] = remediation
     if isinstance(result.get("agent_trace"), dict):
         current["agent_trace"] = result["agent_trace"]

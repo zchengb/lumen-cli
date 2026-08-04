@@ -97,6 +97,19 @@ def main() -> int:
         "attempts": attempts,
         "repos_touched_snapshot": snapshot,
     }
+    progress = read_json(result_path.with_name("delivery-progress.json"), {})
+    run_id = str(payload.get("run_id") or progress.get("run_id") or "").strip()
+    story_id = str(
+        payload.get("jira_key")
+        or payload.get("story_id")
+        or progress.get("jira_key")
+        or progress.get("story_id")
+        or ""
+    ).strip()
+    if run_id:
+        state["run_id"] = run_id
+    if story_id:
+        state["story_id"] = story_id
     payload["remediation"] = state
     payload["verification_results"] = []
     payload["delivery_status"] = "in_progress"
