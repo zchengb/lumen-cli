@@ -65,3 +65,17 @@ def blocked_comment(reason: str, question: str) -> str:
             "<p><span style=\"color: #97a0af\">P.S. Reply in Jira; the next Auto Patch cycle will re-read the comments and retry automatically.</span></p>",
         ]
     )
+
+
+def skipped_comment(reason: str, restored_status: str = "") -> str:
+    status_detail = f" Jira status was restored to {escape(restored_status)}." if restored_status else " Jira status was not changed."
+    return "".join(
+        [
+            "<p>Lumen Auto Patch · <strong><span style=\"color: #5e6c84\">Skipped</span></strong></p>",
+            "<p><strong>Confirmed:</strong> The available Jira, repository, and history evidence does not support an actionable Auto Patch change.</p>",
+            f"<p><strong>Reason:</strong> {escape(reason)}</p>",
+            f"<p><strong>Action:</strong> No code, commit, or pull request was produced.{status_detail}</p>",
+            "<p></p>",
+            "<p><span style=\"color: #97a0af\">P.S. Reply in Jira if the scope or evidence changes; the next Auto Patch cycle will re-read the card.</span></p>",
+        ]
+    )

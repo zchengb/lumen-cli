@@ -17,7 +17,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from patch_launchd import interval_minutes_from_cron, status as patch_schedule_status  # noqa: E402
-from patch_jira import blocked_comment  # noqa: E402
+from patch_jira import blocked_comment, skipped_comment  # noqa: E402
+from capture_patch_context import related_candidates  # noqa: E402
 from jira_sync import resolve_board_id, workspace_jira_config  # noqa: E402
 from patch_runtime import (  # noqa: E402
     blocked_statuses,
@@ -28,7 +29,7 @@ from patch_runtime import (  # noqa: E402
     patch_worktree_path,
     query_candidates,
 )
-from patch_runner import select_repositories  # noqa: E402
+from patch_runner import select_repositories, skip  # noqa: E402
 
 
 class AutoPatchTests(unittest.TestCase):
@@ -157,6 +158,44 @@ class AutoPatchTests(unittest.TestCase):
         ]}}}
         self.assertTrue(has_external_reply(item, {"blocked_at": "2026-07-30T10:01:00Z"}))
         self.assertFalse(has_external_reply(item, {"blocked_at": "2026-07-30T10:06:00Z"}))
+
+    def test_skipped_comment_records_reason_and_no_publish(self) -> None:
+        comment = skipped_comment("The current code already implements the reported behavior.", "To Do")
+        self.assertIn("Lumen Auto Patch", comment)
+        self.assertIn("Skipped", comment)
+        self.assertIn("current code already implements", comment)
+        self.assertIn("No code, commit, or pull request was produced", comment)
+        self.assertIn("restored to To Do", comment)
+
+    def test_skip_restores_jira_status_and_records_registry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory)
+            progress = {
+                "run_id": "20260804-000001",
+                "jira_key": "DEMO-1",
+                "jira_status": "In Progress",
+                "original_jira_status": "To Do",
+                "repositories": [],
+                "failures": [],
+                "phases": [],
+            }
+            result = {"patch_status": "skipped", "summary": "Expected behavior", "self_checks": []}
+            with patch("patch_runner.transition_issue", return_value="To Do") as transition, patch(
+                "patch_runner.add_comment"
+            ) as comment, patch(
+                "patch_runner.get_workitem", return_value={"fields": {"updated": "2026-08-04T00:00:00Z"}}
+            ), patch("patch_runner.notify"), patch("patch_runner.remove_worktrees"):
+                self.assertEqual(0, skip(workspace, progress, result))
+            transition.assert_called_once_with(workspace, "DEMO-1", "To Do")
+            comment.assert_called_once()
+            self.assertEqual("sent", progress["jira"]["comment"])
+            registry = json.loads((workspace / "lumen" / "state" / "patch-registry.json").read_text(encoding="utf-8"))
+            self.assertEqual("skipped", registry["issues"]["DEMO-1"]["status"])
+
+    def test_context_captures_jira_keys_mentioned_in_description(self) -> None:
+        item = {"key": "MBPAS-1555", "fields": {"summary": "Legacy filter regression", "description": "Follow MBPAS-1548 compatibility behavior."}}
+        with patch("capture_patch_context.jira_config", return_value={"project_key": ""}):
+            self.assertEqual(["MBPAS-1548"], related_candidates(Path("/tmp"), item))
 
     def test_blocked_reply_is_found_when_primary_comment_page_is_empty(self) -> None:
         item = {

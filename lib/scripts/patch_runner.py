@@ -16,7 +16,7 @@ from typing import Any
 
 from capture_patch_context import capture
 from compose_patch_prompt import compose
-from patch_jira import add_comment, blocked_comment, transition_issue
+from patch_jira import add_comment, blocked_comment, skipped_comment, transition_issue
 from patch_runtime import (
     comments,
     blocked_statuses,
@@ -425,6 +425,60 @@ def block(workspace: Path, progress: dict[str, Any], question: str, reason: str)
     return 0
 
 
+def skip(workspace: Path, progress: dict[str, Any], result: dict[str, Any]) -> int:
+    key = str(progress.get("jira_key") or "")
+    reason = str(result.get("summary") or "Agent found no actionable Auto Patch change.").strip()
+    original_status = str(progress.get("original_jira_status") or "").strip()
+    transition_result = "unchanged"
+    comment_result = "sent"
+    if original_status and str(progress.get("jira_status") or "").casefold() != original_status.casefold():
+        try:
+            progress["jira_status"] = transition_issue(workspace, key, original_status)
+            transition_result = "restored"
+        except Exception as exc:
+            transition_result = "failed"
+            progress.setdefault("failures", []).append({"stage": "jira", "detail": str(exc)})
+    try:
+        comment_status = original_status if transition_result in {"restored", "unchanged"} else ""
+        add_comment(workspace, key, skipped_comment(reason, comment_status), "html")
+    except Exception as exc:
+        comment_result = "failed"
+        progress.setdefault("failures", []).append({"stage": "jira_comment", "detail": str(exc)})
+    progress["jira"] = {
+        "status": "sent" if comment_result == "sent" else "failed",
+        "event": "patch.skipped",
+        "transition": transition_result,
+        "comment": comment_result,
+    }
+    registry = load_registry(workspace)
+    updated = ""
+    try:
+        updated = str(jira_fields(get_workitem(workspace, key)).get("updated") or "")
+    except Exception:
+        pass
+    registry_entry = {
+        "status": "skipped",
+        "updated": updated,
+        "finished_at": utc_now(),
+    }
+    if original_status.casefold() in {status.casefold() for status in blocked_statuses(workspace)}:
+        registry_entry["blocked_at"] = utc_now()
+    registry.setdefault("issues", {})[key] = registry_entry
+    save_registry(workspace, registry)
+    set_phase(
+        workspace,
+        progress,
+        "jira_notify",
+        "completed" if comment_result == "sent" and transition_result != "failed" else "failed",
+        "Skip reason recorded in Jira; no code was published" if comment_result == "sent" else "Unable to record the skip reason in Jira",
+    )
+    result.update({"jira": progress["jira"], "failures": progress.get("failures", []), "finished_at": utc_now()})
+    write_terminal(workspace, progress, result)
+    notify(workspace, "patch.skipped")
+    remove_worktrees(progress.get("repositories") or [])
+    return 0
+
+
 def run_agent(workspace: Path, prompt: str, log_file: Path) -> int:
     model = patch_model(workspace)
     sandbox = os.environ.get("CURSOR_AGENT_SANDBOX", "disabled")
@@ -502,6 +556,7 @@ def main() -> int:
         key = jira_key(item)
         progress = new_progress(datetime.now().strftime("%Y%m%d-%H%M%S"), item, workspace)
         progress["model"] = patch_model(workspace)
+        progress["original_jira_status"] = progress.get("jira_status", "")
         save_progress(workspace, progress)
         set_phase(workspace, progress, "capture", "in_progress", f"Selected {key}")
         set_phase(workspace, progress, "capture", "completed", "Primary Jira workitem captured")
@@ -587,11 +642,7 @@ def main() -> int:
             progress["self_checks"] = result.get("self_checks") or []
             set_phase(workspace, progress, "self_check", "completed", "Agent self-check evidence recorded")
             set_phase(workspace, progress, "publish", "skipped", "No code changes to publish")
-            set_phase(workspace, progress, "jira_notify", "completed", "Skipped result recorded; Jira status unchanged")
-            write_terminal(workspace, progress, result)
-            notify(workspace, "patch.skipped")
-            remove_worktrees(progress.get("repositories") or [])
-            return 0
+            return skip(workspace, progress, result)
         if status != "completed":
             return block(workspace, progress, "Should Auto Patch retry after the Agent reported a failure?", str(result.get("question") or result.get("summary") or "Agent reported a failure"))
         progress["self_checks"] = result.get("self_checks") or []

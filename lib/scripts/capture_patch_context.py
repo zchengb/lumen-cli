@@ -40,6 +40,7 @@ def extract_keys(value: Any) -> list[str]:
 
 def related_candidates(workspace: Path, item: dict[str, Any]) -> list[str]:
     keys = [key for key in nested_keys(item) if key != jira_key(item)]
+    keys.extend(key for key in extract_keys(item) if key != jira_key(item))
     summary = jira_summary(item)
     project = str(jira_config(workspace).get("project_key") or "").strip()
     ignored = {"after", "auto", "bug", "error", "fix", "issue", "legacy", "lumen", "migration", "task"}
