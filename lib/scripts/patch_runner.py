@@ -469,8 +469,10 @@ def skip(workspace: Path, progress: dict[str, Any], result: dict[str, Any]) -> i
         workspace,
         progress,
         "jira_notify",
-        "completed" if comment_result == "sent" and transition_result != "failed" else "failed",
-        "Skip reason recorded in Jira; no code was published" if comment_result == "sent" else "Unable to record the skip reason in Jira",
+        "completed" if comment_result == "sent" else "failed",
+        "Skip reason recorded in Jira; no code was published" if comment_result == "sent" and transition_result != "failed" else (
+            "Skip reason recorded in Jira; Jira status could not be restored" if comment_result == "sent" else "Unable to record the skip reason in Jira"
+        ),
     )
     result.update({"jira": progress["jira"], "failures": progress.get("failures", []), "finished_at": utc_now()})
     write_terminal(workspace, progress, result)

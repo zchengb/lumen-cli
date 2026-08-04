@@ -982,14 +982,29 @@ function PatchView({ data, project, notify, reload }: { data: DashboardData; pro
   const [deleteCandidate, setDeleteCandidate] = useState<RecordValue | null>(null);
   const [deletingHistoryId, setDeletingHistoryId] = useState("");
   const [historyError, setHistoryError] = useState("");
+  const [candidateOpen, setCandidateOpen] = useState(false);
+  const [candidateLoading, setCandidateLoading] = useState(false);
+  const [candidateError, setCandidateError] = useState("");
+  const [candidates, setCandidates] = useState<RecordValue[]>([]);
+  const [selectedCandidate, setSelectedCandidate] = useState("");
   const loadLog = async (runId = String(current.run_id || "")) => {
     setLogOpen(true); setLog(""); setLogError("");
     try { const response = await request(`/api/patch/log?run_id=${encodeURIComponent(runId)}`, project); setLog(response.content || "No log content recorded."); }
     catch (err) { setLogError(err instanceof Error ? err.message : "Unable to load Auto Patch log"); }
   };
-  const start = async () => {
+  const openCandidates = async () => {
+    setCandidateOpen(true); setCandidateLoading(true); setCandidateError(""); setCandidates([]); setSelectedCandidate("");
+    try {
+      const response = await request("/api/patch/candidates", project);
+      const items = Array.isArray(response.candidates) ? response.candidates : [];
+      setCandidates(items);
+      setSelectedCandidate(String(items.find((item: RecordValue) => item.available)?.jira_key || ""));
+    } catch (err) { setCandidateError(err instanceof Error ? err.message : "Unable to load Auto Patch candidates"); }
+    finally { setCandidateLoading(false); }
+  };
+  const start = async (jiraKey = "") => {
     setBusy(true);
-    try { await request("/api/patch/start", project, { method: "POST", json: {} }); notify("Auto Patch started", "success"); await reload(); }
+    try { await request("/api/patch/start", project, { method: "POST", json: { jira_key: jiraKey } }); setCandidateOpen(false); notify("Auto Patch started", "success"); await reload(); }
     catch (err) { notify(err instanceof Error ? err.message : "Unable to start Auto Patch", "error"); }
     finally { setBusy(false); }
   };
@@ -1012,22 +1027,29 @@ function PatchView({ data, project, notify, reload }: { data: DashboardData; pro
     finally { setDeletingHistoryId(""); }
   };
   return <>
-    <Panel title="Current Progress" action={<span className="panel-actions">{running ? <button className="button danger secondary" disabled={busy} onClick={() => void stop()}>Stop</button> : <button className="button secondary" disabled={busy} onClick={() => void start()}><Play size={14} />Run one cycle</button>}</span>}>
+    <Panel title="Current Progress" action={<span className="panel-actions">{running ? <button className="button danger secondary" disabled={busy} onClick={() => void stop()}>Stop</button> : <button className="button secondary" disabled={busy} onClick={() => void openCandidates()}><Play size={14} />Run one cycle</button>}</span>}>
       <div className="delivery-facts"><Fact label="Jira card" value={<StoryReference jiraKey={current.jira_key} title={current.jira_summary} />} /><Fact label="Status" value={<Badge value={current.patch_status || "not started"} />} /><Fact label="Branch" value={<code>{text(current.branch)}</code>} /><Fact label="Repositories" value={Array.isArray(current.repositories) ? current.repositories.map((item: RecordValue) => item.name).filter(Boolean).join(", ") || "—" : "—"} /></div>
       {current.question && <div className="status-note"><CircleHelp size={15} />{current.question}</div>}
-      <PatchFlow phases={Array.isArray(current.stages) ? current.stages : []} />
+      <PatchFlow phases={Array.isArray(current.stages) ? current.stages : []} overallStatus={String(current.patch_status || "")} />
     </Panel>
     <Panel title="Patch History" action={<span className="muted">{runs.length} runs</span>}>{historyError && <div className="status-note">{historyError}</div>}<div className="table-scroll patch-history-scroll"><table className="patch-history-table"><thead><tr><th>Jira</th><th>Summary</th><th>Status</th><th>Repositories</th><th>Finished</th><th>Log</th><th>Operation</th></tr></thead><tbody>{runs.length ? runs.map((run: RecordValue) => <tr key={run.run_id}><td><div className="patch-history-jira"><span className="patch-history-key">{text(run.jira_key)}</span>{run.jira_summary && <span className="patch-history-jira-title" title={text(run.jira_summary)}>{text(run.jira_summary)}</span>}</div></td><td><span className="patch-history-summary" title={text(run.summary)}>{text(run.summary)}</span></td><td><Badge value={run.status} /></td><td>{(run.repositories || []).map((item: RecordValue) => item.name).filter(Boolean).join(", ") || "—"}</td><td><span className="patch-history-finished">{when(run.finished_at)}</span></td><td><button className="text-button" onClick={() => void loadLog(run.run_id)}>View log</button></td><td><IconButton label="Delete Auto Patch record" danger disabled={deletingHistoryId === run.run_id} onClick={() => setDeleteCandidate(run)}><Trash2 size={15} /></IconButton></td></tr>) : <tr><td colSpan={7}><Empty label="No Auto Patch history yet." /></td></tr>}</tbody></table></div></Panel>
     <Panel title="Scheduler Activity"><div className="scheduler-activity">{activity.length ? activity.map((event: RecordValue, index: number) => <article className="scheduler-event" key={`${event.at}-${index}`}><Badge value={event.outcome} /><div><strong>{text(event.jira_key || event.card, "Workspace")}</strong><p>{text(event.message)}</p></div><time>{when(event.at)}</time></article>) : <Empty label="No Auto Patch activity recorded yet." />}</div></Panel>
+    {candidateOpen && <PatchCandidateDialog candidates={candidates} selected={selectedCandidate} loading={candidateLoading} error={candidateError} busy={busy} onChange={setSelectedCandidate} onClose={() => { if (!busy) setCandidateOpen(false); }} onConfirm={() => void start(selectedCandidate)} />}
     {logOpen && <DeliveryLogDialog stage={{ label: "Auto Patch log", detail: "Recent Auto Patch agent output" }} content={log} error={logError} loading={!log && !logError} onClose={() => setLogOpen(false)} />}
     {deleteCandidate && <DeleteHistoryDialog kind="patch" run={deleteCandidate} busy={Boolean(deletingHistoryId)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void removeHistory()} />}
   </>;
 }
 
-function PatchFlow({ phases }: { phases: RecordValue[] }) {
+function PatchCandidateDialog({ candidates, selected, loading, error, busy, onChange, onClose, onConfirm }: { candidates: RecordValue[]; selected: string; loading: boolean; error: string; busy: boolean; onChange: (value: string) => void; onClose: () => void; onConfirm: () => void }) {
+  const available = candidates.filter((candidate) => candidate.available);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onClose}><section className="modal patch-candidate-modal" role="dialog" aria-modal="true" aria-label="Choose Auto Patch Jira card" onMouseDown={(event) => event.stopPropagation()}><div className="modal-body compact"><strong>Choose a Jira card to patch</strong><p className="modal-copy">Only Task and Bug cards in the current active sprint are shown.</p>{loading && <div className="patch-candidate-empty">Scanning the active sprint…</div>}{error && <p className="status-note">{error}</p>}{!loading && !error && !candidates.length && <div className="patch-candidate-empty">No pending Auto Patch Jira cards were found in the current active sprint.</div>}{!loading && !error && candidates.length > 0 && <div className="patch-candidate-list">{candidates.map((candidate: RecordValue) => { const key = String(candidate.jira_key || ""); const disabled = !candidate.available; return <label className={`patch-candidate-option${selected === key ? " selected" : ""}${disabled ? " disabled" : ""}`} key={key}><input type="radio" name="patch-candidate" value={key} checked={selected === key} disabled={disabled || busy} onChange={() => onChange(key)} /><span><strong>{key} · {text(candidate.summary)}</strong><small>{text(candidate.issue_type, "Task")} · {text(candidate.status, "Unknown status")}{candidate.priority ? ` · Priority ${candidate.priority}` : ""}</small>{candidate.reason && <em>{candidate.reason}</em>}</span></label>; })}</div>}</div><footer><button className="button" disabled={busy} onClick={onClose}>Close</button><button className="button primary" disabled={busy || !selected || available.length === 0} onClick={onConfirm}><Play size={14} />{busy ? "Starting…" : "Start patch"}</button></footer></section></div>;
+}
+
+function PatchFlow({ phases, overallStatus }: { phases: RecordValue[]; overallStatus: string }) {
   const visiblePhases = phases.filter((phase) => !["screen", "context"].includes(String(phase.id || "").toLowerCase()));
-  const completed = visiblePhases.filter((phase) => phase.status === "completed").length;
-  return <div className="delivery-flow patch-flow"><div className="flow-heading"><div><span className="flow-title">Patch Flow</span></div><p>Capture → repository → patch → publish</p></div><div className="flow-track-wrap"><span className="flow-track"><i style={{ width: `${visiblePhases.length ? Math.round(completed / visiblePhases.length * 100) : 0}%` }} /></span><ol className="flow-steps" style={{ "--flow-count": Math.max(visiblePhases.length, 1) } as React.CSSProperties}>{visiblePhases.map((phase, index) => { const status = String(phase.status || "pending").toLowerCase(); const state = status === "completed" ? "completed" : /in_progress|running/.test(status) ? "running" : /failed|blocked/.test(status) ? "failed" : "pending"; const detail = text(phase.detail || phase.status, "Pending"); const duration = phase.started_at ? elapsed(phase.started_at, phase.finished_at || new Date().toISOString()) : "—"; return <li className={`flow-step ${state}`} key={phase.id || index}><div className="flow-stage-button"><span className="flow-marker">{state === "completed" ? "✓" : index + 1}</span><span className="flow-copy"><strong>{text(phase.label)}</strong><span className="flow-detail" title={detail}>{detail}</span><small className="flow-duration">{duration}</small></span></div></li>; })}</ol></div></div>;
+  const skipped = String(overallStatus).toLowerCase() === "skipped";
+  const completed = visiblePhases.filter((phase) => phase.status === "completed" || (skipped && phase.id === "jira_notify" && phase.status === "failed")).length;
+  return <div className="delivery-flow patch-flow"><div className="flow-heading"><div><span className="flow-title">Patch Flow</span></div><p>Capture → repository → patch → publish</p></div><div className="flow-track-wrap"><span className="flow-track"><i style={{ width: `${visiblePhases.length ? Math.round(completed / visiblePhases.length * 100) : 0}%` }} /></span><ol className="flow-steps" style={{ "--flow-count": Math.max(visiblePhases.length, 1) } as React.CSSProperties}>{visiblePhases.map((phase, index) => { const status = String(phase.status || "pending").toLowerCase(); const state = status === "completed" ? "completed" : skipped && phase.id === "jira_notify" && status === "failed" ? "skipped" : /in_progress|running/.test(status) ? "running" : /failed|blocked/.test(status) ? "failed" : "pending"; const detail = text(phase.detail || phase.status, "Pending"); const duration = phase.started_at ? elapsed(phase.started_at, phase.finished_at || new Date().toISOString()) : "—"; return <li className={`flow-step ${state}`} key={phase.id || index}><div className="flow-stage-button"><span className="flow-marker">{state === "completed" ? "✓" : state === "skipped" ? "–" : index + 1}</span><span className="flow-copy"><strong>{text(phase.label)}</strong><span className="flow-detail" title={detail}>{detail}</span><small className="flow-duration">{duration}</small></span></div></li>; })}</ol></div></div>;
 }
 
 function StartDeliveryDialog({ stories, value, onChange, step, busy, error, onClose, onContinue, onConfirm }: { stories: Array<{ value: string; label: string }>; value: string; onChange: (value: string) => void; step: 1 | 2; busy: boolean; error: string; onClose: () => void; onContinue: () => void; onConfirm: () => void }) {

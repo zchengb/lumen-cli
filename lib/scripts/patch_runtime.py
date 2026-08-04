@@ -256,6 +256,66 @@ def has_external_reply(item: dict[str, Any], record: dict[str, Any]) -> bool:
     return False
 
 
+def patch_candidate_options(workspace: Path) -> list[dict[str, Any]]:
+    """Return selectable Task/Bug cards from the current active sprint."""
+    registry = load_registry(workspace).get("issues", {})
+    registry = registry if isinstance(registry, dict) else {}
+    registered = repo_registry(workspace)
+    def enabled(repo: dict[str, Any]) -> bool:
+        automation = repo.get("automation") if isinstance(repo.get("automation"), dict) else {}
+        patch = automation.get("patch") if isinstance(automation.get("patch"), dict) else {}
+        return bool(patch.get("enabled", True))
+
+    repositories_enabled = not registered or any(enabled(repo) for repo in registered)
+    options: list[dict[str, Any]] = []
+    for candidate in query_candidates(workspace, include_blocked=True):
+        key = jira_key(candidate)
+        record = registry.get(key, {}) if isinstance(registry.get(key, {}), dict) else {}
+        item = candidate
+        current_status = jira_status(candidate)
+        blocked = current_status.casefold() in {status.casefold() for status in blocked_statuses(workspace)}
+        if blocked or record.get("status") == "blocked":
+            try:
+                item = get_workitem(workspace, key)
+                current_status = jira_status(item)
+            except RuntimeError:
+                item = candidate
+        updated = jira_updated(item)
+        if record.get("status") in {"completed", "skipped"} and record.get("updated") == updated:
+            continue
+        waiting_for_reply = (
+            current_status.casefold() in {status.casefold() for status in blocked_statuses(workspace)}
+            or record.get("status") == "blocked"
+        )
+        available = repositories_enabled
+        reason = ""
+        if not repositories_enabled:
+            available = False
+            reason = "Auto Patch is disabled for every registered repository."
+        elif waiting_for_reply:
+            if has_external_reply(item, record):
+                reason = "New Jira reply detected; ready to retry."
+            else:
+                available = False
+                reason = "Waiting for a new external Jira reply."
+        fields = jira_fields(item)
+        issue_type = fields.get("issuetype")
+        issue_type = issue_type.get("name") if isinstance(issue_type, dict) else issue_type
+        priority = fields.get("priority")
+        priority = priority.get("name") if isinstance(priority, dict) else priority
+        options.append({
+            "jira_key": key,
+            "summary": jira_summary(item),
+            "issue_type": str(issue_type or "").strip(),
+            "status": current_status,
+            "priority": str(priority or "").strip(),
+            "updated": updated,
+            "available": available,
+            "reason": reason,
+        })
+    return options
+
+
 def repo_registry(workspace: Path) -> list[dict[str, Any]]:
     config_path = workspace_lumen_dir(workspace) / "config" / "repos.json"
     payload = read_json(config_path, {"repositories": []})

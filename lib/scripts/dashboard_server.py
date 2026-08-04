@@ -41,7 +41,7 @@ from discover_repos import default_branch, infer_profile
 from delivery_scheduler import DEFAULT_ELIGIBLE_JIRA_STATUSES, eligible_jira_statuses, normalize_statuses
 from sync_delivery_docs import commit_dirty_config, commit_paths, commit_story_metadata, lumen_commit_subject
 from git_sync import force_push_conflict, read_conflict
-from patch_runtime import patch_config, publish_mode as patch_publish_mode
+from patch_runtime import patch_candidate_options, patch_config, publish_mode as patch_publish_mode
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -1327,6 +1327,9 @@ class DashboardServer(ThreadingHTTPServer):
             raise ValueError("No Auto Patch scheduler log is available yet")
         return {"path": str(path.relative_to(workspace)), "content": "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-220:])}
 
+    def patch_candidates(self, workspace: Path) -> dict[str, Any]:
+        return {"candidates": patch_candidate_options(workspace)}
+
     def start_patch(self, workspace: Path, project: str, jira_key: str = "") -> dict[str, Any]:
         if (workspace / "locks" / "patch-run").exists():
             raise RuntimeError("An Auto Patch run is already active")
@@ -1757,6 +1760,11 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 return self.respond_json(HTTPStatus.OK, self.server.patch_log(workspace, query.get("run_id", [""])[0]))
             except (OSError, ValueError) as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
+        if parsed.path == "/api/patch/candidates":
+            try:
+                return self.respond_json(HTTPStatus.OK, self.server.patch_candidates(workspace))
+            except (OSError, RuntimeError, ValueError) as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/stories":
             return self.respond_json(HTTPStatus.OK, {"stories": list_observatory_stories(workspace)})
