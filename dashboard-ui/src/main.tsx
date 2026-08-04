@@ -1509,7 +1509,12 @@ function RepositoryView({ data, interact }: { data: DashboardData; interact: (pa
   const saveGovernance = async () => {
     if (!dirty || saving) return;
     setSaving(true);
-    try { if (await interact("/api/repositories", { repositories }, "Repository governance saved")) setDirty(false); }
+    try {
+      if (await interact("/api/repositories", { repositories }, "Repository governance saved")) {
+        setDirty(false);
+        setEditing(null);
+      }
+    }
     finally { setSaving(false); }
   };
   const attentionReasons = (repository: RecordValue) => {
