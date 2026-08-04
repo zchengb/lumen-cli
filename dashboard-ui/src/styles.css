@@ -421,6 +421,7 @@ th{padding:11px 15px;font-weight:550;letter-spacing:.04em}td{padding:14px 15px}.
 .repository-config-backdrop{display:flex;align-items:center;justify-content:center;overflow:hidden}
 .repository-config-modal{display:flex;flex-direction:column;height:min(900px,calc(100vh - 48px));max-height:calc(100vh - 48px)}
 .repository-config-header{position:relative;z-index:2;flex:0 0 auto}
+.repository-config-modal .repository-config-header{display:flex}
 .repository-config-body{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
 .repository-config-footer{position:relative;flex:0 0 auto}
 @media(max-width:700px){.repository-config-backdrop{padding:10px}.repository-config-modal{height:calc(100vh - 20px);max-height:calc(100vh - 20px)}}
