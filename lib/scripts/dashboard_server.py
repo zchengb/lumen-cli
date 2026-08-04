@@ -1328,7 +1328,12 @@ class DashboardServer(ThreadingHTTPServer):
         return {"path": str(path.relative_to(workspace)), "content": "\n".join(path.read_text(encoding="utf-8", errors="replace").splitlines()[-220:])}
 
     def patch_candidates(self, workspace: Path) -> dict[str, Any]:
-        return {"candidates": patch_candidate_options(workspace)}
+        # The interactive server is started with the visible lumen directory,
+        # while Auto Patch runtime helpers expect the docs repository root.
+        candidate_workspace = workspace
+        if not (workspace / "stories").is_dir() and (workspace.parent / "stories").is_dir():
+            candidate_workspace = workspace.parent
+        return {"candidates": patch_candidate_options(candidate_workspace)}
 
     def start_patch(self, workspace: Path, project: str, jira_key: str = "") -> dict[str, Any]:
         if (workspace / "locks" / "patch-run").exists():
