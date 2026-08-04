@@ -209,6 +209,30 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertNotIn("prUrl", metadata)
             self.assertFalse((workspace / "history").exists())
 
+    def test_retry_delivery_recovers_an_orphaned_in_progress_story(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            docs = Path(temp) / "docs"
+            workspace = docs / "lumen"
+            results = workspace / "results"
+            results.mkdir(parents=True)
+            story = docs / "stories" / "DEMO-ORPHAN"
+            story.mkdir(parents=True)
+            metadata_path = story / "metadata.json"
+            metadata_path.write_text(json.dumps({"jiraKey": "DEMO-ORPHAN", "deliveryStatus": "in_progress"}), encoding="utf-8")
+            (results / "delivery-progress.json").write_text(json.dumps({
+                "delivery_status": "in_progress", "story_id": "DEMO-ORPHAN", "docs_dir": str(docs),
+            }), encoding="utf-8")
+            server = object.__new__(DashboardServer)
+            server.lumen_bin = "/test/lumen"
+            server.lumen_home = "/test/lumen-home"
+            context = SimpleNamespace(docs_dir=docs, workspace_root=docs, story_dir=story, metadata_path=metadata_path, metadata={"jiraKey": "DEMO-ORPHAN"})
+
+            with patch.object(dashboard_server, "load_story_context", return_value=context), patch.object(dashboard_server, "should_sync_jira", return_value=(False, "not configured")), patch.object(dashboard_server, "cleanup_delivery_worktrees", return_value=[]), patch.object(dashboard_server.subprocess, "Popen") as launch:
+                retry = server.retry_delivery(workspace)
+
+            self.assertEqual("DEMO-ORPHAN", retry["story"])
+            self.assertEqual("DEMO-ORPHAN", launch.call_args.args[0][-1])
+
     def test_retry_delivery_rejects_restarting_completed_story(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             docs = Path(temp) / "docs"

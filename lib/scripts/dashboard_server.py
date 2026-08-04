@@ -80,6 +80,16 @@ def terminate_process_tree(pid: int) -> None:
         pass
 
 
+def delivery_process_active(workspace: Path) -> bool:
+    pid_path = workspace / "locks" / "delivery-run" / "pid"
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def load_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -904,15 +914,7 @@ def delivery_payload(workspace: Path) -> dict[str, Any]:
         current["verification"] = result.get("verification_results") or progress.get("verification") or []
     else:
         current = progress
-    lock = workspace / "locks" / "delivery-run"
-    pid_path = lock / "pid"
-    active = False
-    try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
-        os.kill(pid, 0)
-        active = True
-    except (OSError, ValueError):
-        pass
+    active = delivery_process_active(workspace)
     if str(current.get("delivery_status") or "").lower() in {"in_progress", "running"} and not active:
         current = dict(current)
         current["delivery_status"] = "failed"
@@ -1321,6 +1323,9 @@ class DashboardServer(ThreadingHTTPServer):
     def retry_delivery(self, workspace: Path, story_override: str = "") -> dict[str, Any]:
         progress = read_delivery_json(workspace / "results" / "delivery-progress.json", {})
         status = str(progress.get("delivery_status") or "").lower()
+        active = delivery_process_active(workspace)
+        if status in {"in_progress", "running"} and not active:
+            status = "failed"
         current_story = str(progress.get("story_id") or progress.get("jira_key") or "").strip()
         story_ref = str(story_override or current_story).strip()
         retryable = {"failed", "blocked", "not_started", ""}
