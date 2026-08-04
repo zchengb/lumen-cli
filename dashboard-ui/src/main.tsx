@@ -1052,7 +1052,9 @@ function PatchFlow({ phases, overallStatus }: { phases: RecordValue[]; overallSt
   const visiblePhases = phases.filter((phase) => !["screen", "context"].includes(String(phase.id || "").toLowerCase()));
   const skipped = String(overallStatus).toLowerCase() === "skipped";
   const completed = visiblePhases.filter((phase) => phase.status === "completed").length;
-  const trackWidth = skipped ? 0 : visiblePhases.length ? Math.round(completed / visiblePhases.length * 100) : 0;
+  const trackWidth = skipped
+    ? visiblePhases.length > 1 ? Math.round(Math.max(completed - 1, 0) / (visiblePhases.length - 1) * 100) : 0
+    : visiblePhases.length ? Math.round(completed / visiblePhases.length * 100) : 0;
   return <div className="delivery-flow patch-flow"><div className="flow-heading"><div><span className="flow-title">Patch Flow</span></div><p>Capture → repository → patch → publish</p></div><div className="flow-track-wrap"><span className="flow-track"><i style={{ width: `${trackWidth}%` }} /></span><ol className="flow-steps" style={{ "--flow-count": Math.max(visiblePhases.length, 1) } as React.CSSProperties}>{visiblePhases.map((phase, index) => { const status = String(phase.status || "pending").toLowerCase(); const state = skipped && status !== "completed" ? "skipped" : status === "completed" ? "completed" : /in_progress|running/.test(status) ? "running" : /failed|blocked/.test(status) ? "failed" : "pending"; const detail = text(phase.detail || phase.status, "Pending"); const duration = phase.started_at ? elapsed(phase.started_at, phase.finished_at || new Date().toISOString()) : "—"; return <li className={`flow-step ${state}`} key={phase.id || index}><div className="flow-stage-button"><span className="flow-marker">{state === "completed" ? "✓" : state === "skipped" ? "–" : index + 1}</span><span className="flow-copy"><strong>{text(phase.label)}</strong><span className="flow-detail" title={detail}>{detail}</span><small className="flow-duration">{duration}</small></span></div></li>; })}</ol></div></div>;
 }
 
