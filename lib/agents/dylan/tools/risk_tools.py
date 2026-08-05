@@ -5,7 +5,16 @@ from typing import Any
 from agents.dylan.tools.common import envelope
 from risk.models import RiskConfig
 from risk.queries import explain_finding as q_explain
-from risk.queries import finding_links_summary, overdue_high, recurring, top_risks, trend
+from risk.queries import (
+    compare_project_risk as q_compare,
+    finding_links_summary,
+    finding_summary as q_summary,
+    overdue_high,
+    recurring,
+    top_risks,
+    trend,
+    unresolved as q_unresolved,
+)
 from risk.store import RiskStore, utc_now
 
 
@@ -94,5 +103,42 @@ def get_finding_links(arguments: dict[str, Any], *, runtime: dict[str, Any]) -> 
     return envelope(
         "get_finding_links",
         finding_links_summary(store, finding_id),
+        freshness={"source": "risk_store", "updated_at": utc_now()},
+    )
+
+
+def query_unresolved_findings(arguments: dict[str, Any], *, runtime: dict[str, Any]) -> dict[str, Any]:
+    store = _store(runtime)
+    slug = _slug(arguments, runtime)
+    if store is None or not slug:
+        return envelope("query_unresolved_findings", {}, status="error", errors=["missing store/project"])
+    limit = int(arguments.get("limit") or 10)
+    return envelope(
+        "query_unresolved_findings",
+        q_unresolved(store, slug, limit=limit),
+        freshness={"source": "risk_store", "updated_at": utc_now()},
+    )
+
+
+def get_finding_summary(arguments: dict[str, Any], *, runtime: dict[str, Any]) -> dict[str, Any]:
+    store = _store(runtime)
+    finding_id = str(arguments.get("finding_id") or "").strip()
+    if store is None or not finding_id:
+        return envelope("get_finding_summary", {}, status="error", errors=["missing finding"])
+    return envelope(
+        "get_finding_summary",
+        q_summary(store, finding_id),
+        freshness={"source": "risk_store", "updated_at": utc_now()},
+    )
+
+
+def compare_project_risk(arguments: dict[str, Any], *, runtime: dict[str, Any]) -> dict[str, Any]:
+    store = _store(runtime)
+    slug = _slug(arguments, runtime)
+    if store is None or not slug:
+        return envelope("compare_project_risk", {}, status="error", errors=["missing store/project"])
+    return envelope(
+        "compare_project_risk",
+        q_compare(store, slug),
         freshness={"source": "risk_store", "updated_at": utc_now()},
     )

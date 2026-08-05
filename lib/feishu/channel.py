@@ -109,13 +109,10 @@ class FeishuChannel:
             try:
                 raw = event_to_dict(data)
                 _LOG.info("received im.message.receive_v1 keys=%s", list(raw.keys()))
-                # Feishu requires return within ~3s; run work off the WS callback thread.
-                threading.Thread(
-                    target=channel._safe_process,
-                    args=(raw, client),
-                    name=f"lumen-{client.agent_id}-msg",
-                    daemon=True,
-                ).start()
+                # Feishu requires return within ~3s; run work on bounded pool.
+                from agents.dylan.runtime import get_executor
+
+                get_executor().submit(channel._safe_process, raw, client)
             except Exception:
                 _LOG.error("on_message failed\n%s", traceback.format_exc())
 

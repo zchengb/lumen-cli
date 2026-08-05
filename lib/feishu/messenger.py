@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
@@ -18,6 +19,22 @@ APP_SECRET_ENV = {
 TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 REPLY_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply"
 CREATE_URL = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
+UPDATE_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
+
+_LOG = logging.getLogger("lumen.feishu.channel")
+
+
+def extract_message_id(response: dict[str, Any] | None) -> str:
+    if not isinstance(response, dict):
+        return ""
+    data = response.get("data") if isinstance(response.get("data"), dict) else {}
+    message = data.get("message") if isinstance(data.get("message"), dict) else {}
+    return str(
+        response.get("message_id")
+        or data.get("message_id")
+        or message.get("message_id")
+        or ""
+    ).strip()
 
 
 class FeishuMessenger:
@@ -47,7 +64,7 @@ class FeishuMessenger:
             raise RuntimeError(f"Feishu token error: {body.get('msg') or body}")
         return token
 
-    def _post(self, url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def _request(self, method: str, url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
         data = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             url,
@@ -56,7 +73,7 @@ class FeishuMessenger:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {token}",
             },
-            method="POST",
+            method=method.upper(),
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
@@ -64,6 +81,9 @@ class FeishuMessenger:
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Feishu API HTTP {exc.code}: {detail}") from exc
+
+    def _post(self, url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request("POST", url, token, payload)
 
     def reply_text(self, message_id: str, text: str) -> dict[str, Any]:
         token = self.tenant_token()
@@ -84,6 +104,22 @@ class FeishuMessenger:
                 "msg_type": "interactive",
             },
         )
+
+    def update_text(self, message_id: str, text: str) -> dict[str, Any]:
+        token = self.tenant_token()
+        return self._request(
+            "PUT",
+            UPDATE_URL.format(message_id=message_id),
+            token,
+            {"msg_type": "text", "content": json.dumps({"text": text}, ensure_ascii=False)},
+        )
+
+    def safe_update_text(self, message_id: str, text: str) -> Optional[dict[str, Any]]:
+        try:
+            return self.update_text(message_id, text)
+        except Exception as exc:
+            _LOG.warning("update_text failed message_id=%s err=%s", message_id, exc)
+            return None
 
     def send_text(self, chat_id: str, text: str) -> dict[str, Any]:
         token = self.tenant_token()
@@ -113,8 +149,5 @@ class FeishuMessenger:
         try:
             return self.reply_text(message_id, text)
         except Exception as exc:
-            import logging
-            logging.getLogger("lumen.feishu.channel").warning(
-                "reply_text failed message_id=%s err=%s", message_id, exc
-            )
+            _LOG.warning("reply_text failed message_id=%s err=%s", message_id, exc)
             return None

@@ -25,6 +25,74 @@ def recurring(store: RiskStore, project_slug: str, limit: int = 10) -> list[dict
     return [dict(row) for row in rows]
 
 
+def unresolved(store: RiskStore, project_slug: str, limit: int = 10) -> dict[str, Any]:
+    rows = store.list_findings(project_slug, ["Open", "Reopened"])
+    items = [dict(row) for row in rows[:limit]]
+    high = sum(1 for row in rows if str(row["effective_severity"]) == "High")
+    medium = sum(1 for row in rows if str(row["effective_severity"]) == "Medium")
+    low = sum(1 for row in rows if str(row["effective_severity"]) == "Low")
+    reopened = sum(1 for row in rows if str(row["status"]) == "Reopened")
+    return {
+        "total": len(rows),
+        "high": high,
+        "medium": medium,
+        "low": low,
+        "reopened": reopened,
+        "items": items,
+    }
+
+
+def finding_summary(store: RiskStore, finding_id: str) -> dict[str, Any]:
+    explained = explain_finding(store, finding_id)
+    if explained.get("status") != "ok":
+        return explained
+    finding = explained["finding"]
+    links = finding_links_summary(store, finding_id)
+    return {
+        "status": "ok",
+        "finding": finding,
+        "summary": {
+            "id": finding.get("id"),
+            "title": finding.get("title"),
+            "status": finding.get("status"),
+            "source_severity": finding.get("source_severity"),
+            "effective_severity": finding.get("effective_severity"),
+            "risk_score": finding.get("current_risk_score"),
+            "risk_band": finding.get("current_risk_band"),
+            "recurrence_count": finding.get("recurrence_count"),
+            "reopened_count": finding.get("reopened_count"),
+            "verification_status": finding.get("verification_status"),
+            "remediation_status": finding.get("remediation_status"),
+            "jira": links.get("jira"),
+            "pull_request": links.get("pull_request"),
+        },
+        "links": explained.get("links") or [],
+        "severity_adjustments": explained.get("severity_adjustments") or [],
+    }
+
+
+def compare_project_risk(store: RiskStore, project_slug: str) -> dict[str, Any]:
+    latest = store.latest_project_snapshot(project_slug)
+    previous = store.previous_project_snapshot(project_slug)
+    if latest is None:
+        return {"status": "empty"}
+    latest_score = float(latest["score"])
+    previous_score = float(previous["score"]) if previous is not None else latest_score
+    top = top_risks(store, project_slug, limit=3)
+    return {
+        "status": "ok",
+        "latest_score": latest_score,
+        "previous_score": previous_score,
+        "score_delta": round(latest_score - previous_score, 2),
+        "latest_band": latest["band"],
+        "previous_band": previous["band"] if previous is not None else latest["band"],
+        "open_high": latest["open_high"],
+        "reopened": latest["reopened"],
+        "overdue_high": latest["overdue_high"],
+        "top_contributing_findings": top,
+    }
+
+
 def overdue_high(store: RiskStore, project_slug: str, config: RiskConfig) -> list[dict[str, Any]]:
     rows = store.list_findings(project_slug, ["Open", "Reopened"])
     result = []

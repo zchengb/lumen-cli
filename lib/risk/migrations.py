@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -193,6 +193,23 @@ CREATE TABLE IF NOT EXISTS agent_run (
     updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS conversation_job (
+    id TEXT PRIMARY KEY,
+    message_id TEXT NOT NULL UNIQUE,
+    chat_id TEXT,
+    thread_id TEXT,
+    user_id TEXT,
+    project_slug TEXT,
+    state TEXT NOT NULL,
+    intent TEXT,
+    placeholder_message_id TEXT,
+    started_at TEXT,
+    updated_at TEXT,
+    completed_at TEXT,
+    error_code TEXT,
+    error_detail TEXT
+);
+
 CREATE TABLE IF NOT EXISTS conversation_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id TEXT,
@@ -258,6 +275,9 @@ _ALERT_V2_COLUMNS = {
 }
 
 _CONTEXT_V2_COLUMNS = {
+    "pending_intent": "TEXT",
+    "pending_tool": "TEXT",
+    "pending_reference_type": "TEXT",
     "last_intent": "TEXT",
     "last_run_id": "TEXT",
     "last_result_ids_json": "TEXT",

@@ -1,0 +1,15 @@
+{
+  "thinking_initial": "Dylan is thinking…",
+  "thinking_risk": "Dylan is checking the latest risk evidence…",
+  "thinking_long": "Dylan is still reviewing the scan history and linked findings…",
+  "timeout": "I couldn't finish this check in time. The Scan and stored risk data were not changed.",
+  "model_unavailable": "I understood the question, but the language model is unavailable right now. Falling back to stored evidence.",
+  "tool_unavailable": "I understood the question, but I couldn't read the current risk store. The Scan was not changed.",
+  "no_project": "Which Project should I check? Please include a slug, for example: mbpass.",
+  "no_finding": "I couldn't identify which Finding you mean. Share an ID, or ask for the top risks first.",
+  "no_risk_data": "There is no stored risk data for this Project yet.",
+  "scan_not_found": "I don't have a Scan run in this thread yet. You can start one, then ask again.",
+  "greeting": "Hello.\n\nI'm Dylan, an Engineering Risk Analyst. I track long-horizon engineering risk—especially problems that look finished but may not truly be gone.",
+  "identity": "I'm Dylan, Engineering Risk Analyst. I identify, explain, and track long-term engineering risk across a Project.",
+  "completed_see_below": "Completed — see the reply below."
+}

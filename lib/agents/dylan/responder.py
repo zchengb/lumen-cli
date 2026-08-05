@@ -112,7 +112,7 @@ def compose_response(
             "mode": "deterministic",
         }
 
-    if intent in {"risk.top", "conversation.follow_up"} and intent == "risk.top":
+    if intent == "risk.top":
         items = (_tool_data(tool_results, "query_top_risks").get("items") or [])
         if not items:
             return {"text": "当前没有 Open / Reopened Finding。", "mode": "deterministic"}
@@ -122,6 +122,19 @@ def compose_response(
                 f"- [{item.get('effective_severity')}/{item.get('current_risk_band')}] "
                 f"{item.get('title')} (score={item.get('current_risk_score')}, id={item.get('id')})"
             )
+        return {"text": "\n".join(lines), "mode": "deterministic"}
+
+    if intent == "risk.unresolved":
+        data = _tool_data(tool_results, "query_unresolved_findings")
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        if not items:
+            return {"text": "No open or reopened findings right now.", "mode": "deterministic"}
+        lines = [
+            f"Unresolved findings: {data.get('total')} "
+            f"(High={data.get('high')}, Medium={data.get('medium')}, Low={data.get('low')}, Reopened={data.get('reopened')})"
+        ]
+        for item in items[:8]:
+            lines.append(f"- [{item.get('effective_severity')}] {item.get('title')} ({item.get('id')})")
         return {"text": "\n".join(lines), "mode": "deterministic"}
 
     if intent in {"risk.explain", "risk.why_severity", "conversation.follow_up"}:

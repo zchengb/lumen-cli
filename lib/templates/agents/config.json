@@ -7,14 +7,29 @@
     }
   },
   "dylan": {
-    "max_concurrent_jobs": 1,
+    "max_concurrent_jobs": 3,
     "risk_analyst": {
       "enabled": false,
       "conversation_v2": {
         "enabled": false,
         "llm_router_enabled": false,
         "llm_response_enabled": false,
-        "grounding_guard_enabled": true
+        "grounding_guard_enabled": true,
+        "model": {
+          "provider": "cursor",
+          "router_timeout_seconds": 8,
+          "response_timeout_seconds": 25,
+          "max_router_retries": 1,
+          "max_response_retries": 1
+        },
+        "typing": {
+          "enabled": true,
+          "delay_ms": 350,
+          "progress_after_ms": 5000,
+          "long_wait_after_ms": 15000,
+          "overall_timeout_ms": 45000,
+          "max_updates": 4
+        }
       }
     }
   },

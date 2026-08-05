@@ -1,0 +1,15 @@
+{
+  "thinking_initial": "Dylan 正在思考…",
+  "thinking_risk": "Dylan 正在检查最新的风险证据…",
+  "thinking_long": "Dylan 还在核对 Scan 历史和关联 Finding…",
+  "timeout": "这次检查超时了。Scan 与已存风险数据没有被改动。",
+  "model_unavailable": "我理解了问题，但目前无法使用语言模型，会改用已存证据回答。",
+  "tool_unavailable": "我理解了问题，但读取风险数据失败。Scan 没有被改动。",
+  "no_project": "你指的是哪个 Project？请写明 slug，例如：mbpass。",
+  "no_finding": "我还无法确定你指的是哪个 Finding。可以给编号，或先问最近最大的风险。",
+  "no_risk_data": "这个 Project 目前还没有可读的风险数据。",
+  "scan_not_found": "这个对话里还没有可对照的 Scan Run。你可以先发起扫描再问。",
+  "greeting": "你好。\n\n我是 Dylan，Engineering Risk Analyst。我负责追踪那些看起来已经结束、但可能还没有真正消失的工程风险。",
+  "identity": "我是 Dylan，Engineering Risk Analyst。我负责识别、解释并追踪项目的长期工程风险。",
+  "completed_see_below": "已完成 — 请看下方回复。"
+}

@@ -96,6 +96,19 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
     probe_common = _load_workspace_common(str(mapped.get("workspace") or "")) if mapped else {}
     if _conversation_enabled(config, probe_common):
         from agents.dylan.conversation import handle_conversation
+        from agents.dylan.schemas import ConversationFlags
+        from agents.dylan.thinking import ThinkingSession
+
+        flags = ConversationFlags.from_common(probe_common, config)
+        thinking = None
+        if flags.typing.enabled and message_id:
+            thinking = ThinkingSession(
+                messenger=messenger,
+                source_message_id=message_id,
+                language="zh-Hans",
+                config=flags.typing,
+            )
+            thinking.schedule_start()
 
         result = handle_conversation(
             text=text,
@@ -104,6 +117,21 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
             agents_config=config,
             known_slugs=known,
         )
+        typing_meta = result.get("typing") if isinstance(result.get("typing"), dict) else {}
+        if thinking is not None:
+            if typing_meta.get("language"):
+                thinking.language = str(typing_meta["language"])
+            if result.get("fast_path") or not typing_meta.get("enabled", True):
+                thinking._cancel_timers()
+                thinking.completed = True
+                if message_id and result.get("status") != "delegate":
+                    messenger.safe_reply_text(message_id, str(result.get("text") or "暂无数据。"))
+            elif result.get("status") == "delegate":
+                thinking._cancel_timers()
+                thinking.completed = True
+            else:
+                thinking.complete(str(result.get("text") or "暂无数据。"))
+                return result
         if result.get("status") == "delegate":
             action_name = str(result.get("action") or "")
             params = result.get("params") if isinstance(result.get("params"), dict) else {}
@@ -117,12 +145,11 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                 if message_id:
                     messenger.safe_reply_text(message_id, reply)
                 return {"status": "ok", "action": action_name}
-            # fall through to scan.run with params
             from agents.parser import ParsedAction
 
             action = ParsedAction(name="scan.run", confidence=0.9, source="conversation_v2", params=params)
         else:
-            if message_id:
+            if thinking is None and message_id:
                 messenger.safe_reply_text(message_id, str(result.get("text") or "暂无数据。"))
             return result
     else:
