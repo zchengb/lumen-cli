@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from risk.alerts import deliver_alerts, evaluate_alerts
+from risk.alerts import deliver_alerts, evaluate_alerts, retry_failed_alerts
 from risk.ingestion import ingest_scan_risk
 from risk.models import RiskConfig
 from risk.store import GlobalAgentStore, RiskStore
@@ -45,7 +45,13 @@ def process_scan_for_dylan(
             alerts=alerts,
             config=config,
         )
+        retried = retry_failed_alerts(
+            store,
+            project_slug=str(result.get("project_slug") or ""),
+            config=config,
+        )
         result["alerts"] = delivered
+        result["alert_retries"] = retried
         try:
             global_store = GlobalAgentStore()
             global_store.cache_project_summary(

@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+import hashlib
+import time
 from pathlib import Path
 from typing import Any
 
-from agents.dylan.soul_loader import load_soul
+from agents.dylan.context import load_context, resolve_project_slug, save_context
+from agents.dylan.guard import validate_response
+from agents.dylan.normalizer import normalize_message
+from agents.dylan.responder import compose_response
+from agents.dylan.router import route_message
+from agents.dylan.schemas import ConversationFlags, RouterResult
+from agents.dylan.tools import execute_tool
 from risk.models import RiskConfig
 from risk.queries import explain_finding, overdue_high, recurring, top_risks, trend
-from risk.store import RiskStore
+from risk.store import GlobalAgentStore, RiskStore
 
 
 def _template_answer(action: str, payload: dict[str, Any]) -> str:
-    soul = load_soul().splitlines()[0] if load_soul() else "Dylan"
     if action == "risk.trend":
         if payload.get("status") != "ok":
             return "目前还没有足够的 Project Risk 历史。"
@@ -64,14 +71,17 @@ def _template_answer(action: str, payload: dict[str, Any]) -> str:
         ]
         if adjustments:
             latest = adjustments[0]
-            lines.append(f"Severity adjustment: {latest.get('source_severity')} → {latest.get('effective_severity')} ({latest.get('reason_codes')})")
+            lines.append(
+                f"Severity adjustment: {latest.get('source_severity')} → {latest.get('effective_severity')} "
+                f"({latest.get('reason_codes')})"
+            )
         if links:
             for link in links:
                 lines.append(f"{link.get('type')}: {link.get('external_id') or ''} {link.get('url') or ''}".strip())
         else:
             lines.append("No linked Jira/PR in the risk store.")
         return "\n".join(lines)
-    return f"{soul}: 我只能基于已存储的风险证据回答。"
+    return "我只能基于已存储的风险证据回答。"
 
 
 def answer_risk_query(
@@ -86,7 +96,6 @@ def answer_risk_query(
     try:
         project_slug = str(params.get("project") or "").strip()
         if not project_slug:
-            # infer from common
             project = common.get("project") if isinstance(common.get("project"), dict) else {}
             project_slug = str(project.get("slug") or project.get("display_name") or workspace.parent.name).strip()
             if " " in project_slug:
@@ -101,14 +110,230 @@ def answer_risk_query(
         elif action == "risk.overdue":
             payload = {"items": overdue_high(store, project_slug, config)}
         elif action in {"risk.explain", "risk.why_severity"}:
-            finding_id = str(params.get("finding_id") or "").strip()
-            if not finding_id:
-                tops = top_risks(store, project_slug, limit=1)
-                finding_id = str(tops[0]["id"]) if tops else ""
-            payload = explain_finding(store, finding_id) if finding_id else {"status": "not_found"}
+            payload = explain_finding(store, str(params.get("finding_id") or ""))
         else:
             payload = {"status": "unsupported"}
         text = _template_answer(action, payload)
         return {"status": "ok", "action": action, "text": text, "payload": payload}
     finally:
         store.close()
+
+
+def _default_project_slug() -> str:
+    try:
+        from agents.project_resolver import known_project_slugs
+        import sys
+        from pathlib import Path
+
+        scripts = Path(__file__).resolve().parents[2] / "scripts"
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
+        from projects_registry import load_config, load_registry
+
+        cfg = load_config()
+        slug = str(cfg.get("default_project_slug") or "").strip()
+        if slug:
+            return slug
+        default_id = str(cfg.get("default_project_id") or "").strip()
+        if default_id:
+            for project in load_registry().get("projects", []):
+                if str(project.get("id") or "") == default_id:
+                    return str(project.get("slug") or "").strip()
+        known = sorted(known_project_slugs())
+        if len(known) == 1:
+            return known[0]
+    except Exception:
+        return ""
+    return ""
+
+
+def _resolve_workspace(project_slug: str) -> Path | None:
+    if not project_slug:
+        return None
+    try:
+        from agents.project_resolver import resolve_project
+
+        project = resolve_project(slug=project_slug)
+        if project and project.get("workspace"):
+            return Path(str(project["workspace"]))
+    except Exception:
+        return None
+    return None
+
+
+def handle_conversation(
+    *,
+    text: str,
+    meta: dict[str, str],
+    common: dict[str, Any] | None = None,
+    agents_config: dict[str, Any] | None = None,
+    known_slugs: set[str] | None = None,
+) -> dict[str, Any]:
+    started = time.time()
+    flags = ConversationFlags.from_common(common, agents_config)
+    message = normalize_message(text, known_slugs)
+    global_store = GlobalAgentStore()
+    risk_store = None
+    try:
+        context = load_context(
+            global_store,
+            chat_id=str(meta.get("chat_id") or ""),
+            thread_id=str(meta.get("thread_id") or ""),
+            user_id=str(meta.get("user_id") or ""),
+        )
+        router: RouterResult = route_message(message, context=context, known_slugs=known_slugs)
+
+        project_needed = router.intent.startswith("risk.") or router.intent in {"scan.run", "scan.status", "scan.summary"}
+        project_slug, project_source = resolve_project_slug(
+            explicit=str(router.params.get("project") or message.project_slug or ""),
+            context=context,
+            chat_id=str(meta.get("chat_id") or ""),
+            store=global_store,
+            default_slug=_default_project_slug(),
+        )
+        if project_needed and not project_slug and router.intent.startswith("risk."):
+            router.needs_clarification = True
+            router.clarification_question = "你指的是哪个 Project？请写明 slug，例如：mbpass。"
+            router.intent = "clarification.project"
+
+        workspace = _resolve_workspace(project_slug) if project_slug else None
+        common_data = common if isinstance(common, dict) else {}
+        if workspace is not None:
+            common_path = workspace / "config" / "common.json"
+            if common_path.is_file():
+                try:
+                    import json
+
+                    loaded = json.loads(common_path.read_text(encoding="utf-8"))
+                    if isinstance(loaded, dict):
+                        common_data = loaded
+                except Exception:
+                    pass
+            risk_store = RiskStore(workspace)
+
+        if router.intent in {"scan.run", "scan.cancel"}:
+            return {
+                "status": "delegate",
+                "action": router.intent,
+                "params": {**router.params, "project": project_slug or router.params.get("project")},
+                "router": router,
+                "message": message,
+                "flags": flags,
+            }
+
+        runtime = {
+            "global_store": global_store,
+            "risk_store": risk_store,
+            "workspace": workspace,
+            "common": common_data,
+            "meta": meta,
+            "context": context,
+            "project_slug": project_slug,
+        }
+        tool_results = []
+        for call in router.tool_calls:
+            args = dict(call.arguments)
+            if project_slug and "project_slug" not in args:
+                args["project_slug"] = project_slug
+            if router.finding_id and "finding_id" not in args:
+                args["finding_id"] = router.finding_id
+            tool_results.append(execute_tool(call.name, args, runtime=runtime))
+
+        composed = compose_response(
+            intent=router.intent,
+            router=router,
+            tool_results=tool_results,
+            language=message.language,
+            context=context,
+        )
+        text_out = str(composed.get("text") or "")
+        validation = {"valid": True, "violations": []}
+        if flags.grounding_guard_enabled and router.intent.startswith(("risk.", "scan.", "conversation.follow_up")):
+            validation = validate_response(text_out, tool_results, project_slug=project_slug)
+            if not validation.get("valid"):
+                composed = compose_response(
+                    intent=router.intent,
+                    router=router,
+                    tool_results=tool_results,
+                    language=message.language,
+                    context=context,
+                )
+                text_out = str(composed.get("text") or "我只能基于已验证的证据回答。")
+                composed["mode"] = "grounded_fallback"
+
+        last_result_ids = None
+        top = next((r for r in tool_results if r.get("tool") == "query_top_risks"), None)
+        if top and isinstance((top.get("data") or {}).get("items"), list):
+            last_result_ids = [str(i.get("id")) for i in top["data"]["items"] if isinstance(i, dict) and i.get("id")]
+        finding_id = router.finding_id or (
+            (last_result_ids[0] if last_result_ids else None) or context.get("last_finding_id")
+        )
+        run_data = next((r.get("data") for r in tool_results if r.get("tool") == "get_recent_scan_status"), None)
+        last_run_id = None
+        if isinstance(run_data, dict):
+            last_run_id = run_data.get("run_id")
+
+        context_payload = {
+            "chat_id": meta.get("chat_id"),
+            "thread_id": meta.get("thread_id"),
+            "user_id": meta.get("user_id"),
+            "project_slug": project_slug or None,
+            "last_intent": router.intent,
+            "last_run_id": last_run_id,
+            "last_finding_id": finding_id,
+            "recent_entities": {"project_source": project_source, "window_days": router.params.get("window_days")},
+            "original_language": message.language,
+        }
+        if last_result_ids is not None:
+            context_payload["last_result_ids"] = last_result_ids
+        save_context(global_store, context_payload)
+        if project_slug and meta.get("chat_id"):
+            global_store.set_chat_project(str(meta["chat_id"]), project_slug)
+
+        latency_ms = int((time.time() - started) * 1000)
+        try:
+            global_store.log_conversation(
+                {
+                    "message_id": meta.get("message_id"),
+                    "chat_id": meta.get("chat_id"),
+                    "thread_id": meta.get("thread_id"),
+                    "user_id": meta.get("user_id"),
+                    "agent_id": "dylan",
+                    "original_text_hash": hashlib.sha256(message.original_text.encode("utf-8")).hexdigest()[:16],
+                    "normalized_text": message.normalized_text[:200],
+                    "resolved_project": project_slug,
+                    "router_source": router.source,
+                    "intent": router.intent,
+                    "confidence": router.confidence,
+                    "tool_calls": [{"name": c.name, "arguments": c.arguments} for c in router.tool_calls],
+                    "response_mode": composed.get("mode"),
+                    "validation_result": validation,
+                    "latency_ms": latency_ms,
+                }
+            )
+        except Exception:
+            pass
+
+        return {
+            "status": "ok",
+            "action": router.intent,
+            "text": text_out,
+            "router": {
+                "intent": router.intent,
+                "confidence": router.confidence,
+                "source": router.source,
+                "needs_clarification": router.needs_clarification,
+            },
+            "tool_results": tool_results,
+            "validation": validation,
+            "project_slug": project_slug,
+            "flags": {
+                "conversation_v2": flags.enabled,
+                "grounding_guard": flags.grounding_guard_enabled,
+            },
+            "latency_ms": latency_ms,
+        }
+    finally:
+        if risk_store is not None:
+            risk_store.close()
+        global_store.close()

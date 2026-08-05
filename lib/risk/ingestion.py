@@ -13,12 +13,13 @@ from risk.correlation import (
     module_from_path,
     trigger_signature,
 )
-from risk.lifecycle import apply_seen, map_registry_status, resolve_missing
+from risk.lifecycle import apply_seen, invalidate_ignore_if_needed, map_registry_status, resolve_missing
 from risk.models import STATUS_OPEN, STATUS_REOPENED, RiskConfig
 from risk.project_risk import persist_project_snapshot
 from risk.retention import apply_retention
 from risk.scoring import compute_effective_severity, score_finding
 from risk.store import RiskStore, utc_now
+from risk.verification import is_verification_scan
 
 SEVERITY_RANK = {"Low": 1, "Medium": 2, "High": 3}
 
@@ -62,8 +63,9 @@ def import_issue_registry(store: RiskStore, registry: dict, project_slug: str) -
                 id, project_slug, canonical_fingerprint, registry_issue_id, repository, module,
                 title, category, source_severity, effective_severity, status,
                 first_seen_at, last_seen_at, resolved_at, reopened_count, recurrence_count,
+                occurrence_count, consecutive_seen_count, verification_status, remediation_status,
                 current_risk_score, current_risk_band
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'Low')
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 'not_observed', 'none', 0, 'Low')
             """,
             (
                 finding_id,
@@ -201,10 +203,17 @@ def ingest_scan_risk(
         source_severity = str(finding.get("severity") or "Medium")
         registry_issue = registry_by_id.get(str(finding.get("issue_id") or ""))
 
+        reopened = False
         if matched is not None:
             finding_id = str(matched["id"])
             previous = str(matched["status"])
-            new_status = apply_seen(store, finding_id, previous, completed_at)
+            new_status = apply_seen(
+                store,
+                finding_id,
+                previous,
+                completed_at,
+                scan_run_id=run_id,
+            )
             reopened = new_status == STATUS_REOPENED and previous != STATUS_REOPENED
             if reopened:
                 events.append({"type": "reopened", "finding_id": finding_id})
@@ -216,8 +225,9 @@ def ingest_scan_risk(
                     id, project_slug, canonical_fingerprint, registry_issue_id, repository, module,
                     title, category, source_severity, effective_severity, status,
                     first_seen_at, last_seen_at, resolved_at, reopened_count, recurrence_count,
-                    current_risk_score, current_risk_band
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, 0, 'Low')
+                    occurrence_count, consecutive_seen_count, verification_status, remediation_status,
+                    last_seen_scan_run_id, current_risk_score, current_risk_band
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, 0, 1, 1, 'observed', 'none', ?, 0, 'Low')
                 """,
                 (
                     finding_id,
@@ -233,6 +243,7 @@ def ingest_scan_risk(
                     STATUS_OPEN,
                     completed_at,
                     completed_at,
+                    run_id,
                 ),
             )
             store.insert_event(
@@ -281,7 +292,11 @@ def ingest_scan_risk(
             title=str(finding.get("title") or ""),
         )
         previous_effective = str(row["effective_severity"] or source_severity) if row else source_severity
-        if effective != previous_effective and SEVERITY_RANK.get(effective, 0) > SEVERITY_RANK.get(previous_effective, 0):
+        severity_upgraded = (
+            effective != previous_effective
+            and SEVERITY_RANK.get(effective, 0) > SEVERITY_RANK.get(previous_effective, 0)
+        )
+        if severity_upgraded:
             store.execute(
                 """
                 INSERT INTO severity_adjustment(
@@ -295,6 +310,7 @@ def ingest_scan_risk(
 
         has_jira, has_pr = _upsert_links(store, finding_id, finding, registry_issue)
         previous_score = float(row["current_risk_score"] or 0) if row else 0.0
+        previous_module = str(row["module"] or "") if row else ""
         breakdown = score_finding(
             effective_severity=effective,
             recurrence_count=recurrence,
@@ -326,7 +342,8 @@ def ingest_scan_risk(
                 finding_id,
             ),
         )
-        if previous_score and breakdown.total - previous_score >= config.score_alert_delta:
+        score_delta = breakdown.total - previous_score if previous_score else 0.0
+        if previous_score and score_delta >= config.score_alert_delta:
             events.append(
                 {
                     "type": "score_increased",
@@ -337,8 +354,27 @@ def ingest_scan_risk(
             )
         if breakdown.band == "High" and (not row or str(row["current_risk_band"]) != "High"):
             events.append({"type": "band_high", "finding_id": finding_id})
+        critical_hit = bool(module and module.lower() in set(config.critical_modules) and previous_module.lower() not in set(config.critical_modules))
+        if invalidate_ignore_if_needed(
+            store,
+            finding_id,
+            severity_upgraded=severity_upgraded,
+            score_delta=score_delta,
+            reopened=reopened,
+            score_threshold=config.score_alert_delta,
+            critical_module_hit=critical_hit,
+            blast_radius_expanded=False,
+        ):
+            events.append({"type": "ignore_invalidated", "finding_id": finding_id})
 
-    resolve_missing(store, project_slug, seen_ids, completed_at)
+    resolve_missing(
+        store,
+        project_slug,
+        seen_ids,
+        completed_at,
+        scan_run_id=run_id,
+        verification_scan=is_verification_scan(scan),
+    )
     project_snapshot = persist_project_snapshot(store, project_slug, run_id, config)
     retention = apply_retention(store, keep_days=90)
     store.commit()

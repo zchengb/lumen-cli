@@ -36,6 +36,10 @@ class RiskConfig:
     enabled: bool = False
     alert_chat_id: str = ""
     score_alert_delta: float = 15.0
+    conversation_v2: bool = False
+    llm_router_enabled: bool = False
+    llm_response_enabled: bool = False
+    grounding_guard_enabled: bool = True
 
     @classmethod
     def from_common(cls, common: dict[str, Any] | None) -> "RiskConfig":
@@ -65,6 +69,7 @@ class RiskConfig:
         except (TypeError, ValueError):
             overdue = 7
         enabled = bool(risk_flag.get("enabled", False)) or bool(risk.get("enabled", False))
+        conv = risk_flag.get("conversation_v2") if isinstance(risk_flag.get("conversation_v2"), dict) else {}
         return cls(
             weights=weights,
             critical_modules=[str(item).strip().lower() for item in modules if str(item).strip()],
@@ -73,6 +78,10 @@ class RiskConfig:
             enabled=enabled,
             alert_chat_id=str(risk.get("alert_chat_id") or dylan.get("alert_chat_id") or "").strip(),
             score_alert_delta=float(risk.get("score_alert_delta", 15) or 15),
+            conversation_v2=bool(conv.get("enabled", False)),
+            llm_router_enabled=bool(conv.get("llm_router_enabled", False)),
+            llm_response_enabled=bool(conv.get("llm_response_enabled", False)),
+            grounding_guard_enabled=bool(conv.get("grounding_guard_enabled", True)),
         )
 
 
@@ -83,3 +92,16 @@ class ScoreBreakdown:
     parts: dict[str, float] = field(default_factory=dict)
     reasons: list[str] = field(default_factory=list)
     rule_version: str = RULE_VERSION
+
+
+def conversation_v2_enabled(common: dict[str, Any] | None = None, agents_config: dict[str, Any] | None = None) -> bool:
+    for source in (common, agents_config):
+        if not isinstance(source, dict):
+            continue
+        agents = source.get("agents") if isinstance(source.get("agents"), dict) else source
+        dylan = agents.get("dylan") if isinstance(agents.get("dylan"), dict) else {}
+        risk_flag = dylan.get("risk_analyst") if isinstance(dylan.get("risk_analyst"), dict) else {}
+        conv = risk_flag.get("conversation_v2") if isinstance(risk_flag.get("conversation_v2"), dict) else {}
+        if bool(conv.get("enabled", False)):
+            return True
+    return False

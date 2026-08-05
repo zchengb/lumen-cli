@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Optional
@@ -32,6 +31,21 @@ def resolve_project(slug: str = "", chat_id: str = "", mapping: Optional[dict] =
             return find_by_slug(registry, value)
 
     chat = str(chat_id or "").strip()
+    if chat:
+        try:
+            from risk.store import GlobalAgentStore
+
+            gs = GlobalAgentStore()
+            mapped_slug = gs.get_chat_project(chat)
+            gs.close()
+            if mapped_slug:
+                try:
+                    return resolve_slug(mapped_slug)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     data = mapping if isinstance(mapping, dict) else {}
     chat_map = data.get("chat_project_map") if isinstance(data.get("chat_project_map"), dict) else {}
     mapped = str(chat_map.get(chat) or "").strip()

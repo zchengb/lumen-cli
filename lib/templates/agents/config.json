@@ -9,7 +9,13 @@
   "dylan": {
     "max_concurrent_jobs": 1,
     "risk_analyst": {
-      "enabled": false
+      "enabled": false,
+      "conversation_v2": {
+        "enabled": false,
+        "llm_router_enabled": false,
+        "llm_response_enabled": false,
+        "grounding_guard_enabled": true
+      }
     }
   },
   "notifications": {

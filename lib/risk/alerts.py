@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from risk.models import RiskConfig
 from risk.scoring import age_days
-from risk.store import GlobalAgentStore, RiskStore
+from risk.store import RETRY_DELAYS_MINUTES, GlobalAgentStore, RiskStore, next_alert_retry_at, utc_now
 
 _LOG = logging.getLogger("lumen.risk.alerts")
 
@@ -44,6 +43,9 @@ def evaluate_alerts(
         elif event_type == "band_high":
             key = f"band-high:{finding_id}"
             label = "Risk Band 进入 High"
+        elif event_type == "ignore_invalidated":
+            key = f"ignore-invalidated:{finding_id}:{utc_now()[:13]}"
+            label = "Ignore 已失效，Finding 重新打开"
         else:
             continue
         if store.alert_already_sent(project_slug, key):
@@ -62,7 +64,6 @@ def evaluate_alerts(
             }
         )
 
-    # overdue highs
     for finding in store.list_findings(project_slug, ["Open", "Reopened"]):
         if str(finding["effective_severity"]) != "High":
             continue
@@ -87,6 +88,87 @@ def evaluate_alerts(
     return pending
 
 
+def _resolve_chat_id(project_slug: str, config: RiskConfig) -> str:
+    if config.alert_chat_id:
+        return config.alert_chat_id
+    try:
+        global_store = GlobalAgentStore()
+        chat_id = global_store.chat_id_for_project(project_slug)
+        global_store.close()
+        return chat_id
+    except Exception:
+        return ""
+
+
+def _schedule_failure(
+    store: RiskStore,
+    alert: dict[str, Any],
+    project_slug: str,
+    attempt: int,
+    error: str,
+) -> dict[str, Any]:
+    if attempt >= len(RETRY_DELAYS_MINUTES):
+        status = "dead_letter"
+        next_retry = ""
+    else:
+        status = "failed"
+        next_retry = next_alert_retry_at(attempt + 1)
+    store.upsert_alert_attempt(
+        project_slug,
+        alert["event_key"],
+        alert["event_type"],
+        str(alert.get("finding_id") or ""),
+        status=status,
+        attempt_count=attempt,
+        last_error=error,
+        next_retry_at=next_retry,
+    )
+    return {**alert, "status": status, "attempt_count": attempt, "error": error, "next_retry_at": next_retry}
+
+
+def _send_one(
+    store: RiskStore,
+    messenger: Any,
+    chat_id: str,
+    project_slug: str,
+    alert: dict[str, Any],
+) -> dict[str, Any]:
+    existing = store.get_alert(project_slug, alert["event_key"])
+    if existing is not None and str(existing["status"]) == "sent":
+        return {**alert, "status": "sent", "deduped": True}
+    attempt = int(existing["attempt_count"] or 0) + 1 if existing is not None else 1
+    store.upsert_alert_attempt(
+        project_slug,
+        alert["event_key"],
+        alert["event_type"],
+        str(alert.get("finding_id") or ""),
+        status="sending",
+        attempt_count=attempt,
+    )
+    try:
+        from feishu.risk_cards import risk_alert_card
+
+        card = risk_alert_card(project_slug, alert)
+        result = messenger.send_card(chat_id, card)
+        message_id = ""
+        if isinstance(result, dict):
+            data = result.get("data") if isinstance(result.get("data"), dict) else {}
+            message_id = str(result.get("message_id") or data.get("message_id") or "")
+        store.upsert_alert_attempt(
+            project_slug,
+            alert["event_key"],
+            alert["event_type"],
+            str(alert.get("finding_id") or ""),
+            status="sent",
+            attempt_count=attempt,
+            message_id=message_id,
+        )
+        return {**alert, "status": "sent", "attempt_count": attempt, "message_id": message_id}
+    except Exception as exc:
+        _LOG.warning("alert send failed: %s", exc)
+        return _schedule_failure(store, alert, project_slug, attempt, str(exc))
+
+
 def deliver_alerts(
     store: RiskStore,
     *,
@@ -96,51 +178,43 @@ def deliver_alerts(
 ) -> list[dict[str, Any]]:
     if not alerts:
         return []
-    chat_id = config.alert_chat_id
-    if not chat_id:
-        try:
-            global_store = GlobalAgentStore()
-            row = global_store.conn.execute(
-                "SELECT chat_id FROM chat_project_map WHERE project_slug = ? LIMIT 1",
-                (project_slug,),
-            ).fetchone()
-            chat_id = str(row["chat_id"]) if row else ""
-            global_store.close()
-        except Exception:
-            chat_id = ""
+    chat_id = _resolve_chat_id(project_slug, config)
     delivered: list[dict[str, Any]] = []
     if not chat_id:
         for alert in alerts:
-            store.record_alert(project_slug, alert["event_key"], alert["event_type"], alert["finding_id"])
-            delivered.append({**alert, "status": "recorded_no_chat"})
+            store.upsert_alert_attempt(
+                project_slug,
+                alert["event_key"],
+                alert["event_type"],
+                str(alert.get("finding_id") or ""),
+                status="pending",
+                attempt_count=0,
+                last_error="no chat mapped",
+                next_retry_at=next_alert_retry_at(1),
+            )
+            delivered.append({**alert, "status": "pending", "error": "no chat mapped"})
         store.commit()
         return delivered
 
     try:
         from feishu.messenger import FeishuMessenger
-        from feishu.risk_cards import risk_alert_card
     except Exception as exc:
         _LOG.warning("feishu alert imports failed: %s", exc)
         for alert in alerts:
-            store.record_alert(project_slug, alert["event_key"], alert["event_type"], alert["finding_id"])
+            delivered.append(_schedule_failure(store, alert, project_slug, 1, f"import_failed:{exc}"))
         store.commit()
-        return [{**alert, "status": "recorded_import_failed"} for alert in alerts]
+        return delivered
 
     messenger = FeishuMessenger("dylan")
     for alert in alerts:
-        try:
-            card = risk_alert_card(project_slug, alert)
-            messenger.send_card(chat_id, card)
-            store.record_alert(project_slug, alert["event_key"], alert["event_type"], alert["finding_id"])
-            delivered.append({**alert, "status": "sent"})
-        except Exception as exc:
-            _LOG.warning("alert send failed: %s", exc)
-            store.record_alert(project_slug, alert["event_key"], alert["event_type"], alert["finding_id"])
-            delivered.append({**alert, "status": "failed", "error": str(exc)})
+        delivered.append(_send_one(store, messenger, chat_id, project_slug, alert))
     store.commit()
+
     try:
         global_store = GlobalAgentStore()
         for alert in delivered:
+            if alert.get("status") != "sent":
+                continue
             global_store.conn.execute(
                 """
                 INSERT OR IGNORE INTO alert_delivery_global(project_slug, finding_id, event_key, delivered_at)
@@ -153,3 +227,34 @@ def deliver_alerts(
     except Exception:
         pass
     return delivered
+
+
+def retry_failed_alerts(
+    store: RiskStore,
+    *,
+    project_slug: str,
+    config: RiskConfig,
+) -> list[dict[str, Any]]:
+    rows = store.list_retryable_alerts(project_slug)
+    alerts = []
+    for row in rows:
+        alert = {
+            "event_key": row["event_key"],
+            "event_type": row["event_type"],
+            "finding_id": row["finding_id"],
+            "label": row["event_type"],
+            "title": "",
+            "repository": "",
+            "score": 0,
+            "band": "",
+            "severity": "",
+        }
+        finding = store.get_finding(str(alert.get("finding_id") or ""))
+        if finding is not None:
+            alert["title"] = finding["title"]
+            alert["repository"] = finding["repository"]
+            alert["score"] = finding["current_risk_score"]
+            alert["band"] = finding["current_risk_band"]
+            alert["severity"] = finding["effective_severity"]
+        alerts.append(alert)
+    return deliver_alerts(store, project_slug=project_slug, alerts=alerts, config=config)

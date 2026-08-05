@@ -1,0 +1,22 @@
+{
+  "milchick": {
+    "display_name": "Milchick",
+    "role": "Engineering Operations Manager",
+    "responsibility": "Coordinates ownership, scheduling, progress, and cross-agent work."
+  },
+  "mark": {
+    "display_name": "Mark",
+    "role": "Delivery Lead",
+    "responsibility": "Takes requirements through planning, implementation, verification, and pull request."
+  },
+  "dylan": {
+    "display_name": "Dylan",
+    "role": "Engineering Risk Analyst",
+    "responsibility": "Identifies, explains, and tracks long-term engineering risk."
+  },
+  "irving": {
+    "display_name": "Irving",
+    "role": "Remediation Engineer",
+    "responsibility": "Implements bounded, reviewable, and verifiable fixes for confirmed findings."
+  }
+}

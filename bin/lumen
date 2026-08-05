@@ -360,6 +360,12 @@ Usage:
                                  FEISHU_DYLAN_APP_ID / FEISHU_DYLAN_APP_SECRET.
   lumen dylan brief [--project <slug>]
                                  Generate Dylan Weekly Risk Brief from risk.sqlite3
+  lumen dylan doctor [--project <slug>]
+                                 Check Dylan risk store, conversation V2 flags, and alert health
+  lumen dylan context --chat <id> [--thread <id>] [--user <id>]
+                                 Inspect conversation context from agents.sqlite3
+  lumen dylan alert list [--project <slug>] [--status failed|sent|pending|dead_letter]
+                                 List alert delivery rows from risk.sqlite3
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
                                  List tracked findings from the issue registry
@@ -3578,9 +3584,108 @@ if common_path.is_file():
 print(json.dumps(deliver_weekly_brief(workspace, common if isinstance(common, dict) else {}), indent=2, ensure_ascii=False))
 PY
       ;;
+    doctor)
+      resolve_command_workspace "$@"
+      python3 - <<PY
+import json, sys
+from pathlib import Path
+sys.path.insert(0, "${LUMEN_HOME}/lib")
+from agents.dylan.schemas import ConversationFlags
+from risk.migrations import SCHEMA_VERSION
+from risk.models import RiskConfig
+from risk.store import GlobalAgentStore, RiskStore, risk_db_path
+workspace = Path("${RESOLVED_WORKSPACE}")
+common = {}
+common_path = workspace / "config" / "common.json"
+if common_path.is_file():
+    common = json.loads(common_path.read_text(encoding="utf-8"))
+risk = RiskConfig.from_common(common)
+flags = ConversationFlags.from_common(common)
+db = risk_db_path(workspace)
+out = {
+  "workspace": str(workspace),
+  "risk_enabled": risk.enabled,
+  "conversation_v2": flags.enabled,
+  "grounding_guard": flags.grounding_guard_enabled,
+  "schema_target": SCHEMA_VERSION,
+  "risk_db_exists": db.is_file(),
+  "risk_db": str(db),
+}
+if db.is_file():
+    store = RiskStore(workspace)
+    out["finding_count"] = len(store.list_findings(str((common.get("project") or {}).get("slug") or workspace.parent.name)))
+    out["alerts_failed"] = len(store.list_alerts(status="failed"))
+    out["alerts_dead_letter"] = len(store.list_alerts(status="dead_letter"))
+    ver = store.fetchone("SELECT value FROM meta WHERE key='schema_version'")
+    out["schema_version"] = int(ver["value"]) if ver else None
+    store.close()
+try:
+    gs = GlobalAgentStore()
+    out["agents_db"] = str(gs.path)
+    out["agent_run_count"] = gs.conn.execute("SELECT COUNT(*) AS c FROM agent_run").fetchone()["c"]
+    gs.close()
+except Exception as exc:
+    out["agents_db_error"] = str(exc)
+print(json.dumps(out, indent=2, ensure_ascii=False))
+PY
+      ;;
+    context)
+      local chat="" thread="" user=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --chat) chat="${2:-}"; shift 2 ;;
+          --thread) thread="${2:-}"; shift 2 ;;
+          --user) user="${2:-}"; shift 2 ;;
+          *) shift ;;
+        esac
+      done
+      [[ -n "${chat}" ]] || { err "Usage: lumen dylan context --chat <chat_id> [--thread <id>] [--user <id>]"; exit 1; }
+      python3 - <<PY
+import json, sys
+sys.path.insert(0, "${LUMEN_HOME}/lib")
+from risk.store import GlobalAgentStore
+gs = GlobalAgentStore()
+row = gs.get_conversation_context(chat_id="${chat}", thread_id="${thread}", user_id="${user}")
+print(json.dumps(dict(row) if row is not None else {}, indent=2, ensure_ascii=False, default=str))
+gs.close()
+PY
+      ;;
+    alert)
+      local alert_sub="${1:-list}"
+      shift || true
+      local status_filter=""
+      local project_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --status) status_filter="${2:-}"; shift 2 ;;
+          --project) project_args+=("$1" "$2"); shift 2 ;;
+          *) project_args+=("$1"); shift ;;
+        esac
+      done
+      resolve_command_workspace "${project_args[@]}"
+      python3 - <<PY
+import json, sys
+from pathlib import Path
+sys.path.insert(0, "${LUMEN_HOME}/lib")
+from risk.store import RiskStore
+workspace = Path("${RESOLVED_WORKSPACE}")
+common = {}
+common_path = workspace / "config" / "common.json"
+if common_path.is_file():
+    common = json.loads(common_path.read_text(encoding="utf-8"))
+slug = str((common.get("project") or {}).get("slug") or "")
+store = RiskStore(workspace)
+rows = [dict(r) for r in store.list_alerts(project_slug=slug, status="${status_filter}")]
+store.close()
+print(json.dumps(rows, indent=2, ensure_ascii=False, default=str))
+PY
+      ;;
     ""|help|-h|--help)
       printf 'Usage:\n'
       printf '  lumen dylan brief [--project <slug>]\n'
+      printf '  lumen dylan doctor [--project <slug>]\n'
+      printf '  lumen dylan context --chat <chat_id> [--thread <id>] [--user <id>]\n'
+      printf '  lumen dylan alert list [--project <slug>] [--status failed|sent|pending|dead_letter]\n'
       ;;
     *)
       err "Unknown dylan command: ${sub}"
