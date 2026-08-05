@@ -100,5 +100,9 @@ class FeishuMessenger:
     def safe_reply_text(self, message_id: str, text: str) -> Optional[dict[str, Any]]:
         try:
             return self.reply_text(message_id, text)
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger("lumen.feishu.channel").warning(
+                "reply_text failed message_id=%s err=%s", message_id, exc
+            )
             return None

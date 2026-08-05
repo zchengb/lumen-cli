@@ -54,22 +54,37 @@ def should_handle(event: dict[str, Any], client: FeishuClientConfig) -> bool:
     message = body.get("message") if isinstance(body, dict) else {}
     if not isinstance(message, dict):
         return False
-    chat_type = str(message.get("chat_type") or "").strip()
+    chat_type = str(message.get("chat_type") or "").strip().lower()
     mentions = message.get("mentions")
-    if chat_type == "p2p":
+    if chat_type in {"p2p", "private"}:
         return True
-    if isinstance(mentions, list) and mentions:
+    if isinstance(mentions, list) and len(mentions) > 0:
+        return True
+    # Some clients omit mentions; still handle explicit @ text in group.
+    content = str(message.get("content") or "")
+    if "@" in content or "_user_" in content:
         return True
     return False
 
 
 def handle_message_event(event: dict[str, Any], client: FeishuClientConfig) -> None:
+    import logging
+
+    log = logging.getLogger("lumen.feishu.channel")
     if not should_handle(event, client):
+        body = event.get("event") if isinstance(event.get("event"), dict) else {}
+        message = body.get("message") if isinstance(body, dict) else {}
+        log.info(
+            "ignore message chat_type=%s mentions=%s",
+            (message.get("chat_type") if isinstance(message, dict) else None),
+            (message.get("mentions") if isinstance(message, dict) else None),
+        )
         return
     text = extract_text(event)
     meta = extract_message_meta(event)
     if not meta.get("app_id"):
         meta["app_id"] = client.app_id
+    log.info("handle text=%r meta=%s", text[:120], {k: meta.get(k) for k in ("message_id", "chat_id", "chat_type")})
     handle_agent_message(
         agent_id=client.agent_id,
         text=text,
