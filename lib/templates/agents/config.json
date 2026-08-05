@@ -8,6 +8,41 @@
   },
   "dylan": {
     "max_concurrent_jobs": 3,
+    "conversation_v3": {
+      "enabled": false,
+      "routing_mode": "agent_only",
+      "model": {
+        "provider": "cursor",
+        "model": "cursor-grok-4.5-medium",
+        "planner_timeout_seconds": 15,
+        "responder_timeout_seconds": 30,
+        "max_planner_retries": 1,
+        "max_responder_retries": 1,
+        "required": true
+      },
+      "agent_loop": {
+        "max_iterations": 2,
+        "max_tool_calls": 8,
+        "max_total_tool_seconds": 20,
+        "allow_multi_task": true
+      },
+      "reaction": {
+        "enabled": true,
+        "emoji_type": "OnIt",
+        "add_immediately": true,
+        "remove_on_success": true,
+        "remove_on_failure": true,
+        "cleanup_after_seconds": 120
+      },
+      "observability": {
+        "log_level": "INFO",
+        "jsonl_enabled": true,
+        "trace_enabled": true,
+        "store_model_io": false,
+        "model_io_retention_days": 3,
+        "redact_secrets": true
+      }
+    },
     "risk_analyst": {
       "enabled": false,
       "conversation_v2": {

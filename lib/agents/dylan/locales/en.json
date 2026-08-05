@@ -4,6 +4,7 @@
   "thinking_long": "Dylan is still reviewing the scan history and linked findings…",
   "timeout": "I couldn't finish this check in time. The Scan and stored risk data were not changed.",
   "model_unavailable": "I understood the question, but the language model is unavailable right now. Falling back to stored evidence.",
+  "agent_unavailable": "I couldn't reach the Agent planner right now. No heuristic guess was made. Please retry shortly.",
   "tool_unavailable": "I understood the question, but I couldn't read the current risk store. The Scan was not changed.",
   "no_project": "Which Project should I check? Please include a slug, for example: mbpass.",
   "no_finding": "I couldn't identify which Finding you mean. Share an ID, or ask for the top risks first.",

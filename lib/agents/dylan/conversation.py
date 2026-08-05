@@ -184,9 +184,81 @@ def handle_conversation(
     common: dict[str, Any] | None = None,
     agents_config: dict[str, Any] | None = None,
     known_slugs: set[str] | None = None,
+    model_client: Any = None,
+    obs: Any = None,
+    trace: Any = None,
 ) -> dict[str, Any]:
     started = time.time()
     flags = ConversationFlags.from_common(common, agents_config)
+    if flags.agent_only:
+        from agents.dylan.agent_controller import AgentUnavailableError, DylanAgentController
+        from agents.dylan.observability import Observability, TraceContext, new_trace_id
+
+        owned_obs = obs is None
+        obs_obj = obs or Observability()
+        trace_obj = trace or TraceContext(
+            trace_id=new_trace_id(),
+            message_id=str(meta.get("message_id") or ""),
+            chat_id=str(meta.get("chat_id") or ""),
+            thread_id=str(meta.get("thread_id") or ""),
+            user_id=str(meta.get("user_id") or ""),
+            provider=flags.model.provider,
+            model=flags.model.model_name,
+        )
+        try:
+            obs_obj.emit(trace_obj, "message.received")
+            controller = DylanAgentController(
+                flags=flags,
+                obs=obs_obj,
+                trace=trace_obj,
+                model_client=model_client,
+            )
+            workspace = None
+            mapped_slug = ""
+            try:
+                from agents.project_resolver import resolve_project
+                from agents.project_resolver import load_chat_project_map
+
+                mapped = resolve_project(chat_id=str(meta.get("chat_id") or ""), mapping=load_chat_project_map())
+                if mapped and mapped.get("workspace"):
+                    workspace = Path(str(mapped["workspace"]))
+                    mapped_slug = str(mapped.get("slug") or "")
+            except Exception:
+                workspace = None
+            if workspace is None:
+                workspace = _resolve_workspace(_default_project_slug())
+            result = controller.run(
+                text=text,
+                meta=meta,
+                common=common,
+                known_slugs=known_slugs,
+                workspace=workspace,
+            )
+            if mapped_slug and not result.get("project_slug"):
+                result["project_slug"] = mapped_slug
+            result["typing"] = {"enabled": False}
+            result.setdefault("flags", {})["conversation_v3"] = True
+            return result
+        except AgentUnavailableError as exc:
+            obs_obj.emit(trace_obj, "job.failed", error=str(exc)[:300], level="ERROR")
+            obs_obj.upsert_trace(trace_obj, state="failed", error_code="agent_unavailable", planner_status="failed")
+            language = "en"
+            if any("\u4e00" <= ch <= "\u9fff" for ch in text):
+                language = "zh-Hant" if any(tok in text for tok in ("麼", "們", "這", "個")) else "zh-Hans"
+            msg = t(language, "agent_unavailable")
+            return {
+                "status": "error",
+                "action": "agent.unavailable",
+                "text": f"{msg}\nTrace ID: {trace_obj.trace_id}",
+                "trace_id": trace_obj.trace_id,
+                "error": str(exc)[:300],
+                "typing": {"enabled": False},
+                "flags": {"conversation_v3": True, "routing_mode": "agent_only"},
+            }
+        finally:
+            if owned_obs:
+                obs_obj.close()
+
     message = normalize_message(text, known_slugs)
     global_store = GlobalAgentStore()
     risk_store = None

@@ -62,13 +62,20 @@ def cmd_status() -> int:
             running = True
         except Exception:
             running = False
-    print(json.dumps({
+    payload = {
         "running": running,
         "pid": pid if running else None,
         "agents_enabled": agents_enabled(config),
         "clients": [item.agent_id for item in clients],
         "home": str(agents_home()),
-    }, indent=2))
+    }
+    try:
+        from agents.dylan.diagnostics import runtime_status_extra
+
+        payload.update(runtime_status_extra())
+    except Exception as exc:
+        payload["diagnostics_error"] = str(exc)[:200]
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
     return 0
 
 
@@ -136,6 +143,12 @@ def cmd_start() -> int:
 
     signal.signal(signal.SIGTERM, _cleanup)
     signal.signal(signal.SIGINT, _cleanup)
+    try:
+        from agents.dylan.reaction_cleanup import start_reaction_cleanup_worker
+
+        start_reaction_cleanup_worker()
+    except Exception:
+        pass
     channel = FeishuChannel(clients=clients)
     try:
         channel.start()
@@ -147,6 +160,34 @@ def cmd_start() -> int:
     return 0
 
 
+def cmd_logs(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="lumen agents logs")
+    parser.add_argument("--agent", default="dylan")
+    parser.add_argument("--follow", action="store_true")
+    parser.add_argument("--trace", default="")
+    parser.add_argument("--event", default="")
+    parser.add_argument("--level", default="")
+    parser.add_argument("--limit", type=int, default=200)
+    args = parser.parse_args(argv or [])
+    if args.agent != "dylan":
+        print(f"Only dylan logs are supported (got {args.agent})", file=sys.stderr)
+        return 1
+    from agents.dylan.diagnostics import follow_jsonl_logs, read_jsonl_logs
+
+    rows = read_jsonl_logs(
+        follow=False,
+        trace_id=args.trace,
+        event=args.event,
+        level=args.level,
+        limit=args.limit,
+    )
+    for row in rows:
+        print(json.dumps(row, ensure_ascii=False))
+    if args.follow:
+        follow_jsonl_logs(trace_id=args.trace, event=args.event, level=args.level)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     bootstrap_env()
     parser = argparse.ArgumentParser(description="Lumen Feishu Agent Gateway")
@@ -154,6 +195,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("start", help="Start Dylan Feishu gateway (foreground)")
     sub.add_parser("status", help="Show gateway status")
     sub.add_parser("stop", help="Stop gateway via pid file")
+    logs_parser = sub.add_parser("logs", help="Tail Dylan structured JSONL logs")
+    logs_parser.add_argument("--agent", default="dylan")
+    logs_parser.add_argument("--follow", action="store_true")
+    logs_parser.add_argument("--trace", default="")
+    logs_parser.add_argument("--event", default="")
+    logs_parser.add_argument("--level", default="")
+    logs_parser.add_argument("--limit", type=int, default=200)
     args = parser.parse_args(argv)
     if args.command == "start":
         return cmd_start()
@@ -161,6 +209,22 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_status()
     if args.command == "stop":
         return cmd_stop()
+    if args.command == "logs":
+        return cmd_logs(
+            [
+                "--agent",
+                args.agent,
+                *(["--follow"] if args.follow else []),
+                "--trace",
+                args.trace,
+                "--event",
+                args.event,
+                "--level",
+                args.level,
+                "--limit",
+                str(args.limit),
+            ]
+        )
     return 1
 
 

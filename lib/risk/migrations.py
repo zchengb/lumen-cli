@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -191,6 +191,79 @@ CREATE TABLE IF NOT EXISTS agent_run (
     error TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS conversation_trace (
+    trace_id TEXT PRIMARY KEY,
+    message_id TEXT,
+    chat_id_hash TEXT,
+    thread_id TEXT,
+    user_id_hash TEXT,
+    project_slug TEXT,
+    state TEXT,
+    provider TEXT,
+    model TEXT,
+    planner_status TEXT,
+    responder_status TEXT,
+    reply_status TEXT,
+    reaction_status TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    latency_ms INTEGER,
+    error_code TEXT
+);
+
+CREATE TABLE IF NOT EXISTS agent_invocation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    provider TEXT,
+    model TEXT,
+    latency_ms INTEGER,
+    exit_code INTEGER,
+    timed_out INTEGER DEFAULT 0,
+    retry_count INTEGER DEFAULT 0,
+    prompt_hash TEXT,
+    response_hash TEXT,
+    parse_status TEXT,
+    error_code TEXT,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS tool_invocation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id TEXT NOT NULL,
+    task_id TEXT,
+    tool_name TEXT NOT NULL,
+    arguments_summary TEXT,
+    status TEXT,
+    result_count INTEGER,
+    freshness TEXT,
+    latency_ms INTEGER,
+    error_code TEXT,
+    created_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS reaction_session (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id TEXT NOT NULL,
+    source_message_id TEXT NOT NULL,
+    reaction_id TEXT,
+    emoji_type TEXT,
+    status TEXT,
+    add_attempts INTEGER DEFAULT 0,
+    remove_attempts INTEGER DEFAULT 0,
+    added_at TEXT,
+    removed_at TEXT,
+    last_error TEXT
+);
+
+CREATE TABLE IF NOT EXISTS conversation_event (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trace_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    payload_json TEXT,
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS conversation_job (

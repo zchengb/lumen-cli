@@ -26,6 +26,26 @@ class RouterResult:
 
 
 @dataclass
+class AgentTask:
+    task_id: str
+    intent: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    project_slug: Optional[str] = None
+    finding_id: Optional[str] = None
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class AgentPlan:
+    language: str
+    confidence: float
+    needs_clarification: bool = False
+    clarification_question: Optional[str] = None
+    tasks: list[AgentTask] = field(default_factory=list)
+    source: str = "agent"
+
+
+@dataclass
 class ModelConfig:
     provider: str = "cursor"
     router_timeout_seconds: int = 8
@@ -33,6 +53,9 @@ class ModelConfig:
     max_router_retries: int = 1
     max_response_retries: int = 1
     model_name: str = "cursor-grok-4.5-medium"
+    planner_timeout_seconds: int = 15
+    responder_timeout_seconds: int = 30
+    required: bool = True
 
 
 @dataclass
@@ -46,6 +69,34 @@ class TypingConfig:
 
 
 @dataclass
+class ReactionConfig:
+    enabled: bool = True
+    emoji_type: str = "OnIt"
+    add_immediately: bool = True
+    remove_on_success: bool = True
+    remove_on_failure: bool = True
+    cleanup_after_seconds: int = 120
+
+
+@dataclass
+class AgentLoopConfig:
+    max_iterations: int = 2
+    max_tool_calls: int = 8
+    max_total_tool_seconds: int = 20
+    allow_multi_task: bool = True
+
+
+@dataclass
+class ObservabilityConfig:
+    log_level: str = "INFO"
+    jsonl_enabled: bool = True
+    trace_enabled: bool = True
+    store_model_io: bool = False
+    model_io_retention_days: int = 3
+    redact_secrets: bool = True
+
+
+@dataclass
 class ConversationFlags:
     enabled: bool = False
     llm_router_enabled: bool = False
@@ -53,30 +104,44 @@ class ConversationFlags:
     grounding_guard_enabled: bool = True
     model: ModelConfig = field(default_factory=ModelConfig)
     typing: TypingConfig = field(default_factory=TypingConfig)
+    # v3
+    v3_enabled: bool = False
+    routing_mode: str = "legacy"
+    reaction: ReactionConfig = field(default_factory=ReactionConfig)
+    agent_loop: AgentLoopConfig = field(default_factory=AgentLoopConfig)
+    observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
     @classmethod
     def from_common(cls, common: dict[str, Any] | None, agents_config: dict[str, Any] | None = None) -> "ConversationFlags":
         data = common if isinstance(common, dict) else {}
         agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
         dylan = agents.get("dylan") if isinstance(agents.get("dylan"), dict) else {}
+        if not dylan and isinstance(agents_config, dict):
+            dylan = agents_config.get("dylan") if isinstance(agents_config.get("dylan"), dict) else {}
         risk = dylan.get("risk_analyst") if isinstance(dylan.get("risk_analyst"), dict) else {}
         conv = risk.get("conversation_v2") if isinstance(risk.get("conversation_v2"), dict) else {}
-        if not conv and isinstance(agents_config, dict):
+        v3 = dylan.get("conversation_v3") if isinstance(dylan.get("conversation_v3"), dict) else {}
+        if not v3 and isinstance(agents_config, dict):
             cfg_dylan = agents_config.get("dylan") if isinstance(agents_config.get("dylan"), dict) else {}
-            cfg_risk = cfg_dylan.get("risk_analyst") if isinstance(cfg_dylan.get("risk_analyst"), dict) else {}
-            conv = cfg_risk.get("conversation_v2") if isinstance(cfg_risk.get("conversation_v2"), dict) else {}
-            if not dylan and cfg_dylan:
-                dylan = cfg_dylan
-        model_raw = conv.get("model") if isinstance(conv.get("model"), dict) else {}
+            v3 = cfg_dylan.get("conversation_v3") if isinstance(cfg_dylan.get("conversation_v3"), dict) else {}
+            if not conv:
+                cfg_risk = cfg_dylan.get("risk_analyst") if isinstance(cfg_dylan.get("risk_analyst"), dict) else {}
+                conv = cfg_risk.get("conversation_v2") if isinstance(cfg_risk.get("conversation_v2"), dict) else {}
+        model_src = v3.get("model") if isinstance(v3.get("model"), dict) else (conv.get("model") if isinstance(conv.get("model"), dict) else {})
         typing_raw = conv.get("typing") if isinstance(conv.get("typing"), dict) else {}
-        max_jobs = dylan.get("max_concurrent_jobs")
+        reaction_raw = v3.get("reaction") if isinstance(v3.get("reaction"), dict) else {}
+        loop_raw = v3.get("agent_loop") if isinstance(v3.get("agent_loop"), dict) else {}
+        obs_raw = v3.get("observability") if isinstance(v3.get("observability"), dict) else {}
         model = ModelConfig(
-            provider=str(model_raw.get("provider") or "cursor"),
-            router_timeout_seconds=int(model_raw.get("router_timeout_seconds") or 8),
-            response_timeout_seconds=int(model_raw.get("response_timeout_seconds") or 25),
-            max_router_retries=int(model_raw.get("max_router_retries") or 1),
-            max_response_retries=int(model_raw.get("max_response_retries") or 1),
-            model_name=str(model_raw.get("model") or model_raw.get("name") or "cursor-grok-4.5-medium"),
+            provider=str(model_src.get("provider") or "cursor"),
+            router_timeout_seconds=int(model_src.get("router_timeout_seconds") or model_src.get("planner_timeout_seconds") or 15),
+            response_timeout_seconds=int(model_src.get("response_timeout_seconds") or model_src.get("responder_timeout_seconds") or 30),
+            max_router_retries=int(model_src.get("max_router_retries") or model_src.get("max_planner_retries") or 1),
+            max_response_retries=int(model_src.get("max_response_retries") or model_src.get("max_responder_retries") or 1),
+            model_name=str(model_src.get("model") or model_src.get("name") or "cursor-grok-4.5-medium"),
+            planner_timeout_seconds=int(model_src.get("planner_timeout_seconds") or 15),
+            responder_timeout_seconds=int(model_src.get("responder_timeout_seconds") or 30),
+            required=bool(model_src.get("required", True if v3.get("enabled") else False)),
         )
         typing = TypingConfig(
             enabled=bool(typing_raw.get("enabled", True)),
@@ -86,20 +151,52 @@ class ConversationFlags:
             overall_timeout_ms=int(typing_raw.get("overall_timeout_ms") or 45000),
             max_updates=int(typing_raw.get("max_updates") or 4),
         )
+        reaction = ReactionConfig(
+            enabled=bool(reaction_raw.get("enabled", True)),
+            emoji_type=str(reaction_raw.get("emoji_type") or "OnIt"),
+            add_immediately=bool(reaction_raw.get("add_immediately", True)),
+            remove_on_success=bool(reaction_raw.get("remove_on_success", True)),
+            remove_on_failure=bool(reaction_raw.get("remove_on_failure", True)),
+            cleanup_after_seconds=int(reaction_raw.get("cleanup_after_seconds") or 120),
+        )
+        agent_loop = AgentLoopConfig(
+            max_iterations=int(loop_raw.get("max_iterations") or 2),
+            max_tool_calls=int(loop_raw.get("max_tool_calls") or 8),
+            max_total_tool_seconds=int(loop_raw.get("max_total_tool_seconds") or 20),
+            allow_multi_task=bool(loop_raw.get("allow_multi_task", True)),
+        )
+        observability = ObservabilityConfig(
+            log_level=str(obs_raw.get("log_level") or "INFO"),
+            jsonl_enabled=bool(obs_raw.get("jsonl_enabled", True)),
+            trace_enabled=bool(obs_raw.get("trace_enabled", True)),
+            store_model_io=bool(obs_raw.get("store_model_io", False)),
+            model_io_retention_days=int(obs_raw.get("model_io_retention_days") or 3),
+            redact_secrets=bool(obs_raw.get("redact_secrets", True)),
+        )
+        v3_enabled = bool(v3.get("enabled", False))
         flags = cls(
-            enabled=bool(conv.get("enabled", False)),
+            enabled=bool(conv.get("enabled", False)) or v3_enabled,
             llm_router_enabled=bool(conv.get("llm_router_enabled", False)),
             llm_response_enabled=bool(conv.get("llm_response_enabled", False)),
             grounding_guard_enabled=bool(conv.get("grounding_guard_enabled", True)),
             model=model,
             typing=typing,
+            v3_enabled=v3_enabled,
+            routing_mode=str(v3.get("routing_mode") or ("agent_only" if v3_enabled else "legacy")),
+            reaction=reaction,
+            agent_loop=agent_loop,
+            observability=observability,
         )
-        flags._max_concurrent_jobs = int(max_jobs or 3)  # type: ignore[attr-defined]
+        flags._max_concurrent_jobs = int(dylan.get("max_concurrent_jobs") or 3)  # type: ignore[attr-defined]
         return flags
 
     @property
     def max_concurrent_jobs(self) -> int:
         return int(getattr(self, "_max_concurrent_jobs", 3) or 3)
+
+    @property
+    def agent_only(self) -> bool:
+        return self.v3_enabled and self.routing_mode == "agent_only"
 
 
 ALLOWED_INTENTS = {
@@ -149,4 +246,13 @@ INTENT_TOOLS = {
     "conversation.agent_relationship": {"get_agent_relationship"},
     "conversation.capabilities": {"list_agent_capabilities"},
     "conversation.follow_up": {"explain_finding", "get_finding_links", "get_finding_summary"},
+}
+
+READ_ONLY_TOOLS = set().union(*INTENT_TOOLS.values()) if INTENT_TOOLS else set()
+READ_ONLY_TOOLS |= {
+    "get_thread_context",
+    "resolve_previous_result",
+    "resolve_recent_run",
+    "list_agent_capabilities",
+    "get_agent_profile",
 }

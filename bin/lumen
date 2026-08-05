@@ -355,13 +355,14 @@ Usage:
                                  Capture one eligible Jira Task/Bug and run Auto Patch
   lumen patch schedule add --project <slug> --every 5m
                                  Poll eligible Jira cards for Auto Patch
-  lumen agents start|status|stop
+  lumen agents start|status|stop|logs
                                  Feishu Agent Gateway (Dylan MVP). Requires agents.enabled and
                                  FEISHU_DYLAN_APP_ID / FEISHU_DYLAN_APP_SECRET.
   lumen dylan brief [--project <slug>]
                                  Generate Dylan Weekly Risk Brief from risk.sqlite3
-  lumen dylan doctor [--project <slug>]
-                                 Check Dylan risk store, conversation V2 flags, and alert health
+  lumen dylan doctor [--project <slug>] [--deep]
+                                 Check Dylan risk store, conversation V3, and alert health
+  lumen dylan trace latest|show  Show Dylan conversation trace timeline
   lumen dylan context --chat <id> [--thread <id>] [--user <id>]
                                  Inspect conversation context from agents.sqlite3
   lumen dylan alert list [--project <slug>] [--status failed|sent|pending|dead_letter]
@@ -3585,7 +3586,15 @@ print(json.dumps(deliver_weekly_brief(workspace, common if isinstance(common, di
 PY
       ;;
     doctor)
-      resolve_command_workspace "$@"
+      local deep=0
+      local doctor_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --deep) deep=1; shift ;;
+          *) doctor_args+=("$1"); shift ;;
+        esac
+      done
+      resolve_command_workspace "${doctor_args[@]}"
       python3 - <<PY
 import json, sys
 from pathlib import Path
@@ -3606,6 +3615,8 @@ out = {
   "workspace": str(workspace),
   "risk_enabled": risk.enabled,
   "conversation_v2": flags.enabled,
+  "conversation_v3": flags.v3_enabled,
+  "routing_mode": flags.routing_mode,
   "grounding_guard": flags.grounding_guard_enabled,
   "schema_target": SCHEMA_VERSION,
   "risk_db_exists": db.is_file(),
@@ -3626,7 +3637,61 @@ try:
     gs.close()
 except Exception as exc:
     out["agents_db_error"] = str(exc)
-print(json.dumps(out, indent=2, ensure_ascii=False))
+if ${deep}:
+    from agents.dylan.diagnostics import doctor_deep
+    out["deep"] = doctor_deep(common=common if isinstance(common, dict) else {})
+print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
+PY
+      ;;
+    trace)
+      local trace_sub="${1:-latest}"
+      shift || true
+      local message_id=""
+      local trace_id=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --message-id) message_id="${2:-}"; shift 2 ;;
+          *)
+            if [[ -z "${trace_id}" && "${trace_sub}" == "show" ]]; then
+              trace_id="$1"
+            fi
+            shift
+            ;;
+        esac
+      done
+      python3 - <<PY
+import sys
+sys.path.insert(0, "${LUMEN_HOME}/lib")
+from agents.dylan.diagnostics import format_trace_timeline
+from agents.dylan.observability import Observability
+obs = Observability()
+try:
+    sub = "${trace_sub}"
+    message_id = "${message_id}"
+    trace_id = "${trace_id}"
+    if sub == "latest":
+        row = obs.latest_trace()
+        if not row:
+            print("No traces yet.")
+            raise SystemExit(0)
+        print(format_trace_timeline(row["trace_id"]))
+    elif sub == "show":
+        if message_id:
+            row = obs.get_trace_by_message_id(message_id)
+            if not row:
+                print(f"No trace for message_id={message_id}")
+                raise SystemExit(1)
+            print(format_trace_timeline(row["trace_id"]))
+        elif trace_id:
+            print(format_trace_timeline(trace_id))
+        else:
+            print("Usage: lumen dylan trace show <trace_id> | --message-id <id>", file=sys.stderr)
+            raise SystemExit(1)
+    else:
+        print("Usage: lumen dylan trace latest|show", file=sys.stderr)
+        raise SystemExit(1)
+finally:
+    obs.close()
 PY
       ;;
     context)
@@ -3683,7 +3748,8 @@ PY
     ""|help|-h|--help)
       printf 'Usage:\n'
       printf '  lumen dylan brief [--project <slug>]\n'
-      printf '  lumen dylan doctor [--project <slug>]\n'
+      printf '  lumen dylan doctor [--project <slug>] [--deep]\n'
+      printf '  lumen dylan trace latest|show <trace_id>|show --message-id <id>\n'
       printf '  lumen dylan context --chat <chat_id> [--thread <id>] [--user <id>]\n'
       printf '  lumen dylan alert list [--project <slug>] [--status failed|sent|pending|dead_letter]\n'
       ;;
@@ -3703,8 +3769,8 @@ cmd_agents() {
   require_python3
   export LUMEN_HOME="${LUMEN_HOME}"
   export LUMEN_CLI_BIN="${LUMEN_CLI_BIN}"
-  case "${sub}" in
-    start|status|stop)
+    case "${sub}" in
+    start|status|stop|logs)
       python3 "${gateway_py}" "${sub}" "$@"
       ;;
     ""|help|-h|--help)
@@ -3712,6 +3778,7 @@ cmd_agents() {
       printf '  lumen agents start\n'
       printf '  lumen agents status\n'
       printf '  lumen agents stop\n'
+      printf '  lumen agents logs --agent dylan [--follow] [--trace id] [--event name] [--level LEVEL]\n'
       printf '\nEnable with ~/.lumen/agents/config.json {"enabled": true} or LUMEN_AGENTS_ENABLED=1\n'
       printf 'Credentials: FEISHU_DYLAN_APP_ID / FEISHU_DYLAN_APP_SECRET\n'
       ;;

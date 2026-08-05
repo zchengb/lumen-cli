@@ -20,6 +20,8 @@ TOKEN_URL = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/intern
 REPLY_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reply"
 CREATE_URL = "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id"
 UPDATE_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}"
+REACTION_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reactions"
+REACTION_DELETE_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reactions/{reaction_id}"
 
 _LOG = logging.getLogger("lumen.feishu.channel")
 
@@ -64,8 +66,8 @@ class FeishuMessenger:
             raise RuntimeError(f"Feishu token error: {body.get('msg') or body}")
         return token
 
-    def _request(self, method: str, url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
-        data = json.dumps(payload).encode("utf-8")
+    def _request(self, method: str, url: str, token: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             url,
             data=data,
@@ -77,13 +79,45 @@ class FeishuMessenger:
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read().decode("utf-8")
+                return json.loads(raw) if raw.strip() else {}
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"Feishu API HTTP {exc.code}: {detail}") from exc
 
     def _post(self, url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", url, token, payload)
+
+    def add_reaction(self, message_id: str, emoji_type: str) -> dict[str, Any]:
+        token = self.tenant_token()
+        return self._post(
+            REACTION_URL.format(message_id=message_id),
+            token,
+            {"reaction_type": {"emoji_type": str(emoji_type or "OnIt")}},
+        )
+
+    def delete_reaction(self, message_id: str, reaction_id: str) -> dict[str, Any]:
+        token = self.tenant_token()
+        return self._request(
+            "DELETE",
+            REACTION_DELETE_URL.format(message_id=message_id, reaction_id=reaction_id),
+            token,
+            None,
+        )
+
+    def safe_add_reaction(self, message_id: str, emoji_type: str) -> Optional[dict[str, Any]]:
+        try:
+            return self.add_reaction(message_id, emoji_type)
+        except Exception as exc:
+            _LOG.warning("add_reaction failed message_id=%s err=%s", message_id, exc)
+            return None
+
+    def safe_delete_reaction(self, message_id: str, reaction_id: str) -> Optional[dict[str, Any]]:
+        try:
+            return self.delete_reaction(message_id, reaction_id)
+        except Exception as exc:
+            _LOG.warning("delete_reaction failed message_id=%s reaction_id=%s err=%s", message_id, reaction_id, exc)
+            return None
 
     def reply_text(self, message_id: str, text: str) -> dict[str, Any]:
         token = self.tenant_token()
