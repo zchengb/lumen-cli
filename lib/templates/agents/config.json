@@ -1,0 +1,16 @@
+{
+  "enabled": false,
+  "profiles": {
+    "dylan": {
+      "role": "scan",
+      "workflow": "auto_scan"
+    }
+  },
+  "dylan": {
+    "max_concurrent_jobs": 1
+  },
+  "notifications": {
+    "mode": "legacy",
+    "fallback_to_legacy_webhook": true
+  }
+}

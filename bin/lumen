@@ -355,6 +355,9 @@ Usage:
                                  Capture one eligible Jira Task/Bug and run Auto Patch
   lumen patch schedule add --project <slug> --every 5m
                                  Poll eligible Jira cards for Auto Patch
+  lumen agents start|status|stop
+                                 Feishu Agent Gateway (Dylan MVP). Requires agents.enabled and
+                                 FEISHU_DYLAN_APP_ID / FEISHU_DYLAN_APP_SECRET.
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
                                  List tracked findings from the issue registry
@@ -3551,6 +3554,34 @@ cmd_issue() {
   esac
 }
 
+cmd_agents() {
+  local sub="${1:-}"
+  shift || true
+  local gateway_py="${LUMEN_LIB_DIR}/run-agent-gateway.py"
+  [[ -f "${gateway_py}" ]] || { err "Agent gateway helper not found: ${gateway_py}"; exit 1; }
+  require_python3
+  export LUMEN_HOME="${LUMEN_HOME}"
+  export LUMEN_CLI_BIN="${LUMEN_CLI_BIN}"
+  case "${sub}" in
+    start|status|stop)
+      python3 "${gateway_py}" "${sub}" "$@"
+      ;;
+    ""|help|-h|--help)
+      printf 'Usage:\n'
+      printf '  lumen agents start\n'
+      printf '  lumen agents status\n'
+      printf '  lumen agents stop\n'
+      printf '\nEnable with ~/.lumen/agents/config.json {"enabled": true} or LUMEN_AGENTS_ENABLED=1\n'
+      printf 'Credentials: FEISHU_DYLAN_APP_ID / FEISHU_DYLAN_APP_SECRET\n'
+      ;;
+    *)
+      err "Unknown agents command: ${sub}"
+      printf 'Run: lumen agents help\n'
+      exit 1
+      ;;
+  esac
+}
+
 main() {
   local command="${1:-help}"
   shift || true
@@ -3567,6 +3598,7 @@ main() {
     set-up-docs|setup-docs) cmd_legacy_workspace_init "$@" ;;
     delivery) cmd_delivery "$@" ;;
     patch) cmd_patch "$@" ;;
+    agents) cmd_agents "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
     watch) cmd_watch "$@" ;;
     doctor) cmd_doctor "$@" ;;

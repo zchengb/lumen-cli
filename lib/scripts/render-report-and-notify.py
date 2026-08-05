@@ -14,9 +14,15 @@ from typing import Dict, Optional, Tuple
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+LIB_DIR = SCRIPT_DIR.parent
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
 
 from auto_fix_sync import sync_auto_fix_prs
 from jira_sync import sync_jira_issues
+from notifications.events import NotificationEvent
+from notifications.router import publish_notification
+from notifications.transports.legacy_webhook import LegacyWebhookTransport
 
 
 SECRET_PATTERNS = [
@@ -822,6 +828,56 @@ def send_feishu(card: dict, webhook_url: str) -> None:
                 raise RuntimeError(f"Feishu webhook error: {redact(body)}")
 
 
+def _publish_scan_feishu(card: dict, webhook_url: str, common: dict, dry_run: bool, enabled: bool) -> dict:
+    if dry_run:
+        event = NotificationEvent(
+            event_type="scan.completed",
+            workflow="auto_scan",
+            owner_agent="dylan",
+            dry_run=True,
+        )
+    elif not enabled:
+        event = NotificationEvent(
+            event_type="scan.completed",
+            workflow="auto_scan",
+            owner_agent="dylan",
+            skip=True,
+            skip_detail="Feishu notifications are disabled",
+        )
+    elif not webhook_url:
+        event = NotificationEvent(
+            event_type="scan.completed",
+            workflow="auto_scan",
+            owner_agent="dylan",
+            skip=True,
+            skip_detail="FEISHU_WEBHOOK_URL is not set",
+        )
+    else:
+        event = NotificationEvent(
+            event_type="scan.completed",
+            workflow="auto_scan",
+            owner_agent="dylan",
+            card=card,
+            webhook_url=webhook_url,
+        )
+    result = publish_notification(
+        event,
+        config=common,
+        legacy_transport=LegacyWebhookTransport(send_fn=send_feishu),
+    )
+    status = str(result.get("status") or "skipped")
+    if status == "skipped" and not webhook_url and enabled and not dry_run:
+        return {"status": "not_sent", "error": "FEISHU_WEBHOOK_URL is not set"}
+    if status == "sent":
+        return {"status": "sent", "error": None}
+    if status == "dry_run_skipped":
+        return {"status": "dry_run_skipped", "error": None}
+    if status == "failed":
+        return {"status": "failed", "error": redact(str(result.get("error") or result.get("detail") or "failed"))}
+    error = result.get("error") or result.get("detail")
+    return {"status": status, "error": redact(str(error)) if error else None}
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         print("Usage: render-report-and-notify.py <scan-result.json>", file=sys.stderr)
@@ -897,17 +953,16 @@ def main() -> int:
     notifications = common.get("notifications") if isinstance(common.get("notifications"), dict) else {}
     feishu_cfg = notifications.get("feishu") if isinstance(notifications.get("feishu"), dict) else {}
     feishu_enabled = bool(feishu_cfg.get("enabled", True)) if "enabled" in feishu_cfg else True
-    if dry_run:
-        scan["feishu"] = {"status": "dry_run_skipped", "error": None}
-    elif not feishu_enabled:
-        scan["feishu"] = {"status": "skipped", "error": "Feishu notifications are disabled"}
-    elif not webhook_url:
-        scan["feishu"] = {"status": "not_sent", "error": "FEISHU_WEBHOOK_URL is not set"}
-    else:
+    card = None
+    if feishu_enabled and webhook_url and not dry_run:
         try:
             card = build_feishu_card(scan, product_name, common, workspace_root.parent)
-            send_feishu(card, webhook_url)
-            scan["feishu"] = {"status": "sent", "error": None}
+        except Exception as exc:
+            scan["feishu"] = {"status": "failed", "error": redact(str(exc))}
+            card = None
+    if "feishu" not in scan:
+        try:
+            scan["feishu"] = _publish_scan_feishu(card or {}, webhook_url, common, dry_run, feishu_enabled)
         except Exception as exc:
             scan["feishu"] = {"status": "failed", "error": redact(str(exc))}
 

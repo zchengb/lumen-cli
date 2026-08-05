@@ -22,10 +22,21 @@ mkdir -p "${BIN_DIR}"
 
 # Lumen owns these library directories. Remove them before copying so
 # deleted templates from older versions do not survive upgrades.
-rm -rf "${LUMEN_HOME}/lib/scripts" "${LUMEN_HOME}/lib/templates" "${LUMEN_HOME}/lib/standards"
+rm -rf \
+  "${LUMEN_HOME}/lib/scripts" \
+  "${LUMEN_HOME}/lib/templates" \
+  "${LUMEN_HOME}/lib/standards" \
+  "${LUMEN_HOME}/lib/agents" \
+  "${LUMEN_HOME}/lib/feishu" \
+  "${LUMEN_HOME}/lib/notifications" \
+  "${LUMEN_HOME}/lib/workflows"
 cp -R "${SCRIPT_DIR}/lib/scripts" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/templates" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/standards" "${LUMEN_HOME}/lib/"
+cp -R "${SCRIPT_DIR}/lib/agents" "${LUMEN_HOME}/lib/"
+cp -R "${SCRIPT_DIR}/lib/feishu" "${LUMEN_HOME}/lib/"
+cp -R "${SCRIPT_DIR}/lib/notifications" "${LUMEN_HOME}/lib/"
+cp -R "${SCRIPT_DIR}/lib/workflows" "${LUMEN_HOME}/lib/"
 cp "${SCRIPT_DIR}/VERSION" "${LUMEN_HOME}/VERSION"
 
 chmod +x "${LUMEN_HOME}/lib/scripts/"*.sh 2>/dev/null || true

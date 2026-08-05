@@ -15,11 +15,17 @@ from typing import Any
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+LIB_DIR = SCRIPT_DIR.parent
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
 
 from delivery_workspace import delivery_config_path, read_json, workspace_lumen_dir, write_json
 from delivery_progress import set_phase, update_notifications
 from jira_delivery_sync import sync_delivery_jira
 from jira_sync import jira_browse_url_from_config
+from notifications.events import NotificationEvent
+from notifications.router import publish_notification
+from notifications.transports.legacy_webhook import LegacyWebhookTransport
 
 
 def load_render_helpers():
@@ -33,6 +39,93 @@ def load_render_helpers():
 
 
 send_feishu, redact = load_render_helpers()
+
+
+def _merged_notify_config(*configs: dict) -> dict:
+    merged: dict[str, Any] = {"notifications": {}}
+    for config in configs:
+        if not isinstance(config, dict):
+            continue
+        notifications = config.get("notifications")
+        if isinstance(notifications, dict):
+            current = merged["notifications"]
+            for key, value in notifications.items():
+                if isinstance(value, dict) and isinstance(current.get(key), dict):
+                    current[key] = {**current[key], **value}
+                else:
+                    current[key] = value
+            if "mode" in notifications:
+                current["mode"] = notifications["mode"]
+            if "fallback_to_legacy_webhook" in notifications:
+                current["fallback_to_legacy_webhook"] = notifications["fallback_to_legacy_webhook"]
+    return merged
+
+
+def _publish_workflow_feishu(
+    *,
+    event_type: str,
+    workflow: str,
+    owner_agent: str,
+    card: dict | None,
+    webhook: str,
+    config: dict,
+    dry_run: bool,
+    skip_feishu: bool,
+    feishu_enabled: bool,
+) -> dict[str, Any]:
+    if dry_run:
+        payload = NotificationEvent(
+            event_type=event_type,
+            workflow=workflow,
+            owner_agent=owner_agent,
+            dry_run=True,
+        )
+    elif skip_feishu:
+        payload = NotificationEvent(
+            event_type=event_type,
+            workflow=workflow,
+            owner_agent=owner_agent,
+            skip=True,
+            skip_detail="LUMEN_SKIP_FEISHU enabled",
+        )
+    elif not feishu_enabled:
+        payload = NotificationEvent(
+            event_type=event_type,
+            workflow=workflow,
+            owner_agent=owner_agent,
+            skip=True,
+            skip_detail="Feishu notifications are disabled",
+        )
+    elif not webhook:
+        payload = NotificationEvent(
+            event_type=event_type,
+            workflow=workflow,
+            owner_agent=owner_agent,
+            skip=True,
+            skip_detail="FEISHU_WEBHOOK_URL not set",
+        )
+    else:
+        payload = NotificationEvent(
+            event_type=event_type,
+            workflow=workflow,
+            owner_agent=owner_agent,
+            card=card,
+            webhook_url=webhook,
+        )
+    result = publish_notification(
+        payload,
+        config=config,
+        legacy_transport=LegacyWebhookTransport(send_fn=send_feishu),
+    )
+    status = str(result.get("status") or "skipped")
+    if status == "sent":
+        return {"status": "sent", "event": event_type}
+    if status == "dry_run":
+        return {"status": "dry_run", "event": event_type}
+    if status == "failed":
+        return {"status": "failed", "detail": redact(str(result.get("error") or result.get("detail") or "failed"))}
+    detail = result.get("detail") or result.get("error") or "skipped"
+    return {"status": "skipped", "detail": redact(str(detail))}
 
 
 def format_duration(started_at: object, finished_at: object) -> str:
@@ -456,29 +549,29 @@ def main() -> int:
                 notification["jira_url"] = jira_url
         webhook = os.environ.get("FEISHU_WEBHOOK_URL", "").strip()
         feishu_result = {"status": "skipped", "detail": "FEISHU_WEBHOOK_URL not set"}
-        if dry_run:
-            feishu_result = {"status": "dry_run", "event": event}
-        else:
-            notifications = delivery_config.get("notifications", {})
-            feishu_enabled = True
-            if isinstance(notifications, dict) and isinstance(notifications.get("feishu"), dict) and "enabled" in notifications["feishu"]:
-                feishu_enabled = bool(notifications["feishu"].get("enabled"))
-            common_notifications = common.get("notifications", {})
-            if isinstance(common_notifications, dict) and isinstance(common_notifications.get("feishu"), dict) and "enabled" in common_notifications["feishu"]:
-                feishu_enabled = bool(common_notifications["feishu"].get("enabled"))
-            skip_feishu = os.environ.get("LUMEN_SKIP_FEISHU", "").strip().casefold() in {"1", "true", "yes"}
-            if skip_feishu:
-                feishu_result = {"status": "skipped", "detail": "LUMEN_SKIP_FEISHU enabled"}
-            elif not feishu_enabled:
-                feishu_result = {"status": "skipped", "detail": "Feishu notifications are disabled"}
-            elif not webhook:
-                feishu_result = {"status": "skipped", "detail": "FEISHU_WEBHOOK_URL not set"}
-            else:
-                try:
-                    send_feishu(build_patch_feishu_card(event, notification), webhook)
-                    feishu_result = {"status": "sent", "event": event}
-                except Exception as exc:
-                    feishu_result = {"status": "failed", "detail": redact(str(exc))}
+        notifications = delivery_config.get("notifications", {})
+        feishu_enabled = True
+        if isinstance(notifications, dict) and isinstance(notifications.get("feishu"), dict) and "enabled" in notifications["feishu"]:
+            feishu_enabled = bool(notifications["feishu"].get("enabled"))
+        common_notifications = common.get("notifications", {})
+        if isinstance(common_notifications, dict) and isinstance(common_notifications.get("feishu"), dict) and "enabled" in common_notifications["feishu"]:
+            feishu_enabled = bool(common_notifications["feishu"].get("enabled"))
+        skip_feishu = os.environ.get("LUMEN_SKIP_FEISHU", "").strip().casefold() in {"1", "true", "yes"}
+        notify_config = _merged_notify_config(delivery_config, common)
+        try:
+            feishu_result = _publish_workflow_feishu(
+                event_type=event,
+                workflow="auto_patch",
+                owner_agent="irving",
+                card=build_patch_feishu_card(event, notification) if webhook and feishu_enabled and not dry_run and not skip_feishu else None,
+                webhook=webhook,
+                config=notify_config,
+                dry_run=dry_run,
+                skip_feishu=skip_feishu,
+                feishu_enabled=feishu_enabled,
+            )
+        except Exception as exc:
+            feishu_result = {"status": "failed", "detail": redact(str(exc))}
         delivery["feishu"] = feishu_result
         progress["feishu"] = feishu_result
         write_json(progress_path, progress)
@@ -530,17 +623,23 @@ def main() -> int:
             feishu_enabled = bool(feishu_cfg.get("enabled"))
 
     skip_feishu = os.environ.get("LUMEN_SKIP_FEISHU", "").strip().casefold() in {"1", "true", "yes"}
-    if skip_feishu:
-        feishu_result = {"status": "skipped", "detail": "LUMEN_SKIP_FEISHU enabled"}
-    elif webhook and feishu_enabled and not dry_run:
-        try:
+    try:
+        card = None
+        if webhook and feishu_enabled and not dry_run and not skip_feishu:
             card = build_delivery_feishu_card(event, delivery, story_metadata, docs_dir)
-            send_feishu(card, webhook)
-            feishu_result = {"status": "sent", "event": event}
-        except Exception as exc:
-            feishu_result = {"status": "failed", "detail": redact(str(exc))}
-    elif dry_run:
-        feishu_result = {"status": "dry_run", "event": event}
+        feishu_result = _publish_workflow_feishu(
+            event_type=event,
+            workflow="auto_delivery",
+            owner_agent="mark",
+            card=card,
+            webhook=webhook,
+            config=delivery_config if isinstance(delivery_config, dict) else {},
+            dry_run=dry_run,
+            skip_feishu=skip_feishu,
+            feishu_enabled=feishu_enabled,
+        )
+    except Exception as exc:
+        feishu_result = {"status": "failed", "detail": redact(str(exc))}
 
     delivery["feishu"] = feishu_result
     try:
