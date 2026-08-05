@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 from agents.actions.scan import load_recent_run, save_recent_run, scan_lock_exists
@@ -28,11 +30,57 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
     known = known_project_slugs()
     action = parse_dylan_text(text, known)
 
+    if action.name.startswith("risk."):
+        project = resolve_project(
+            slug=str(action.params.get("project") or ""),
+            chat_id=chat_id,
+            mapping=load_chat_project_map(),
+        )
+        if project is None:
+            if message_id:
+                messenger.safe_reply_text(message_id, "无法解析项目。请写明 slug，例如：mbpass 最近最大的风险是什么？")
+            return {"status": "error", "detail": "project not resolved"}
+        workspace = str(project.get("workspace") or "")
+        common_path = Path(workspace) / "config" / "common.json"
+        common = {}
+        if Path(workspace).is_dir() and common_path.is_file():
+            try:
+                common = json.loads(common_path.read_text(encoding="utf-8"))
+            except Exception:
+                common = {}
+        if not isinstance(common, dict):
+            common = {}
+        # ensure risk queries can find slug
+        project_meta = common.setdefault("project", {})
+        if isinstance(project_meta, dict) and not project_meta.get("slug"):
+            project_meta["slug"] = str(project.get("slug") or "")
+        from agents.dylan.conversation import answer_risk_query
+
+        result = answer_risk_query(
+            workspace=Path(workspace),
+            common=common,
+            action=action.name,
+            params={**action.params, "project": str(project.get("slug") or "")},
+        )
+        if message_id:
+            messenger.safe_reply_text(message_id, str(result.get("text") or "暂无风险数据。"))
+        try:
+            from risk.store import GlobalAgentStore
+
+            gs = GlobalAgentStore()
+            gs.set_chat_project(chat_id, str(project.get("slug") or ""))
+            gs.close()
+        except Exception:
+            pass
+        return result
+
     if action.name == "scan.help":
         if message_id:
             messenger.safe_reply_text(
                 message_id,
-                "我可以帮你扫描代码。试试：扫描 mbpass 最近七天",
+                "我是 Dylan（Engineering Risk Analyst）。\n"
+                "可以：扫描 mbpass 最近七天\n"
+                "或问：最近最大的风险是什么？风险在上升还是下降？哪些问题反复出现？",
             )
         return {"status": "help", "action": action.name}
 

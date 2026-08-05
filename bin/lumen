@@ -358,6 +358,8 @@ Usage:
   lumen agents start|status|stop
                                  Feishu Agent Gateway (Dylan MVP). Requires agents.enabled and
                                  FEISHU_DYLAN_APP_ID / FEISHU_DYLAN_APP_SECRET.
+  lumen dylan brief [--project <slug>]
+                                 Generate Dylan Weekly Risk Brief from risk.sqlite3
   lumen watch --project <slug>  Watch the latest scan log in real time
   lumen issue list [--project <slug>] [--status open|ignored|resolved|all] [--json]
                                  List tracked findings from the issue registry
@@ -3554,6 +3556,40 @@ cmd_issue() {
   esac
 }
 
+cmd_dylan() {
+  local sub="${1:-}"
+  shift || true
+  require_python3
+  case "${sub}" in
+    brief)
+      resolve_command_workspace "$@"
+      local brief_py="${LUMEN_HOME}/lib/agents/dylan/brief.py"
+      [[ -f "${brief_py}" ]] || { err "Dylan brief helper not found: ${brief_py}"; exit 1; }
+      python3 - <<PY
+import json, sys
+from pathlib import Path
+sys.path.insert(0, "${LUMEN_HOME}/lib")
+from agents.dylan.brief import deliver_weekly_brief
+workspace = Path("${RESOLVED_WORKSPACE}")
+common = {}
+common_path = workspace / "config" / "common.json"
+if common_path.is_file():
+    common = json.loads(common_path.read_text(encoding="utf-8"))
+print(json.dumps(deliver_weekly_brief(workspace, common if isinstance(common, dict) else {}), indent=2, ensure_ascii=False))
+PY
+      ;;
+    ""|help|-h|--help)
+      printf 'Usage:\n'
+      printf '  lumen dylan brief [--project <slug>]\n'
+      ;;
+    *)
+      err "Unknown dylan command: ${sub}"
+      printf 'Run: lumen dylan help\n'
+      exit 1
+      ;;
+  esac
+}
+
 cmd_agents() {
   local sub="${1:-}"
   shift || true
@@ -3599,6 +3635,7 @@ main() {
     delivery) cmd_delivery "$@" ;;
     patch) cmd_patch "$@" ;;
     agents) cmd_agents "$@" ;;
+    dylan) cmd_dylan "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
     watch) cmd_watch "$@" ;;
     doctor) cmd_doctor "$@" ;;

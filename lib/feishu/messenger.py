@@ -97,6 +97,18 @@ class FeishuMessenger:
             },
         )
 
+    def send_card(self, chat_id: str, card: dict[str, Any]) -> dict[str, Any]:
+        token = self.tenant_token()
+        return self._post(
+            CREATE_URL,
+            token,
+            {
+                "receive_id": chat_id,
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+            },
+        )
+
     def safe_reply_text(self, message_id: str, text: str) -> Optional[dict[str, Any]]:
         try:
             return self.reply_text(message_id, text)

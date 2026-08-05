@@ -911,6 +911,19 @@ def main() -> int:
         persist=not dry_run,
         stale_after_days=stale_after_days,
     )
+    try:
+        from agents.dylan.analyst import process_scan_for_dylan
+
+        scan["risk_analysis"] = process_scan_for_dylan(
+            workspace=workspace_root,
+            scan=scan,
+            registry=registry,
+            common=common,
+            result_path=result_path,
+            dry_run=dry_run,
+        )
+    except Exception as exc:
+        scan["risk_analysis"] = {"status": "failed", "error": redact(str(exc))}
     scan["auto_fix_prs"] = sync_auto_fix_prs(
         scan,
         registry,

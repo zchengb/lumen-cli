@@ -29,7 +29,8 @@ rm -rf \
   "${LUMEN_HOME}/lib/agents" \
   "${LUMEN_HOME}/lib/feishu" \
   "${LUMEN_HOME}/lib/notifications" \
-  "${LUMEN_HOME}/lib/workflows"
+  "${LUMEN_HOME}/lib/workflows" \
+  "${LUMEN_HOME}/lib/risk"
 cp -R "${SCRIPT_DIR}/lib/scripts" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/templates" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/standards" "${LUMEN_HOME}/lib/"
@@ -37,6 +38,7 @@ cp -R "${SCRIPT_DIR}/lib/agents" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/feishu" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/notifications" "${LUMEN_HOME}/lib/"
 cp -R "${SCRIPT_DIR}/lib/workflows" "${LUMEN_HOME}/lib/"
+cp -R "${SCRIPT_DIR}/lib/risk" "${LUMEN_HOME}/lib/"
 cp "${SCRIPT_DIR}/VERSION" "${LUMEN_HOME}/VERSION"
 
 chmod +x "${LUMEN_HOME}/lib/scripts/"*.sh 2>/dev/null || true
