@@ -100,8 +100,9 @@ class RiskStore:
             """
             INSERT INTO finding_event(
                 finding_id, event_type, previous_status, new_status,
-                actor_type, actor_id, reason, occurred_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                actor_type, actor_id, reason, occurred_at,
+                source_message_id, trace_id, metadata_json, idempotency_key
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 finding_id,
@@ -112,6 +113,10 @@ class RiskStore:
                 kwargs.get("actor_id", "risk-engine"),
                 kwargs.get("reason"),
                 kwargs.get("occurred_at") or utc_now(),
+                kwargs.get("source_message_id"),
+                kwargs.get("trace_id"),
+                kwargs.get("metadata_json"),
+                kwargs.get("idempotency_key"),
             ),
         )
 

@@ -85,15 +85,45 @@ def main() -> int:
         if issue.get("status") in {"open", "in_progress", "pr_open"}
     )
 
+    verification = os.environ.get("LUMEN_VERIFICATION_SCAN", "").strip() in {"1", "true", "yes"}
+    verification_finding = os.environ.get("LUMEN_VERIFICATION_FINDING", "").strip()
+    if verification:
+        force_observed = os.environ.get("LUMEN_VERIFY_FORCE_OBSERVED", "").strip() in {"1", "true", "yes"}
+        if force_observed:
+            findings = findings[:1] if findings else [
+                {
+                    "title": "[Verification] Forced observed finding",
+                    "severity": "Medium",
+                    "repository": (repository_list[0].get("name") if repository_list else "unknown"),
+                    "file": "src/example/ForcedObserved.java",
+                    "line_range": "1-1",
+                    "issue_id": "ISSUE-verify-observed",
+                    "issue_status": "open",
+                    "id": verification_finding or "FIND-verify",
+                }
+            ]
+        else:
+            findings = []
+
     scan = {
-        "scan_status": "completed_with_findings",
+        "scan_status": "completed_with_findings" if findings else "completed_clean",
         "dry_run": True,
+        "verification_scan": verification,
+        "scan_mode": "verification" if verification else "incremental",
+        "verification_finding_id": verification_finding or None,
         "scan_window": f"Last {scan_window_days} Days (dry-run)",
         "project_name": project_name,
         "started_at": started_at,
         "finished_at": iso_now(),
+        "run_id": run_id,
         "repositories_scanned": len(repository_list),
         "repositories_failed": 0,
+        "repositories": [repo.get("name", "unknown") for repo in repository_list],
+        "coverage": {
+            "repositories": [repo.get("name", "unknown") for repo in repository_list],
+            "files": [],
+            "detectors": ["default"],
+        },
         "findings": findings,
         "issue_registry": {
             "path": str(registry_path),

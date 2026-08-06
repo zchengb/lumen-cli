@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agents.dylan.autonomous_runtime import AgentRunResult, CursorAgentRuntime
-from agents.dylan.feishu_format import sanitize_feishu_answer
+from agents.dylan.feishu_format import extract_final_response
 from agents.dylan.observability import Observability, TraceContext, new_trace_id
 from agents.dylan.schemas import ConversationFlags
 from agents.dylan.reply_anchor import format_anchored_user_message, resolve_reply_anchor
@@ -305,10 +305,13 @@ def handle_autonomous_conversation(
                 }
 
             obs.upsert_trace(trace, state="completed", latency_ms=result.duration_ms, project_slug=slug)
+            parsed = extract_final_response(result.text)
             return {
                 "status": "ok",
                 "action": "autonomous.reply",
-                "text": sanitize_feishu_answer(result.text),
+                "text": parsed.text,
+                "final_response_mode": parsed.mode,
+                "final_response_valid": parsed.valid,
                 "trace_id": trace.trace_id,
                 "session_id": session["session_id"],
                 "provider_session_id": result.provider_session_id,

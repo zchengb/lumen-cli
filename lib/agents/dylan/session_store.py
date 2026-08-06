@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 from risk.store import GlobalAgentStore, utc_now
 
-PROTOCOL_VERSION = "3"
+PROTOCOL_VERSION = "4"
 SOUL_VERSION = "4"
 
 

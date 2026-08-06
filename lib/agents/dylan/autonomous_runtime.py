@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -8,7 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from agents.dylan.cursor_stream import AgentToolEvent, StreamParseResult, parse_stream_json_text
+from agents.dylan.cursor_stream import AgentToolEvent, parse_stream_json_text
 from agents.dylan.model_client import _load_lumen_dotenv
 from agents.dylan.observability import Observability, TraceContext
 
@@ -96,81 +97,131 @@ class CursorAgentRuntime:
             obs.emit(trace, event, provider_session_id=provider_session_id or "")
 
         started = time.time()
+        soft_emitted = False
+        lines: list[str] = []
+        stderr_chunks: list[str] = []
+        process = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=self._env(),
+            cwd=str(workspace),
+            bufsize=1,
+        )
+        assert process.stdout is not None
+        timed_out = False
         try:
-            completed = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                env=self._env(),
-                timeout=self.hard_timeout_seconds,
-                check=False,
-                cwd=str(workspace),
+            import select
+
+            while True:
+                elapsed = time.time() - started
+                if not soft_emitted and elapsed >= self.soft_timeout_seconds:
+                    soft_emitted = True
+                    if obs and trace:
+                        obs.emit(
+                            trace,
+                            "agent.progress",
+                            duration_ms=int(elapsed * 1000),
+                            message="Still checking the original failure path and related evidence.",
+                        )
+                        obs.emit(trace, "agent.run.long_running", duration_ms=int(elapsed * 1000))
+                if elapsed >= self.hard_timeout_seconds:
+                    timed_out = True
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                    break
+                ready, _, _ = select.select([process.stdout], [], [], 1.0)
+                if ready:
+                    line = process.stdout.readline()
+                    if line:
+                        lines.append(line)
+                        if obs and trace:
+                            self._emit_line_events(line, obs=obs, trace=trace)
+                    elif process.poll() is not None:
+                        break
+                elif process.poll() is not None:
+                    for rest in process.stdout:
+                        lines.append(rest)
+                        if obs and trace:
+                            self._emit_line_events(rest, obs=obs, trace=trace)
+                    break
+            if process.stderr is not None:
+                stderr_chunks.append(process.stderr.read() or "")
+            if not timed_out and process.poll() is None:
+                process.wait(timeout=5)
+        except Exception as exc:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            return AgentRunResult(
+                text="",
+                provider_session_id=provider_session_id or "",
+                duration_ms=int((time.time() - started) * 1000),
+                status="failed",
+                error=str(exc)[:500],
             )
-        except subprocess.TimeoutExpired as exc:
-            partial = parse_stream_json_text(str(exc.stdout or ""))
-            duration_ms = int((time.time() - started) * 1000)
-            if partial.text:
+
+        stdout = "".join(lines)
+        stderr = "".join(stderr_chunks).strip()
+        parsed = parse_stream_json_text(stdout)
+        duration = parsed.duration_ms or int((time.time() - started) * 1000)
+
+        if timed_out:
+            if parsed.text:
                 if obs and trace:
                     obs.emit(
                         trace,
                         "agent.result.completed",
-                        duration_ms=duration_ms,
-                        tool_count=len(partial.tool_events),
-                        provider_session_id=partial.provider_session_id or provider_session_id,
+                        duration_ms=duration,
+                        tool_count=len(parsed.tool_events),
+                        provider_session_id=parsed.provider_session_id or provider_session_id,
                         partial_on_timeout=True,
                     )
                 return AgentRunResult(
-                    text=partial.text,
-                    provider_session_id=partial.provider_session_id or (provider_session_id or ""),
-                    request_id=partial.request_id,
-                    duration_ms=duration_ms,
-                    tool_events=partial.tool_events,
+                    text=parsed.text,
+                    provider_session_id=parsed.provider_session_id or (provider_session_id or ""),
+                    request_id=parsed.request_id,
+                    duration_ms=duration,
+                    tool_events=parsed.tool_events,
                     status="succeeded",
                     error="",
-                    raw_event_count=len(partial.events),
+                    raw_event_count=len(parsed.events),
                 )
             if obs and trace:
                 obs.emit(trace, "agent.result.failed", error=f"hard timeout after {self.hard_timeout_seconds}s", level="ERROR")
             return AgentRunResult(
                 text="",
                 provider_session_id=provider_session_id or "",
-                duration_ms=duration_ms,
+                duration_ms=duration,
                 status="timed_out",
                 error=f"agent hard timeout after {self.hard_timeout_seconds}s",
             )
 
-        parsed = parse_stream_json_text(completed.stdout or "")
-        stderr = (completed.stderr or "").strip()
-        if completed.returncode != 0 and parsed.status != "succeeded":
-            err = stderr or (completed.stdout or "agent failed")[:500]
+        code = process.returncode if process.returncode is not None else 1
+        if code != 0 and parsed.status != "succeeded":
+            err = stderr or (stdout or "agent failed")[:500]
             parsed.status = "failed"
             parsed.error = parsed.error or err
-            if not parsed.text:
-                parsed.text = ""
         elif parsed.status != "succeeded" and not parsed.text:
-            err = stderr or (completed.stdout or "").strip()
+            err = stderr or stdout.strip()
             if err:
                 parsed.error = (parsed.error or err)[:500]
-            elif completed.returncode != 0:
-                parsed.error = parsed.error or f"agent exited {completed.returncode} with empty stream-json"
+            elif code != 0:
+                parsed.error = parsed.error or f"agent exited {code} with empty stream-json"
             if "failed to reach the cursor api" in stderr.lower():
                 parsed.error = stderr[:500]
 
         if obs and trace:
-            for tool in parsed.tool_events:
-                obs.emit(
-                    trace,
-                    f"agent.tool.{tool.status or 'event'}",
-                    tool_type=tool.tool_type,
-                    call_id=tool.call_id,
-                    target_path=tool.target_path,
-                    command_base=tool.command_base,
-                )
             if parsed.status == "succeeded":
                 obs.emit(
                     trace,
                     "agent.result.completed",
-                    duration_ms=parsed.duration_ms or int((time.time() - started) * 1000),
+                    duration_ms=duration,
                     tool_count=len(parsed.tool_events),
                     provider_session_id=parsed.provider_session_id,
                     request_id=parsed.request_id,
@@ -184,11 +235,6 @@ class CursorAgentRuntime:
                     provider_session_id=parsed.provider_session_id,
                 )
 
-        duration = parsed.duration_ms or int((time.time() - started) * 1000)
-        soft = duration >= self.soft_timeout_seconds * 1000
-        if soft and obs and trace:
-            obs.emit(trace, "agent.run.long_running", duration_ms=duration)
-
         return AgentRunResult(
             text=parsed.text,
             provider_session_id=parsed.provider_session_id or (provider_session_id or ""),
@@ -199,3 +245,28 @@ class CursorAgentRuntime:
             error=parsed.error,
             raw_event_count=len(parsed.events),
         )
+
+    def _emit_line_events(self, line: str, *, obs: Observability, trace: TraceContext) -> None:
+        raw = line.strip()
+        if not raw.startswith("{"):
+            return
+        try:
+            event = json.loads(raw)
+        except Exception:
+            return
+        if not isinstance(event, dict):
+            return
+        etype = str(event.get("type") or "")
+        subtype = str(event.get("subtype") or "")
+        if etype == "tool_call":
+            status = "started" if subtype == "started" else "completed" if subtype == "completed" else subtype or "event"
+            tool = event.get("tool_call") if isinstance(event.get("tool_call"), dict) else {}
+            tool_type = next(iter(tool.keys()), "") if tool else ""
+            obs.emit(
+                trace,
+                f"agent.tool.{status}",
+                tool_type=tool_type,
+                call_id=str(event.get("call_id") or ""),
+            )
+        elif etype == "result":
+            obs.emit(trace, "agent.final_response", subtype=subtype)

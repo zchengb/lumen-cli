@@ -91,8 +91,8 @@ class SoulV3Tests(unittest.TestCase):
 
     def test_resume_mentions_proactive_closure(self) -> None:
         prompt = build_resume_prompt(user_message="修好了", project_slug="demo")
-        self.assertIn("Remediated · Pending verification", prompt)
-        self.assertIn("Verification Scan", prompt)
+        self.assertIn("progress / explicit resolve", prompt)
+        self.assertIn("scan verify", prompt)
 
 
 class StatusDisplayTests(unittest.TestCase):
@@ -203,7 +203,7 @@ class WorkspaceContractTests(unittest.TestCase):
             ensure_workspace_contract(workspace=root, project_slug="demo")
             text = (root / "AGENTS.md").read_text(encoding="utf-8")
             self.assertIn("Keep me", text)
-            self.assertIn("LUMEN MANAGED START version=3", text)
+            self.assertIn("LUMEN MANAGED START version=4", text)
             self.assertIn("mark-remediated", text)
             ensure_workspace_contract(workspace=root, project_slug="demo")
             text2 = (root / "AGENTS.md").read_text(encoding="utf-8")
@@ -306,6 +306,10 @@ class CliWriteTests(unittest.TestCase):
                 json.dumps({"project": {"slug": "demo"}}),
                 encoding="utf-8",
             )
+            (workspace / "config" / "repos.json").write_text(
+                json.dumps({"repositories": [{"name": "repo"}]}),
+                encoding="utf-8",
+            )
             store = RiskStore(workspace)
             finding_id = _seed_finding(store)
             store.close()
@@ -339,8 +343,6 @@ class CliWriteTests(unittest.TestCase):
                     str(workspace),
                     "--finding",
                     finding_id,
-                    "--observed",
-                    "false",
                     "--json",
                 ]
             )
@@ -348,6 +350,7 @@ class CliWriteTests(unittest.TestCase):
             store = RiskStore(workspace)
             row = dict(store.get_finding(finding_id))
             self.assertEqual(row["status"], STATUS_RESOLVED)
+            self.assertEqual(row["verification_status"], "verified_clean")
             store.close()
 
 

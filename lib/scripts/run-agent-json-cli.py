@@ -144,6 +144,29 @@ def cmd_risk(args: argparse.Namespace) -> int:
                 if out.get("status") == "error":
                     return _emit(out, code=1)
                 out["freshness"] = {"source": "risk_store", "updated_at": utc_now()}
+            elif args.finding_action == "resolve":
+                from risk.resolution import resolve_finding
+
+                actor = str(getattr(args, "actor", "") or "").strip()
+                reason = str(getattr(args, "reason", "") or "").strip()
+                source_message_id = str(getattr(args, "source_message_id", "") or "").strip()
+                trace_id = str(getattr(args, "trace_id", "") or "").strip()
+                basis = str(getattr(args, "basis", "") or "user_confirmed").strip() or "user_confirmed"
+                override = bool(getattr(args, "override", False))
+                out = resolve_finding(
+                    store,
+                    finding_id,
+                    basis=basis,
+                    actor=actor,
+                    reason=reason,
+                    source_message_id=source_message_id,
+                    trace_id=trace_id,
+                    override=override,
+                    common=common,
+                )
+                if out.get("status") != "ok":
+                    return _emit(out, code=1)
+                out["freshness"] = {"source": "risk_store", "updated_at": utc_now()}
             else:
                 return _error("UNKNOWN_ACTION", f"unknown finding action: {args.finding_action}")
         else:
@@ -195,7 +218,11 @@ def cmd_scan_verify(args: argparse.Namespace) -> int:
     finding_id = str(getattr(args, "finding", "") or "").strip()
     if not finding_id:
         return _error("FINDING_REQUIRED", "scan verify requires --finding")
-    observed_raw = str(getattr(args, "observed", "") or "").strip().lower()
+    if str(getattr(args, "observed", "") or "").strip():
+        return _error(
+            "OBSERVED_FORBIDDEN",
+            "public scan verify no longer accepts --observed; verification results come from the runner",
+        )
     actor = str(getattr(args, "actor", "") or "").strip()
     source_message_id = str(getattr(args, "source_message_id", "") or "").strip()
     trace_id = str(getattr(args, "trace_id", "") or "").strip()
@@ -204,47 +231,18 @@ def cmd_scan_verify(args: argparse.Namespace) -> int:
     runtime = _runtime(workspace, slug)
     store = runtime["risk_store"]
     try:
-        from risk.store import utc_now
-        from risk.verification import apply_finding_verification, finding_observed_in_scan_result
+        from risk.verification_runner import run_verification
 
-        row = store.get_finding(finding_id)
-        if row is None:
-            return _error("FINDING_NOT_FOUND", f"finding not found: {finding_id}")
-        finding = dict(row)
-
-        if observed_raw in {"true", "1", "yes", "observed"}:
-            observed = True
-            source = "explicit"
-            scan_path = None
-        elif observed_raw in {"false", "0", "no", "absent", "clean"}:
-            observed = False
-            source = "explicit"
-            scan_path = None
-        else:
-            scan_path, scan_data = _latest_scan_payload(workspace)
-            if scan_data is None:
-                return _error(
-                    "SCAN_RESULT_REQUIRED",
-                    "no --observed flag and no latest scan result; pass --observed true|false",
-                )
-            observed = finding_observed_in_scan_result(scan_data, finding)
-            source = "latest_scan"
-
-        out = apply_finding_verification(
+        out = run_verification(
             store,
+            workspace,
             finding_id,
-            observed=observed,
-            actor=actor or "verification-scan",
+            actor=actor,
             source_message_id=source_message_id,
             trace_id=trace_id,
-            scan_run_id=str(getattr(args, "scan_run_id", "") or "").strip(),
         )
-        if out.get("status") in {"not_found", "error"}:
+        if out.get("status") in {"not_found", "error", "runner_failed"}:
             return _emit(out, code=1)
-        out["evidence_source"] = source
-        if scan_path is not None:
-            out["scan_result_path"] = str(scan_path)
-        out["freshness"] = {"source": "risk_store", "updated_at": utc_now()}
         return _emit(out)
     finally:
         store.close()
@@ -297,6 +295,8 @@ def build_parser() -> argparse.ArgumentParser:
     risk.add_argument("--reason", default="")
     risk.add_argument("--source-message-id", default="")
     risk.add_argument("--trace-id", default="")
+    risk.add_argument("--basis", default="user_confirmed")
+    risk.add_argument("--override", action="store_true")
     risk.add_argument("--json", action="store_true")
 
     scan = sub.add_parser("scan")

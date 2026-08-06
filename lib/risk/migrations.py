@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -143,6 +143,39 @@ CREATE TABLE IF NOT EXISTS alert_delivery (
     next_retry_at TEXT,
     last_error TEXT,
     UNIQUE(project_slug, event_key)
+);
+
+CREATE TABLE IF NOT EXISTS verification_request (
+    id TEXT PRIMARY KEY,
+    finding_id TEXT NOT NULL,
+    project_slug TEXT NOT NULL,
+    requested_by TEXT,
+    source_message_id TEXT,
+    trace_id TEXT,
+    requested_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    policy_json TEXT,
+    scope_json TEXT,
+    remediation_snapshot_json TEXT,
+    FOREIGN KEY(finding_id) REFERENCES finding(id)
+);
+
+CREATE TABLE IF NOT EXISTS verification_run (
+    id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    finding_id TEXT NOT NULL,
+    scan_run_id TEXT,
+    detector TEXT,
+    started_at TEXT,
+    completed_at TEXT,
+    result TEXT NOT NULL,
+    observed INTEGER,
+    coverage_json TEXT,
+    evidence_json TEXT,
+    result_path TEXT,
+    error_code TEXT,
+    FOREIGN KEY(request_id) REFERENCES verification_request(id),
+    FOREIGN KEY(finding_id) REFERENCES finding(id)
 );
 """
 
@@ -359,6 +392,20 @@ _FINDING_V2_COLUMNS = {
     "last_verified_at": "TEXT",
     "last_verification_run_id": "TEXT",
     "last_seen_scan_run_id": "TEXT",
+    "resolution_basis": "TEXT",
+    "resolved_by": "TEXT",
+    "resolved_source_message_id": "TEXT",
+    "resolved_trace_id": "TEXT",
+    "owner_resolved_at": "TEXT",
+    "remediation_reported_at": "TEXT",
+    "remediation_commit_sha": "TEXT",
+}
+
+_FINDING_EVENT_V2_COLUMNS = {
+    "source_message_id": "TEXT",
+    "trace_id": "TEXT",
+    "metadata_json": "TEXT",
+    "idempotency_key": "TEXT",
 }
 
 _ALERT_V2_COLUMNS = {
@@ -417,6 +464,7 @@ def _set_schema_version(conn: sqlite3.Connection, version: int) -> None:
 def migrate(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     _add_missing_columns(conn, "finding", _FINDING_V2_COLUMNS)
+    _add_missing_columns(conn, "finding_event", _FINDING_EVENT_V2_COLUMNS)
     _add_missing_columns(conn, "alert_delivery", _ALERT_V2_COLUMNS)
     if "delivered_at" in _table_columns(conn, "alert_delivery"):
         conn.execute(
@@ -428,6 +476,13 @@ def migrate(conn: sqlite3.Connection) -> None:
               AND COALESCE(status, 'pending') IN ('', 'pending', 'sent')
             """
         )
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_finding_event_idempotency
+        ON finding_event(finding_id, event_type, idempotency_key)
+        WHERE idempotency_key IS NOT NULL
+        """
+    )
     _set_schema_version(conn, SCHEMA_VERSION)
     conn.commit()
 
