@@ -8,8 +8,17 @@ from typing import Any, Optional
 
 from risk.store import GlobalAgentStore, utc_now
 
-PROTOCOL_VERSION = "1"
-SOUL_VERSION = "2"
+PROTOCOL_VERSION = "2"
+SOUL_VERSION = "3"
+
+
+def session_contract_current(session: dict[str, Any] | None) -> bool:
+    if not session:
+        return False
+    return (
+        str(session.get("soul_version") or "") == SOUL_VERSION
+        and str(session.get("protocol_version") or "") == PROTOCOL_VERSION
+    )
 
 
 def conversation_scope_id(

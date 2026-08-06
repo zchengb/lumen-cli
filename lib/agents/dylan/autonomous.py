@@ -16,6 +16,7 @@ from agents.dylan.session_store import (
     SOUL_VERSION,
     SessionStore,
     conversation_scope_id,
+    session_contract_current,
 )
 from agents.dylan.workspace_contract import ensure_workspace_contract
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
@@ -155,6 +156,17 @@ def handle_autonomous_conversation(
             if reset and session:
                 store.close_session(session["session_id"])
                 session = None
+            if session and not session_contract_current(session):
+                obs.emit(
+                    trace,
+                    "agent.session.contract_mismatch",
+                    soul_version=session.get("soul_version"),
+                    protocol_version=session.get("protocol_version"),
+                    expected_soul=SOUL_VERSION,
+                    expected_protocol=PROTOCOL_VERSION,
+                )
+                store.close_session(session["session_id"])
+                session = None
 
             is_new = session is None
             if is_new:
@@ -182,6 +194,8 @@ def handle_autonomous_conversation(
                         workspace_path=str(workspace),
                         project_slug=slug,
                         user_id=user_id,
+                        soul_version=SOUL_VERSION,
+                        protocol_version=PROTOCOL_VERSION,
                     )
                     prompt = build_bootstrap_prompt(
                         project_slug=slug,
@@ -231,6 +245,8 @@ def handle_autonomous_conversation(
                     workspace_path=str(workspace),
                     project_slug=slug,
                     user_id=user_id,
+                    soul_version=SOUL_VERSION,
+                    protocol_version=PROTOCOL_VERSION,
                 )
                 prompt = build_bootstrap_prompt(
                     project_slug=slug,

@@ -346,6 +346,7 @@ Usage:
                                  Run a scan for a specific project
                                  Add --dry-run to mock the pipeline without the Cursor agent
   lumen scan latest --project <slug> --json
+  lumen scan verify --finding <id> [--observed true|false] --json
                                  Print the latest scan result as machine JSON
   lumen risk recent|unresolved|top|trend|finding --json
                                  Agent-native risk JSON queries
@@ -2226,6 +2227,40 @@ cmd_scan() {
     python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" scan latest --workspace "${RESOLVED_WORKSPACE}" ${project:+--project "${project}"} --json
     return $?
   fi
+  if [[ "${1:-}" == "verify" ]]; then
+    shift
+    local project="" finding="" observed="" actor="" source_message_id="" trace_id="" scan_run_id="" workspace_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --project) project="${2:-}"; workspace_args+=("$1" "$2"); shift 2 ;;
+        --finding) finding="${2:-}"; shift 2 ;;
+        --observed) observed="${2:-}"; shift 2 ;;
+        --actor) actor="${2:-}"; shift 2 ;;
+        --source-message-id) source_message_id="${2:-}"; shift 2 ;;
+        --trace-id) trace_id="${2:-}"; shift 2 ;;
+        --scan-run-id) scan_run_id="${2:-}"; shift 2 ;;
+        --json) shift ;;
+        *) workspace_args+=("$1"); shift ;;
+      esac
+    done
+    [[ -n "${finding}" ]] || {
+      err "Usage: lumen scan verify --finding <FIND-id> [--observed true|false] [--actor ...] [--source-message-id ...] [--trace-id ...] --json"
+      exit 1
+    }
+    resolve_command_workspace "${workspace_args[@]+"${workspace_args[@]}"}"
+    require_python3
+    python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" scan verify \
+      --workspace "${RESOLVED_WORKSPACE}" \
+      ${project:+--project "${project}"} \
+      --finding "${finding}" \
+      ${observed:+--observed "${observed}"} \
+      ${actor:+--actor "${actor}"} \
+      ${source_message_id:+--source-message-id "${source_message_id}"} \
+      ${trace_id:+--trace-id "${trace_id}"} \
+      ${scan_run_id:+--scan-run-id "${scan_run_id}"} \
+      --json
+    return $?
+  fi
   local dry_run=0
   local filtered_args=()
   local arg
@@ -3861,22 +3896,30 @@ cmd_risk() {
       local action="${1:-}"
       local finding_id="${2:-}"
       shift 2 || true
-      local project="" workspace_args=()
+      local project="" actor="" reason="" source_message_id="" trace_id="" workspace_args=()
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --project) project="${2:-}"; workspace_args+=("$1" "$2"); shift 2 ;;
+          --actor) actor="${2:-}"; shift 2 ;;
+          --reason) reason="${2:-}"; shift 2 ;;
+          --source-message-id) source_message_id="${2:-}"; shift 2 ;;
+          --trace-id) trace_id="${2:-}"; shift 2 ;;
           --json) shift ;;
           *) workspace_args+=("$1"); shift ;;
         esac
       done
       [[ -n "${action}" && -n "${finding_id}" ]] || {
-        err "Usage: lumen risk finding show|links <FIND-id> [--project <slug>] --json"
+        err "Usage: lumen risk finding show|links|verification-status|mark-remediated <FIND-id> [--project <slug>] --json"
         exit 1
       }
       resolve_command_workspace "${workspace_args[@]+"${workspace_args[@]}"}"
       python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" risk finding "${action}" "${finding_id}" \
         --workspace "${RESOLVED_WORKSPACE}" \
         ${project:+--project "${project}"} \
+        ${actor:+--actor "${actor}"} \
+        ${reason:+--reason "${reason}"} \
+        ${source_message_id:+--source-message-id "${source_message_id}"} \
+        ${trace_id:+--trace-id "${trace_id}"} \
         --json
       ;;
     ""|help|-h|--help)
@@ -3887,6 +3930,8 @@ cmd_risk() {
       printf '  lumen risk trend --project <slug> --json\n'
       printf '  lumen risk finding show <id> --json\n'
       printf '  lumen risk finding links <id> --json\n'
+      printf '  lumen risk finding verification-status <id> --json\n'
+      printf '  lumen risk finding mark-remediated <id> --actor <user> --reason <text> --source-message-id <mid> --trace-id <tid> --json\n'
       ;;
     *)
       err "Unknown risk command: ${sub}"
