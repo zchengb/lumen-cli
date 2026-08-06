@@ -32,6 +32,16 @@ def planner_prompt(request: dict[str, Any]) -> str:
         "known_projects": request.get("known_projects") or [],
         "context": request.get("context") or {},
         "soul": request.get("soul") or "",
+        "intent_tools": {
+            "risk.recent": ["query_recent_findings", "query_unresolved_findings", "get_recent_scan_status"],
+            "risk.unresolved": ["query_unresolved_findings"],
+            "risk.top": ["query_top_risks"],
+            "risk.trend": ["query_project_trend"],
+            "risk.compare_period": ["compare_project_risk", "query_recent_findings"],
+            "scan.summary": ["get_scan_summary", "get_scan_result", "query_recent_findings"],
+            "conversation.agent_identity": ["get_agent_profile", "list_agent_capabilities"],
+            "conversation.agent_relationship": ["get_agent_relationship"],
+        },
     }
     return (
         "You are Dylan's planner for an Engineering Risk Analyst.\n"
@@ -39,7 +49,10 @@ def planner_prompt(request: dict[str, Any]) -> str:
         "Return ONLY compact JSON with keys: language, confidence, needs_clarification, "
         "clarification_question, tasks.\n"
         "Each task: {task_id, intent, project_slug?, finding_id?, params?, tool_calls}.\n"
-        "tool_calls is an array of {name, arguments}. Use only read-only tools.\n"
+        "tool_calls is an array of {name, arguments}. Use only read-only tools from intent_tools.\n"
+        "For any risk.* or scan.* factual question, tool_calls MUST be non-empty.\n"
+        "For 'past N days / summarize findings / what happened recently', use intent risk.recent "
+        "with query_recent_findings(window_days=N) plus query_unresolved_findings.\n"
         "Use allowlisted intents only. Do not invent Finding IDs, Jira keys, or PRs.\n"
         "If a scan should start, use intent scan.run with params.window_days.\n"
         "If unsure, set needs_clarification=true and leave tasks empty or minimal.\n\n"

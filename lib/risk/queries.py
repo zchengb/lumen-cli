@@ -42,6 +42,38 @@ def unresolved(store: RiskStore, project_slug: str, limit: int = 10) -> dict[str
     }
 
 
+def recent_findings(store: RiskStore, project_slug: str, window_days: int = 7, limit: int = 20) -> dict[str, Any]:
+    from datetime import datetime, timedelta, timezone
+
+    days = max(int(window_days or 7), 1)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    rows = store.fetchall(
+        """
+        SELECT * FROM finding
+        WHERE project_slug = ?
+          AND COALESCE(last_seen_at, first_seen_at, '') >= ?
+        ORDER BY
+          CASE status WHEN 'Open' THEN 0 WHEN 'Reopened' THEN 1 WHEN 'Resolved' THEN 2 ELSE 3 END,
+          current_risk_score DESC,
+          last_seen_at DESC
+        LIMIT ?
+        """,
+        (project_slug, cutoff, limit),
+    )
+    items = [dict(row) for row in rows]
+    by_status: dict[str, int] = {}
+    for item in items:
+        status = str(item.get("status") or "Unknown")
+        by_status[status] = by_status.get(status, 0) + 1
+    return {
+        "window_days": days,
+        "cutoff": cutoff,
+        "total": len(items),
+        "by_status": by_status,
+        "items": items,
+    }
+
+
 def finding_summary(store: RiskStore, finding_id: str) -> dict[str, Any]:
     explained = explain_finding(store, finding_id)
     if explained.get("status") != "ok":

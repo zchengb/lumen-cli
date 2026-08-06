@@ -81,6 +81,26 @@ def format_safe(
         for item in items[:8]:
             lines.append(f"- [{item.get('effective_severity')}] {item.get('title')} ({item.get('id')})")
         return "\n".join(lines)
+    if intent in {"risk.recent", "risk.compare_period", "scan.summary"}:
+        data = _data(tool_results, "query_recent_findings")
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        if not items:
+            unresolved = _data(tool_results, "query_unresolved_findings")
+            items = unresolved.get("items") if isinstance(unresolved.get("items"), list) else []
+            if not items:
+                return t(language, "no_risk_data")
+        by_status = data.get("by_status") if isinstance(data.get("by_status"), dict) else {}
+        window = data.get("window_days") or 7
+        lines = [
+            f"Findings in the past {window} days: {data.get('total', len(items))}"
+            + (f" ({', '.join(f'{k}={v}' for k, v in by_status.items())})" if by_status else "")
+        ]
+        for item in items[:10]:
+            lines.append(
+                f"- [{item.get('status')}/{item.get('effective_severity')}] "
+                f"{item.get('title')} (id={item.get('id')}, last_seen={item.get('last_seen_at')})"
+            )
+        return "\n".join(lines)
     if intent == "risk.trend":
         payload = _data(tool_results, "query_project_trend")
         if payload.get("status") != "ok":

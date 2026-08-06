@@ -123,7 +123,13 @@ class DylanAgentController:
                 raise AgentUnavailableError(str(exc)) from exc
 
             plan = self._validate_plan(plan)
-            self.obs.emit(self.trace, "agent.plan.validated", task_count=len(plan.tasks))
+            self.obs.emit(
+                self.trace,
+                "agent.plan.validated",
+                task_count=len(plan.tasks),
+                intents=[t.intent for t in plan.tasks],
+                tool_names=[c.name for task in plan.tasks for c in task.tool_calls],
+            )
 
             if plan.needs_clarification and not plan.tasks:
                 text_out = plan.clarification_question or t(plan.language or "en", "no_finding")
@@ -257,6 +263,18 @@ class DylanAgentController:
                 if allowed is not None and call.name not in allowed:
                     continue
                 calls.append(call)
+            # Deterministic policy: risk/scan intents always get default read tools.
+            if not calls and allowed:
+                window_days = int((task.params or {}).get("window_days") or 7)
+                for name in sorted(allowed):
+                    args: dict[str, Any] = {}
+                    if task.project_slug:
+                        args["project_slug"] = task.project_slug
+                    if task.finding_id:
+                        args["finding_id"] = task.finding_id
+                    if name == "query_recent_findings":
+                        args["window_days"] = window_days
+                    calls.append(ToolCall(name=name, arguments=args))
             cleaned.append(
                 AgentTask(
                     task_id=task.task_id,

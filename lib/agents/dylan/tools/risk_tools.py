@@ -10,6 +10,7 @@ from risk.queries import (
     finding_links_summary,
     finding_summary as q_summary,
     overdue_high,
+    recent_findings as q_recent,
     recurring,
     top_risks,
     trend,
@@ -116,6 +117,20 @@ def query_unresolved_findings(arguments: dict[str, Any], *, runtime: dict[str, A
     return envelope(
         "query_unresolved_findings",
         q_unresolved(store, slug, limit=limit),
+        freshness={"source": "risk_store", "updated_at": utc_now()},
+    )
+
+
+def query_recent_findings(arguments: dict[str, Any], *, runtime: dict[str, Any]) -> dict[str, Any]:
+    store = _store(runtime)
+    slug = _slug(arguments, runtime)
+    if store is None or not slug:
+        return envelope("query_recent_findings", {}, status="error", errors=["missing store/project"])
+    window_days = int(arguments.get("window_days") or arguments.get("days") or 7)
+    limit = int(arguments.get("limit") or 20)
+    return envelope(
+        "query_recent_findings",
+        q_recent(store, slug, window_days=window_days, limit=limit),
         freshness={"source": "risk_store", "updated_at": utc_now()},
     )
 

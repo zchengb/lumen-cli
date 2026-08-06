@@ -18,7 +18,7 @@ from agents.dylan.model_client import FakeDylanModelClient
 from agents.dylan.observability import Observability, TraceContext, new_trace_id
 from agents.dylan.reaction import ReactionThinkingSession
 from agents.dylan.schemas import AgentPlan, AgentTask, ConversationFlags, ToolCall
-from risk.store import GlobalAgentStore
+from risk.store import GlobalAgentStore, RiskStore
 
 
 def _v3_common(provider: str = "fake") -> dict:
@@ -158,7 +158,62 @@ class ObservabilityTests(unittest.TestCase):
                 os.environ.pop("LUMEN_AGENTS_HOME", None)
 
 
-class RuntimeInlineJobTests(unittest.TestCase):
+class RecentFindingsTests(unittest.TestCase):
+    def test_recent_window_includes_open(self) -> None:
+        from risk.queries import recent_findings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp)
+            (workspace / "config").mkdir()
+            (workspace / "state").mkdir()
+            common = {"project": {"slug": "demo"}, "agents": {"dylan": {"risk_analyst": {"enabled": True}}}}
+            finding = {
+                "title": "Windowed bug",
+                "severity": "High",
+                "repository": "app",
+                "file": "a.py",
+                "trigger": "x",
+                "root_cause": "y",
+            }
+            from risk.ingestion import ingest_scan_risk
+
+            ingest_scan_risk(
+                workspace=workspace,
+                scan={"scan_status": "completed", "finished_at": "2026-08-05T00:00:00Z", "findings": [finding]},
+                registry={"issues": []},
+                common=common,
+                result_path=workspace / "results" / "a.json",
+            )
+            store = RiskStore(workspace)
+            data = recent_findings(store, "demo", window_days=30)
+            self.assertGreaterEqual(data["total"], 1)
+            store.close()
+
+    def test_validate_plan_autofills_tools(self) -> None:
+        from agents.dylan.agent_controller import DylanAgentController
+        from agents.dylan.observability import Observability, TraceContext, new_trace_id
+        from agents.dylan.schemas import AgentPlan, AgentTask, ConversationFlags
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["LUMEN_AGENTS_HOME"] = tmp
+            try:
+                obs = Observability()
+                ctrl = DylanAgentController(
+                    flags=ConversationFlags(v3_enabled=True, routing_mode="agent_only"),
+                    obs=obs,
+                    trace=TraceContext(trace_id=new_trace_id()),
+                )
+                plan = AgentPlan(
+                    language="en",
+                    confidence=0.9,
+                    tasks=[AgentTask(task_id="task_1", intent="risk.recent", tool_calls=[], params={"window_days": 7})],
+                )
+                validated = ctrl._validate_plan(plan)
+                names = [c.name for c in validated.tasks[0].tool_calls]
+                self.assertIn("query_recent_findings", names)
+                obs.close()
+            finally:
+                os.environ.pop("LUMEN_AGENTS_HOME", None)
     def test_run_conversation_job_observability_same_thread(self) -> None:
         from concurrent.futures import ThreadPoolExecutor
 
