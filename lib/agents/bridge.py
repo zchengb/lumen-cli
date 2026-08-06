@@ -164,10 +164,15 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                         return result
                     reply_text = str(result.get("text") or "暂无数据。")
                     obs.emit(trace, "reply.started")
+                    reply_in_thread = bool(str(meta.get("thread_id") or "").strip())
                     if message_id:
                         sent = None
                         for attempt in range(4):
-                            sent = messenger.safe_reply_text(message_id, reply_text)
+                            sent = messenger.safe_reply_text(
+                                message_id,
+                                reply_text,
+                                reply_in_thread=reply_in_thread,
+                            )
                             if sent is not None:
                                 break
                             time.sleep(min(2 ** attempt, 8))
@@ -181,6 +186,8 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                                 text=reply_text,
                                 chat_id=chat_id,
                                 agent_id="dylan",
+                                reply_to=message_id,
+                                thread_id=str(meta.get("thread_id") or ""),
                             )
                         except Exception:
                             pass
@@ -199,6 +206,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                         messenger.safe_reply_text(
                             message_id,
                             f"I couldn't finish this turn.\nTrace ID: {trace.trace_id}",
+                            reply_in_thread=bool(str(meta.get("thread_id") or "").strip()),
                         )
                     raise
                 finally:

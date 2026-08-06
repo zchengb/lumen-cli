@@ -64,6 +64,83 @@ class AgentBridgeScanTests(unittest.TestCase):
         mentioned = {"event": {"message": {"chat_type": "group", "mentions": [{"name": "Dylan"}]}}}
         self.assertTrue(should_handle(mentioned, client))
 
+    def test_should_handle_only_mentioned_agent(self) -> None:
+        dylan = FeishuClientConfig(
+            agent_id="dylan",
+            app_id="cli_d",
+            app_secret="secret",
+            profile=PROFILES["dylan"],
+        )
+        mark = FeishuClientConfig(
+            agent_id="mark",
+            app_id="cli_m",
+            app_secret="secret",
+            profile=PROFILES["mark"],
+        )
+        only_mark = {"event": {"message": {"chat_type": "group", "mentions": [{"name": "Mark"}]}}}
+        self.assertFalse(should_handle(only_mark, dylan))
+        self.assertTrue(should_handle(only_mark, mark))
+
+    def test_should_handle_dylan_thread_reply_without_mention(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from agents.dylan.reply_anchor import remember_outbound
+        from feishu.handlers import extract_message_meta
+
+        dylan = FeishuClientConfig(
+            agent_id="dylan",
+            app_id="cli_x",
+            app_secret="secret",
+            profile=PROFILES["dylan"],
+        )
+        mark = FeishuClientConfig(
+            agent_id="mark",
+            app_id="cli_m",
+            app_secret="secret",
+            profile=PROFILES["mark"],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("agents.dylan.reply_anchor.agents_home", return_value=Path(tmp)):
+                remember_outbound(
+                    message_id="om_dylan_1",
+                    text="Want me to verify?",
+                    reply_to="om_user_1",
+                    agent_id="dylan",
+                )
+                reply = {
+                    "event": {
+                        "message": {
+                            "chat_type": "group",
+                            "mentions": [],
+                            "parent_id": "om_dylan_1",
+                            "root_id": "om_user_1",
+                            "content": '{"text":"可以，跑一下"}',
+                        }
+                    }
+                }
+                self.assertTrue(should_handle(reply, dylan))
+                self.assertFalse(should_handle(reply, mark))
+                meta = extract_message_meta(
+                    {
+                        "event": {
+                            "message": {
+                                "thread_id": "omt_topic_1",
+                                "root_id": "om_root",
+                                "parent_id": "om_parent",
+                            }
+                        }
+                    }
+                )
+                self.assertEqual(meta["thread_id"], "omt_topic_1")
+                self.assertEqual(meta["root_id"], "om_root")
+                meta_no_thread = extract_message_meta(
+                    {"event": {"message": {"root_id": "om_root", "parent_id": "om_parent"}}}
+                )
+                self.assertEqual(meta_no_thread["thread_id"], "")
+                self.assertEqual(meta_no_thread["root_id"], "om_root")
+
 
 if __name__ == "__main__":
     unittest.main()

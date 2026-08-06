@@ -17,22 +17,11 @@ def outbound_path() -> Path:
     return agents_home() / "dylan_outbound.jsonl"
 
 
-def remember_outbound(*, message_id: str, text: str, chat_id: str = "", agent_id: str = "dylan") -> None:
-    mid = str(message_id or "").strip()
-    body = str(text or "").strip()
-    if not mid or not body:
-        return
+def _append_row(row: dict[str, Any]) -> None:
     path = outbound_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    row = {
-        "message_id": mid,
-        "chat_id": str(chat_id or ""),
-        "agent_id": str(agent_id or "dylan"),
-        "text": body[:8000],
-    }
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, ensure_ascii=False) + "\n")
-    # ponytail: truncate file when huge; ceiling ~500 rows, rewrite if larger
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
         if len(lines) > 600:
@@ -41,13 +30,62 @@ def remember_outbound(*, message_id: str, text: str, chat_id: str = "", agent_id
         pass
 
 
-def lookup_outbound(message_id: str) -> str:
+def remember_outbound(
+    *,
+    message_id: str,
+    text: str,
+    chat_id: str = "",
+    agent_id: str = "dylan",
+    reply_to: str = "",
+    thread_id: str = "",
+) -> None:
+    mid = str(message_id or "").strip()
+    body = str(text or "").strip()
+    reply_to_id = str(reply_to or "").strip()
+    tid = str(thread_id or "").strip()
+    if mid and body:
+        _append_row(
+            {
+                "message_id": mid,
+                "chat_id": str(chat_id or ""),
+                "agent_id": str(agent_id or "dylan"),
+                "kind": "outbound",
+                "text": body[:8000],
+                "reply_to": reply_to_id,
+                "thread_id": tid,
+            }
+        )
+    if reply_to_id:
+        _append_row(
+            {
+                "message_id": reply_to_id,
+                "chat_id": str(chat_id or ""),
+                "agent_id": str(agent_id or "dylan"),
+                "kind": "thread_root",
+                "text": body[:8000] if body else "(dylan thread)",
+                "thread_id": tid,
+            }
+        )
+    if tid:
+        _append_row(
+            {
+                "message_id": tid,
+                "chat_id": str(chat_id or ""),
+                "agent_id": str(agent_id or "dylan"),
+                "kind": "thread",
+                "text": body[:8000] if body else "(dylan topic)",
+            }
+        )
+
+
+def lookup_outbound(message_id: str, *, agent_id: str = "") -> str:
     mid = str(message_id or "").strip()
     if not mid:
         return ""
     path = outbound_path()
     if not path.is_file():
         return ""
+    wanted = str(agent_id or "").strip().lower()
     found = ""
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -57,12 +95,44 @@ def lookup_outbound(message_id: str) -> str:
                 row = json.loads(line)
             except Exception:
                 continue
-            if str(row.get("message_id") or "") == mid and row.get("text"):
-                found = str(row["text"])
+            if str(row.get("message_id") or "") != mid:
+                continue
+            if wanted and str(row.get("agent_id") or "").strip().lower() not in {"", wanted}:
+                continue
+            kind = str(row.get("kind") or "outbound")
+            text = str(row.get("text") or "").strip()
+            if kind == "outbound" and text:
+                found = text
+            elif kind in {"thread_root", "thread"} and not found and text:
+                found = text
     except Exception:
         return found
     return found
 
+
+def is_agent_thread_context(
+    *,
+    agent_id: str,
+    parent_id: str = "",
+    root_id: str = "",
+    thread_id: str = "",
+) -> bool:
+    agent = str(agent_id or "").strip().lower()
+    if not agent:
+        return False
+    for mid in (parent_id, root_id, thread_id):
+        if lookup_outbound(str(mid or "").strip(), agent_id=agent):
+            return True
+    return False
+
+
+def is_dylan_thread_context(*, parent_id: str = "", root_id: str = "", thread_id: str = "") -> bool:
+    return is_agent_thread_context(
+        agent_id="dylan",
+        parent_id=parent_id,
+        root_id=root_id,
+        thread_id=thread_id,
+    )
 
 def extract_content_text(msg_type: str, content: Any) -> str:
     raw = content
@@ -79,7 +149,6 @@ def extract_content_text(msg_type: str, content: Any) -> str:
         return text
     if msg_type == "text" or "text" in parsed:
         return str(parsed.get("text") or "").strip()
-    # interactive card (schema 1 or 2)
     chunks: list[str] = []
     body = parsed.get("body") if isinstance(parsed.get("body"), dict) else {}
     elements = body.get("elements") if isinstance(body.get("elements"), list) else parsed.get("elements")
@@ -99,28 +168,38 @@ def extract_content_text(msg_type: str, content: Any) -> str:
     return "\n".join(c.strip() for c in chunks if str(c).strip()).strip() or text[:2000]
 
 
-def resolve_reply_anchor(*, messenger: Any, parent_id: str) -> str:
-    mid = str(parent_id or "").strip()
-    if not mid:
-        return ""
-    cached = lookup_outbound(mid)
-    if cached:
-        return cached
-    try:
-        msg = messenger.get_message(mid)
-    except Exception:
-        return ""
-    if not isinstance(msg, dict):
-        return ""
-    data = msg.get("data") if isinstance(msg.get("data"), dict) else msg
-    items = data.get("items") if isinstance(data.get("items"), list) else None
-    row = items[0] if items else data
-    if not isinstance(row, dict):
-        return ""
-    msg_type = str(row.get("msg_type") or "")
-    body = row.get("body") if isinstance(row.get("body"), dict) else {}
-    content = body.get("content") if body else row.get("content")
-    return extract_content_text(msg_type, content)[:6000]
+def resolve_reply_anchor(
+    *,
+    messenger: Any,
+    parent_id: str = "",
+    root_id: str = "",
+    agent_id: str = "dylan",
+) -> str:
+    agent = str(agent_id or "dylan").strip().lower()
+    for mid in (str(parent_id or "").strip(), str(root_id or "").strip()):
+        if not mid:
+            continue
+        cached = lookup_outbound(mid, agent_id=agent)
+        if cached and cached not in {"(dylan thread)", "(dylan topic)"}:
+            return cached
+        try:
+            msg = messenger.get_message(mid)
+        except Exception:
+            continue
+        if not isinstance(msg, dict):
+            continue
+        data = msg.get("data") if isinstance(msg.get("data"), dict) else msg
+        items = data.get("items") if isinstance(data.get("items"), list) else None
+        row = items[0] if items else data
+        if not isinstance(row, dict):
+            continue
+        msg_type = str(row.get("msg_type") or "")
+        body = row.get("body") if isinstance(row.get("body"), dict) else {}
+        content = body.get("content") if body else row.get("content")
+        text = extract_content_text(msg_type, content)[:6000]
+        if text:
+            return text
+    return ""
 
 
 def format_anchored_user_message(*, user_message: str, parent_id: str = "", anchor_text: str = "") -> str:

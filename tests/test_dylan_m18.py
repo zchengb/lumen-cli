@@ -256,8 +256,19 @@ class ReplyAnchorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             with patch("agents.dylan.reply_anchor.agents_home", return_value=Path(tmp)):
-                remember_outbound(message_id="om_x", text="suggestion A about webhook")
+                remember_outbound(
+                    message_id="om_x",
+                    text="suggestion A about webhook",
+                    reply_to="om_user",
+                    thread_id="omt_1",
+                )
                 self.assertEqual(lookup_outbound("om_x"), "suggestion A about webhook")
+                from agents.dylan.reply_anchor import is_dylan_thread_context
+
+                self.assertTrue(is_dylan_thread_context(parent_id="om_x"))
+                self.assertTrue(is_dylan_thread_context(root_id="om_user"))
+                self.assertTrue(is_dylan_thread_context(thread_id="omt_1"))
+                self.assertFalse(is_dylan_thread_context(parent_id="om_other"))
 
 
 if __name__ == "__main__":

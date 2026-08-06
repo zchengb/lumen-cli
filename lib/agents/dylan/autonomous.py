@@ -120,14 +120,15 @@ def handle_autonomous_conversation(
     obs = obs or Observability()
     store = SessionStore(obs.store)
     parent_id = str(meta.get("parent_id") or "").strip()
+    root_id = str(meta.get("root_id") or "").strip()
     anchored_text = text
-    if parent_id:
+    if parent_id or root_id:
         messenger = FeishuMessenger("dylan")
-        anchor = resolve_reply_anchor(messenger=messenger, parent_id=parent_id)
+        anchor = resolve_reply_anchor(messenger=messenger, parent_id=parent_id, root_id=root_id)
         if anchor:
             anchored_text = format_anchored_user_message(
                 user_message=text,
-                parent_id=parent_id,
+                parent_id=parent_id or root_id,
                 anchor_text=anchor,
             )
     if trace is None:
@@ -147,6 +148,8 @@ def handle_autonomous_conversation(
         trace.model = flags.model.model_name
     if parent_id and anchored_text != text:
         obs.emit(trace, "reply.anchor.resolved", parent_id=parent_id)
+    elif root_id and anchored_text != text:
+        obs.emit(trace, "reply.anchor.resolved", parent_id=root_id)
     lock = store.lock_for(scope)
     with lock:
         try:

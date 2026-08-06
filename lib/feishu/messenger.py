@@ -166,17 +166,18 @@ class FeishuMessenger:
             _LOG.warning("delete_reaction failed message_id=%s reaction_id=%s err=%s", message_id, reaction_id, exc)
             return None
 
-    def reply_text(self, message_id: str, text: str) -> dict[str, Any]:
+    def reply_text(self, message_id: str, text: str, *, reply_in_thread: bool = False) -> dict[str, Any]:
         token = self.tenant_token()
-        return self._post(
-            REPLY_URL.format(message_id=message_id),
-            token,
-            {"content": json.dumps({"text": text}, ensure_ascii=False), "msg_type": "text"},
-        )
+        payload: dict[str, Any] = {
+            "content": json.dumps({"text": text}, ensure_ascii=False),
+            "msg_type": "text",
+        }
+        if reply_in_thread:
+            payload["reply_in_thread"] = True
+        return self._post(REPLY_URL.format(message_id=message_id), token, payload)
 
-    def reply_markdown(self, message_id: str, text: str) -> dict[str, Any]:
+    def reply_markdown(self, message_id: str, text: str, *, reply_in_thread: bool = False) -> dict[str, Any]:
         token = self.tenant_token()
-        # schema 2.0 is required for headings/tables in Feishu markdown cards
         card = {
             "schema": "2.0",
             "config": {"wide_screen_mode": True},
@@ -184,26 +185,24 @@ class FeishuMessenger:
                 "elements": [{"tag": "markdown", "content": str(text or "")[:12000]}],
             },
         }
-        return self._post(
-            REPLY_URL.format(message_id=message_id),
-            token,
-            {
-                "content": json.dumps(card, ensure_ascii=False),
-                "msg_type": "interactive",
-            },
-        )
+        payload: dict[str, Any] = {
+            "content": json.dumps(card, ensure_ascii=False),
+            "msg_type": "interactive",
+        }
+        if reply_in_thread:
+            payload["reply_in_thread"] = True
+        return self._post(REPLY_URL.format(message_id=message_id), token, payload)
 
-    def reply_card(self, message_id: str, card_envelope: dict[str, Any]) -> dict[str, Any]:
+    def reply_card(self, message_id: str, card_envelope: dict[str, Any], *, reply_in_thread: bool = False) -> dict[str, Any]:
         token = self.tenant_token()
         card = card_envelope.get("card", card_envelope)
-        return self._post(
-            REPLY_URL.format(message_id=message_id),
-            token,
-            {
-                "content": json.dumps(card, ensure_ascii=False),
-                "msg_type": "interactive",
-            },
-        )
+        payload: dict[str, Any] = {
+            "content": json.dumps(card, ensure_ascii=False),
+            "msg_type": "interactive",
+        }
+        if reply_in_thread:
+            payload["reply_in_thread"] = True
+        return self._post(REPLY_URL.format(message_id=message_id), token, payload)
 
     def get_message(self, message_id: str) -> dict[str, Any]:
         token = self.tenant_token()
@@ -261,13 +260,19 @@ class FeishuMessenger:
             },
         )
 
-    def safe_reply_text(self, message_id: str, text: str) -> Optional[dict[str, Any]]:
+    def safe_reply_text(
+        self,
+        message_id: str,
+        text: str,
+        *,
+        reply_in_thread: bool = False,
+    ) -> Optional[dict[str, Any]]:
         try:
-            return self.reply_markdown(message_id, text)
+            return self.reply_markdown(message_id, text, reply_in_thread=reply_in_thread)
         except Exception as exc:
             _LOG.warning("reply_markdown failed message_id=%s err=%s; falling back to text", message_id, exc)
             try:
-                return self.reply_text(message_id, text)
+                return self.reply_text(message_id, text, reply_in_thread=reply_in_thread)
             except Exception as exc2:
                 _LOG.warning("reply_text failed message_id=%s err=%s", message_id, exc2)
                 return None
