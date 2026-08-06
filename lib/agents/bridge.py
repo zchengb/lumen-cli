@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -103,7 +104,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
 
         flags = ConversationFlags.from_common(probe_common, config)
 
-        if flags.agent_only:
+        if flags.autonomous or flags.agent_only:
             from agents.dylan.runtime import run_conversation_job
 
             trace = TraceContext(
@@ -117,7 +118,6 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
             )
 
             def _worker() -> dict[str, Any]:
-                # Create SQLite-backed Observability on this worker thread only.
                 obs = Observability()
                 reaction = ReactionThinkingSession(
                     messenger=messenger,
@@ -137,24 +137,39 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                     if flags.reaction.add_immediately:
                         reaction.start()
                     obs.emit(trace, "job.started")
-                    result = handle_conversation(
-                        text=text,
-                        meta=meta,
-                        common=probe_common,
-                        agents_config=config,
-                        known_slugs=known,
-                        obs=obs,
-                        trace=trace,
-                    )
+                    if flags.autonomous:
+                        from agents.dylan.autonomous import handle_autonomous_conversation
+
+                        result = handle_autonomous_conversation(
+                            text=text,
+                            meta=meta,
+                            common=probe_common,
+                            agents_config=config,
+                            obs=obs,
+                            trace=trace,
+                        )
+                    else:
+                        result = handle_conversation(
+                            text=text,
+                            meta=meta,
+                            common=probe_common,
+                            agents_config=config,
+                            known_slugs=known,
+                            obs=obs,
+                            trace=trace,
+                        )
                     if result.get("status") == "delegate":
                         success = True
                         return result
                     reply_text = str(result.get("text") or "暂无数据。")
                     obs.emit(trace, "reply.started")
                     if message_id:
-                        sent = messenger.safe_reply_text(message_id, reply_text)
-                        if sent is None:
+                        sent = None
+                        for attempt in range(4):
                             sent = messenger.safe_reply_text(message_id, reply_text)
+                            if sent is not None:
+                                break
+                            time.sleep(min(2 ** attempt, 8))
                         if sent is None:
                             obs.emit(trace, "reply.failed", level="ERROR")
                             obs.upsert_trace(trace, reply_status="failed", state="failed", error_code="reply_failed")

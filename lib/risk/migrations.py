@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -264,6 +264,28 @@ CREATE TABLE IF NOT EXISTS conversation_event (
     event TEXT NOT NULL,
     payload_json TEXT,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_session (
+    session_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    provider_session_id TEXT,
+    chat_id TEXT NOT NULL,
+    conversation_scope_id TEXT NOT NULL,
+    user_id TEXT,
+    project_slug TEXT,
+    workspace_path TEXT NOT NULL,
+    soul_version TEXT NOT NULL,
+    protocol_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_active_at TEXT NOT NULL,
+    expires_at TEXT,
+    last_trace_id TEXT,
+    last_request_id TEXT,
+    failure_count INTEGER NOT NULL DEFAULT 0,
+    checkpoint_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS conversation_job (

@@ -10,6 +10,7 @@ from risk.store import utc_now
 
 _CLEANUP_THREAD: Optional[threading.Thread] = None
 _STOP = threading.Event()
+_MAX_REMOVE_ATTEMPTS = 5
 
 
 def cleanup_stale_reactions(*, older_than_seconds: int = 120, messenger: Optional[FeishuMessenger] = None) -> int:
@@ -25,11 +26,19 @@ def cleanup_stale_reactions(*, older_than_seconds: int = 120, messenger: Optiona
             source_id = str(row.get("source_message_id") or "").strip()
             if not reaction_id or not source_id:
                 continue
-            added_at = str(row.get("added_at") or "")
-            # ponytail: coarse age check via lexicographic ISO timestamps; upgrade to parsed datetime if formats diverge
-            if added_at and older_than_seconds > 0:
-                # skip very fresh rows; caller usually filters by status only
-                pass
+            attempts = int(row.get("remove_attempts") or 0)
+            if attempts >= _MAX_REMOVE_ATTEMPTS:
+                obs.store.conn.execute(
+                    """
+                    UPDATE reaction_session
+                    SET status = 'abandoned', removed_at = ?, last_error = ?,
+                        remove_attempts = COALESCE(remove_attempts, 0)
+                    WHERE id = ?
+                    """,
+                    (utc_now(), f"abandoned after {attempts} remove attempts", row["id"]),
+                )
+                obs.store.conn.commit()
+                continue
             result = msg.safe_delete_reaction(source_id, reaction_id)
             if result is not None:
                 obs.store.conn.execute(
@@ -42,12 +51,26 @@ def cleanup_stale_reactions(*, older_than_seconds: int = 120, messenger: Optiona
                 )
                 obs.store.conn.commit()
                 cleaned += 1
+            else:
+                obs.store.conn.execute(
+                    """
+                    UPDATE reaction_session
+                    SET status = 'remove_failed',
+                        remove_attempts = COALESCE(remove_attempts, 0) + 1,
+                        last_error = 'delete_reaction failed'
+                    WHERE id = ?
+                    """,
+                    (row["id"],),
+                )
+                obs.store.conn.commit()
+                # ponytail: pause after a failed delete so we don't burn ephemeral ports
+                time.sleep(2)
     finally:
         obs.close()
     return cleaned
 
 
-def start_reaction_cleanup_worker(*, interval_seconds: int = 60, older_than_seconds: int = 120) -> None:
+def start_reaction_cleanup_worker(*, interval_seconds: int = 300, older_than_seconds: int = 120) -> None:
     global _CLEANUP_THREAD
     if _CLEANUP_THREAD is not None and _CLEANUP_THREAD.is_alive():
         return

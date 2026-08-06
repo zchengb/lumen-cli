@@ -29,19 +29,26 @@ def doctor_deep(*, common: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     checks: list[dict[str, str]] = []
     checks.append(
         _check(
+            "conversation_v4",
+            "PASS" if flags.autonomous else "WARN",
+            f"enabled={flags.v4_enabled} mode={flags.autonomous_mode or '-'}",
+        )
+    )
+    checks.append(
+        _check(
             "conversation_v3",
-            "PASS" if flags.v3_enabled else "WARN",
+            "PASS" if flags.v3_enabled or flags.autonomous else "WARN",
             f"enabled={flags.v3_enabled} routing_mode={flags.routing_mode}",
         )
     )
     checks.append(
         _check(
             "routing_mode",
-            "PASS" if flags.agent_only else "WARN",
-            flags.routing_mode,
+            "PASS" if flags.autonomous or flags.agent_only else "WARN",
+            "autonomous_workspace" if flags.autonomous else flags.routing_mode,
         )
     )
-    agent_bin = shutil.which("agent")
+    agent_bin = shutil.which("agent") or shutil.which("cursor-agent")
     checks.append(
         _check(
             "agent_cli",
@@ -49,7 +56,7 @@ def doctor_deep(*, common: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             agent_bin or "not found",
         )
     )
-    if agent_bin and flags.model.provider == "cursor":
+    if agent_bin and flags.model.provider in {"cursor", "cursor_cli"}:
         try:
             completed = subprocess.run(
                 [agent_bin, "status"],
@@ -111,6 +118,8 @@ def doctor_deep(*, common: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         "checks": checks,
         "flags": {
             "v3_enabled": flags.v3_enabled,
+            "v4_enabled": flags.v4_enabled,
+            "autonomous": flags.autonomous,
             "routing_mode": flags.routing_mode,
             "provider": flags.model.provider,
             "model": flags.model.model_name,
@@ -234,11 +243,13 @@ def runtime_status_extra() -> dict[str, Any]:
     config = load_agents_config()
     flags = ConversationFlags.from_common({}, config)
     out: dict[str, Any] = {
-        "routing_mode": flags.routing_mode,
+        "routing_mode": "autonomous_workspace" if flags.autonomous else flags.routing_mode,
         "provider": flags.model.provider,
         "model": flags.model.model_name,
         "reaction_emoji": flags.reaction.emoji_type,
         "v3_enabled": flags.v3_enabled,
+        "v4_enabled": flags.v4_enabled,
+        "autonomous": flags.autonomous,
     }
     try:
         gs = GlobalAgentStore()
@@ -256,7 +267,9 @@ def runtime_status_extra() -> dict[str, Any]:
         gs.close()
     except Exception as exc:
         out["store_error"] = str(exc)[:200]
-    version_path = Path(__file__).resolve().parents[2] / "VERSION"
+    version_path = Path(__file__).resolve().parents[3] / "VERSION"
+    if not version_path.is_file():
+        version_path = Path(__file__).resolve().parents[2] / "VERSION"
     if version_path.is_file():
         out["version"] = version_path.read_text(encoding="utf-8").strip()
     return out

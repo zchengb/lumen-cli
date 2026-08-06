@@ -110,6 +110,11 @@ class ConversationFlags:
     reaction: ReactionConfig = field(default_factory=ReactionConfig)
     agent_loop: AgentLoopConfig = field(default_factory=AgentLoopConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
+    v4_enabled: bool = False
+    autonomous_mode: str = ""
+    session_scope: str = "thread_shared"
+    soft_timeout_seconds: int = 90
+    hard_timeout_seconds: int = 300
 
     @classmethod
     def from_common(cls, common: dict[str, Any] | None, agents_config: dict[str, Any] | None = None) -> "ConversationFlags":
@@ -121,19 +126,39 @@ class ConversationFlags:
         risk = dylan.get("risk_analyst") if isinstance(dylan.get("risk_analyst"), dict) else {}
         conv = risk.get("conversation_v2") if isinstance(risk.get("conversation_v2"), dict) else {}
         v3 = dylan.get("conversation_v3") if isinstance(dylan.get("conversation_v3"), dict) else {}
-        if not v3 and isinstance(agents_config, dict):
+        v4 = dylan.get("conversation_v4") if isinstance(dylan.get("conversation_v4"), dict) else {}
+        if isinstance(agents_config, dict):
             cfg_dylan = agents_config.get("dylan") if isinstance(agents_config.get("dylan"), dict) else {}
-            v3 = cfg_dylan.get("conversation_v3") if isinstance(cfg_dylan.get("conversation_v3"), dict) else {}
+            if not v3:
+                v3 = cfg_dylan.get("conversation_v3") if isinstance(cfg_dylan.get("conversation_v3"), dict) else {}
+            if not v4:
+                v4 = cfg_dylan.get("conversation_v4") if isinstance(cfg_dylan.get("conversation_v4"), dict) else {}
             if not conv:
                 cfg_risk = cfg_dylan.get("risk_analyst") if isinstance(cfg_dylan.get("risk_analyst"), dict) else {}
                 conv = cfg_risk.get("conversation_v2") if isinstance(cfg_risk.get("conversation_v2"), dict) else {}
-        model_src = v3.get("model") if isinstance(v3.get("model"), dict) else (conv.get("model") if isinstance(conv.get("model"), dict) else {})
+        provider_src = v4.get("provider") if isinstance(v4.get("provider"), dict) else {}
+        model_src = (
+            provider_src
+            if provider_src
+            else (v3.get("model") if isinstance(v3.get("model"), dict) else (conv.get("model") if isinstance(conv.get("model"), dict) else {}))
+        )
         typing_raw = conv.get("typing") if isinstance(conv.get("typing"), dict) else {}
-        reaction_raw = v3.get("reaction") if isinstance(v3.get("reaction"), dict) else {}
+        reaction_raw = (
+            v4.get("reaction")
+            if isinstance(v4.get("reaction"), dict)
+            else (v3.get("reaction") if isinstance(v3.get("reaction"), dict) else {})
+        )
         loop_raw = v3.get("agent_loop") if isinstance(v3.get("agent_loop"), dict) else {}
-        obs_raw = v3.get("observability") if isinstance(v3.get("observability"), dict) else {}
+        obs_raw = (
+            v4.get("observability")
+            if isinstance(v4.get("observability"), dict)
+            else (v3.get("observability") if isinstance(v3.get("observability"), dict) else {})
+        )
+        session_raw = v4.get("session") if isinstance(v4.get("session"), dict) else {}
+        runtime_raw = v4.get("runtime") if isinstance(v4.get("runtime"), dict) else {}
+        v4_enabled = bool(v4.get("enabled", False))
         model = ModelConfig(
-            provider=str(model_src.get("provider") or "cursor"),
+            provider=str(model_src.get("type") or model_src.get("provider") or "cursor"),
             router_timeout_seconds=int(model_src.get("router_timeout_seconds") or model_src.get("planner_timeout_seconds") or 45),
             response_timeout_seconds=int(model_src.get("response_timeout_seconds") or model_src.get("responder_timeout_seconds") or 60),
             max_router_retries=int(model_src.get("max_router_retries") or model_src.get("max_planner_retries") or 1),
@@ -141,7 +166,7 @@ class ConversationFlags:
             model_name=str(model_src.get("model") or model_src.get("name") or "cursor-grok-4.5-medium"),
             planner_timeout_seconds=int(model_src.get("planner_timeout_seconds") or 45),
             responder_timeout_seconds=int(model_src.get("responder_timeout_seconds") or 60),
-            required=bool(model_src.get("required", True if v3.get("enabled") else False)),
+            required=bool(model_src.get("required", True if (v4_enabled or v3.get("enabled")) else False)),
         )
         typing = TypingConfig(
             enabled=bool(typing_raw.get("enabled", True)),
@@ -175,7 +200,7 @@ class ConversationFlags:
         )
         v3_enabled = bool(v3.get("enabled", False))
         flags = cls(
-            enabled=bool(conv.get("enabled", False)) or v3_enabled,
+            enabled=bool(conv.get("enabled", False)) or v3_enabled or v4_enabled,
             llm_router_enabled=bool(conv.get("llm_router_enabled", False)),
             llm_response_enabled=bool(conv.get("llm_response_enabled", False)),
             grounding_guard_enabled=bool(conv.get("grounding_guard_enabled", True)),
@@ -186,8 +211,13 @@ class ConversationFlags:
             reaction=reaction,
             agent_loop=agent_loop,
             observability=observability,
+            v4_enabled=v4_enabled,
+            autonomous_mode=str(v4.get("mode") or ("autonomous_workspace" if v4_enabled else "")),
+            session_scope=str(session_raw.get("scope") or "thread_shared"),
+            soft_timeout_seconds=int(runtime_raw.get("soft_timeout_seconds") or 90),
+            hard_timeout_seconds=int(runtime_raw.get("hard_timeout_seconds") or 300),
         )
-        flags._max_concurrent_jobs = int(dylan.get("max_concurrent_jobs") or 3)  # type: ignore[attr-defined]
+        flags._max_concurrent_jobs = int(dylan.get("max_concurrent_jobs") or runtime_raw.get("max_concurrent_sessions") or 3)  # type: ignore[attr-defined]
         return flags
 
     @property
@@ -195,8 +225,12 @@ class ConversationFlags:
         return int(getattr(self, "_max_concurrent_jobs", 3) or 3)
 
     @property
+    def autonomous(self) -> bool:
+        return self.v4_enabled and self.autonomous_mode == "autonomous_workspace"
+
+    @property
     def agent_only(self) -> bool:
-        return self.v3_enabled and self.routing_mode == "agent_only"
+        return self.v3_enabled and self.routing_mode == "agent_only" and not self.autonomous
 
 
 ALLOWED_INTENTS = {

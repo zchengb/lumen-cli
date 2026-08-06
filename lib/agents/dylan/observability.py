@@ -244,10 +244,12 @@ class Observability:
         rows = self.store.conn.execute(
             """
             SELECT * FROM reaction_session
-            WHERE status IN ('active', 'add_succeeded')
+            WHERE status IN ('active', 'add_succeeded', 'remove_failed')
               AND COALESCE(removed_at, '') = ''
-              AND reaction_id IS NOT NULL
+              AND COALESCE(reaction_id, '') != ''
+              AND COALESCE(remove_attempts, 0) < 5
             ORDER BY id ASC
+            LIMIT 20
             """
         ).fetchall()
         return [dict(row) for row in rows]

@@ -54,6 +54,19 @@ FAILURE_CATEGORIES = {
     "frontend_delivery_disabled",
 }
 
+# Keep Lumen-owned Metro off the app-dev default (8081).
+LUMEN_METRO_PORT = 8091
+
+
+def metro_ready_url(port: int = LUMEN_METRO_PORT) -> str:
+    return f"http://127.0.0.1:{port}/status"
+
+
+def metro_start_command(manager: str, script: str, port: int = LUMEN_METRO_PORT) -> str:
+    if manager == "npm":
+        return f"npm run {script} -- --port {port}"
+    return f"{manager} {script} --port {port}"
+
 
 def visual_section(text: str) -> str:
     text = re.sub(r"(?s)<!--.*?-->", "", text)
@@ -218,8 +231,9 @@ def detect_runtime(repo: Path) -> tuple[str, dict[str, Any]] | None:
             "platform": "react-native",
             "package_manager": manager,
             "install_command": install,
-            "metro_command": f"{manager} {metro_script}" if metro_script else "",
-            "ready_url": "http://127.0.0.1:8081/status",
+            "metro_command": metro_start_command(manager, metro_script) if metro_script else "",
+            "metro_port": LUMEN_METRO_PORT,
+            "ready_url": metro_ready_url(),
             "launch_strategy": "preinstalled-debug-app",
             "auth_strategy": "saved-session",
             "fixture_strategy": "",
@@ -914,8 +928,17 @@ def execute(
                     prepare_web_auth_storage(repo_target.worktree_path, runtime, env, evidence / "web-auth-storage.json")
             elif platform == "react-native":
                 ensure_ios_app(repo_target.worktree_path, runtime, env)
-                metro = run_owned(str(runtime.get("metro_command", "")), repo_target.worktree_path, env, processes, runtime)
-                wait_ready(str(runtime.get("ready_url", "http://127.0.0.1:8081/status")), int(runtime.get("ready_timeout_seconds", 120)), metro, env)
+                metro_port = int(runtime.get("metro_port") or LUMEN_METRO_PORT)
+                metro_env = dict(env)
+                metro_env["RCT_METRO_PORT"] = str(metro_port)
+                metro_env["METRO_PORT"] = str(metro_port)
+                metro = run_owned(str(runtime.get("metro_command", "")), repo_target.worktree_path, metro_env, processes, runtime)
+                wait_ready(
+                    str(runtime.get("ready_url") or metro_ready_url(metro_port)),
+                    int(runtime.get("ready_timeout_seconds", 120)),
+                    metro,
+                    metro_env,
+                )
             else:
                 raise EnvironmentError(f"unsupported visual platform: {platform}")
     except PermissionError as exc:

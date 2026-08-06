@@ -345,6 +345,10 @@ Usage:
   lumen scan --project <slug> [--dry-run]
                                  Run a scan for a specific project
                                  Add --dry-run to mock the pipeline without the Cursor agent
+  lumen scan latest --project <slug> --json
+                                 Print the latest scan result as machine JSON
+  lumen risk recent|unresolved|top|trend|finding --json
+                                 Agent-native risk JSON queries
   lumen schedule                List all scan and delivery schedules
   lumen schedule scan add [--project <slug>] [--cron "<cron-expr>"] [--dry-run]
                                  Schedule recurring code scans
@@ -361,7 +365,9 @@ Usage:
   lumen dylan brief [--project <slug>]
                                  Generate Dylan Weekly Risk Brief from risk.sqlite3
   lumen dylan doctor [--project <slug>] [--deep]
-                                 Check Dylan risk store, conversation V3, and alert health
+                                 Check Dylan risk store, conversation V3/V4, and alert health
+  lumen dylan session list|show|reset
+                                 List or reset Cursor autonomous sessions
   lumen dylan trace latest|show  Show Dylan conversation trace timeline
   lumen dylan context --chat <id> [--thread <id>] [--user <id>]
                                  Inspect conversation context from agents.sqlite3
@@ -2205,6 +2211,21 @@ cmd_scan() {
     cmd_schedule_scan "$@"
     return 0
   fi
+  if [[ "${1:-}" == "latest" ]]; then
+    shift
+    local project="" workspace_args=()
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --project) project="${2:-}"; workspace_args+=("$1" "$2"); shift 2 ;;
+        --json) shift ;;
+        *) workspace_args+=("$1"); shift ;;
+      esac
+    done
+    resolve_command_workspace "${workspace_args[@]+"${workspace_args[@]}"}"
+    require_python3
+    python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" scan latest --workspace "${RESOLVED_WORKSPACE}" ${project:+--project "${project}"} --json
+    return $?
+  fi
   local dry_run=0
   local filtered_args=()
   local arg
@@ -3616,6 +3637,8 @@ out = {
   "risk_enabled": risk.enabled,
   "conversation_v2": flags.enabled,
   "conversation_v3": flags.v3_enabled,
+  "conversation_v4": flags.v4_enabled,
+  "autonomous": flags.autonomous,
   "routing_mode": flags.routing_mode,
   "grounding_guard": flags.grounding_guard_enabled,
   "schema_target": SCHEMA_VERSION,
@@ -3634,6 +3657,10 @@ try:
     gs = GlobalAgentStore()
     out["agents_db"] = str(gs.path)
     out["agent_run_count"] = gs.conn.execute("SELECT COUNT(*) AS c FROM agent_run").fetchone()["c"]
+    try:
+        out["agent_session_count"] = gs.conn.execute("SELECT COUNT(*) AS c FROM agent_session").fetchone()["c"]
+    except Exception:
+        out["agent_session_count"] = 0
     gs.close()
 except Exception as exc:
     out["agents_db_error"] = str(exc)
@@ -3642,6 +3669,50 @@ if ${deep}:
     out["deep"] = doctor_deep(common=common if isinstance(common, dict) else {})
 print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
 PY
+      ;;
+    session)
+      local session_sub="${1:-list}"
+      shift || true
+      case "${session_sub}" in
+        list)
+          local limit=20
+          while [[ $# -gt 0 ]]; do
+            case "$1" in
+              --limit) limit="${2:-20}"; shift 2 ;;
+              --json) shift ;;
+              *) shift ;;
+            esac
+          done
+          python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" session list --limit "${limit}" --json
+          ;;
+        show)
+          local sid="${1:-}"
+          [[ -n "${sid}" ]] || { err "Usage: lumen dylan session show <session_id>"; exit 1; }
+          python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" session show "${sid}" --json
+          ;;
+        reset)
+          local sid="" scope=""
+          while [[ $# -gt 0 ]]; do
+            case "$1" in
+              --scope) scope="${2:-}"; shift 2 ;;
+              --json) shift ;;
+              *)
+                if [[ -z "${sid}" && "${1}" != --* ]]; then sid="$1"; fi
+                shift
+                ;;
+            esac
+          done
+          if [[ -n "${sid}" ]]; then
+            python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" session reset "${sid}" --json
+          else
+            python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" session reset --scope "${scope}" --json
+          fi
+          ;;
+        *)
+          err "Usage: lumen dylan session list|show|reset"
+          exit 1
+          ;;
+      esac
       ;;
     trace)
       local trace_sub="${1:-latest}"
@@ -3749,6 +3820,7 @@ PY
       printf 'Usage:\n'
       printf '  lumen dylan brief [--project <slug>]\n'
       printf '  lumen dylan doctor [--project <slug>] [--deep]\n'
+      printf '  lumen dylan session list|show <id>|reset [--scope <id>]\n'
       printf '  lumen dylan trace latest|show <trace_id>|show --message-id <id>\n'
       printf '  lumen dylan context --chat <chat_id> [--thread <id>] [--user <id>]\n'
       printf '  lumen dylan alert list [--project <slug>] [--status failed|sent|pending|dead_letter]\n'
@@ -3756,6 +3828,69 @@ PY
     *)
       err "Unknown dylan command: ${sub}"
       printf 'Run: lumen dylan help\n'
+      exit 1
+      ;;
+  esac
+}
+
+cmd_risk() {
+  local sub="${1:-}"
+  shift || true
+  require_python3
+  case "${sub}" in
+    recent|unresolved|top|trend)
+      local project="" days=7 limit=20 workspace_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project) project="${2:-}"; workspace_args+=("$1" "$2"); shift 2 ;;
+          --days) days="${2:-7}"; shift 2 ;;
+          --limit) limit="${2:-20}"; shift 2 ;;
+          --json) shift ;;
+          *) workspace_args+=("$1"); shift ;;
+        esac
+      done
+      resolve_command_workspace "${workspace_args[@]+"${workspace_args[@]}"}"
+      python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" risk "${sub}" \
+        --workspace "${RESOLVED_WORKSPACE}" \
+        ${project:+--project "${project}"} \
+        --days "${days}" \
+        --limit "${limit}" \
+        --json
+      ;;
+    finding)
+      local action="${1:-}"
+      local finding_id="${2:-}"
+      shift 2 || true
+      local project="" workspace_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project) project="${2:-}"; workspace_args+=("$1" "$2"); shift 2 ;;
+          --json) shift ;;
+          *) workspace_args+=("$1"); shift ;;
+        esac
+      done
+      [[ -n "${action}" && -n "${finding_id}" ]] || {
+        err "Usage: lumen risk finding show|links <FIND-id> [--project <slug>] --json"
+        exit 1
+      }
+      resolve_command_workspace "${workspace_args[@]+"${workspace_args[@]}"}"
+      python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" risk finding "${action}" "${finding_id}" \
+        --workspace "${RESOLVED_WORKSPACE}" \
+        ${project:+--project "${project}"} \
+        --json
+      ;;
+    ""|help|-h|--help)
+      printf 'Usage:\n'
+      printf '  lumen risk recent --project <slug> [--days 7] [--limit 20] --json\n'
+      printf '  lumen risk unresolved --project <slug> [--limit 10] --json\n'
+      printf '  lumen risk top --project <slug> [--limit 5] --json\n'
+      printf '  lumen risk trend --project <slug> --json\n'
+      printf '  lumen risk finding show <id> --json\n'
+      printf '  lumen risk finding links <id> --json\n'
+      ;;
+    *)
+      err "Unknown risk command: ${sub}"
+      printf 'Run: lumen risk help\n'
       exit 1
       ;;
   esac
@@ -3802,6 +3937,7 @@ main() {
     use) cmd_use "$@" ;;
     register) cmd_register "$@" ;;
     scan) cmd_scan "$@" ;;
+    risk) cmd_risk "$@" ;;
     schedule) cmd_schedule "$@" ;;
     set-up-docs|setup-docs) cmd_legacy_workspace_init "$@" ;;
     delivery) cmd_delivery "$@" ;;

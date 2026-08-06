@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Optional
@@ -24,6 +26,15 @@ REACTION_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/rea
 REACTION_DELETE_URL = "https://open.feishu.cn/open-apis/im/v1/messages/{message_id}/reactions/{reaction_id}"
 
 _LOG = logging.getLogger("lumen.feishu.channel")
+_TRANSIENT_MARKERS = (
+    "Can't assign requested address",
+    "Network is unreachable",
+    "nodename nor servname",
+    "timed out",
+    "Temporary failure",
+    "Connection reset",
+    "Broken pipe",
+)
 
 
 def extract_message_id(response: dict[str, Any] | None) -> str:
@@ -39,16 +50,36 @@ def extract_message_id(response: dict[str, Any] | None) -> str:
     ).strip()
 
 
+def _is_transient(exc: BaseException) -> bool:
+    text = str(exc)
+    if any(marker in text for marker in _TRANSIENT_MARKERS):
+        return True
+    errno = getattr(exc, "errno", None)
+    if errno in {8, 49, 51, 54, 60, 61}:
+        return True
+    cause = getattr(exc, "reason", None) or getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        return _is_transient(cause)
+    return False
+
+
 class FeishuMessenger:
     def __init__(self, agent_id: str = "dylan") -> None:
         self.agent_id = str(agent_id or "dylan").strip().lower()
+        self._token = ""
+        self._token_expires_at = 0.0
+        self._token_lock = threading.Lock()
 
     def credentials(self) -> tuple[str, str]:
         app_id = os.environ.get(APP_ID_ENV.get(self.agent_id, ""), "").strip()
         app_secret = os.environ.get(APP_SECRET_ENV.get(self.agent_id, ""), "").strip()
         return app_id, app_secret
 
-    def tenant_token(self) -> str:
+    def tenant_token(self, *, force: bool = False) -> str:
+        now = time.time()
+        with self._token_lock:
+            if not force and self._token and now < self._token_expires_at:
+                return self._token
         app_id, app_secret = self.credentials()
         if not app_id or not app_secret:
             raise RuntimeError(f"Missing Feishu credentials for {self.agent_id}")
@@ -59,12 +90,34 @@ class FeishuMessenger:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(request, timeout=30) as response:
-            body = json.loads(response.read().decode("utf-8"))
+        body = self._urlopen_json(request, retries=4)
         token = str(body.get("tenant_access_token") or "").strip()
         if not token:
             raise RuntimeError(f"Feishu token error: {body.get('msg') or body}")
+        # refresh 60s early; Feishu tokens are typically ~2h
+        expire = int(body.get("expire") or 7200)
+        with self._token_lock:
+            self._token = token
+            self._token_expires_at = time.time() + max(expire - 60, 60)
         return token
+
+    def _urlopen_json(self, request: urllib.request.Request, *, retries: int = 3) -> dict[str, Any]:
+        last_exc: BaseException | None = None
+        for attempt in range(max(retries, 1)):
+            try:
+                with urllib.request.urlopen(request, timeout=30) as response:
+                    raw = response.read().decode("utf-8")
+                    return json.loads(raw) if raw.strip() else {}
+            except urllib.error.HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise RuntimeError(f"Feishu API HTTP {exc.code}: {detail}") from exc
+            except Exception as exc:
+                last_exc = exc
+                if attempt + 1 >= retries or not _is_transient(exc):
+                    raise
+                time.sleep(min(2 ** attempt, 8) + 0.25 * attempt)
+        assert last_exc is not None
+        raise last_exc
 
     def _request(self, method: str, url: str, token: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
@@ -77,13 +130,7 @@ class FeishuMessenger:
             },
             method=method.upper(),
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw.strip() else {}
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Feishu API HTTP {exc.code}: {detail}") from exc
+        return self._urlopen_json(request, retries=4)
 
     def _post(self, url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", url, token, payload)
@@ -125,6 +172,25 @@ class FeishuMessenger:
             REPLY_URL.format(message_id=message_id),
             token,
             {"content": json.dumps({"text": text}, ensure_ascii=False), "msg_type": "text"},
+        )
+
+    def reply_markdown(self, message_id: str, text: str) -> dict[str, Any]:
+        token = self.tenant_token()
+        # schema 2.0 is required for headings/tables in Feishu markdown cards
+        card = {
+            "schema": "2.0",
+            "config": {"wide_screen_mode": True},
+            "body": {
+                "elements": [{"tag": "markdown", "content": str(text or "")[:12000]}],
+            },
+        }
+        return self._post(
+            REPLY_URL.format(message_id=message_id),
+            token,
+            {
+                "content": json.dumps(card, ensure_ascii=False),
+                "msg_type": "interactive",
+            },
         )
 
     def reply_card(self, message_id: str, card_envelope: dict[str, Any]) -> dict[str, Any]:
@@ -181,7 +247,11 @@ class FeishuMessenger:
 
     def safe_reply_text(self, message_id: str, text: str) -> Optional[dict[str, Any]]:
         try:
-            return self.reply_text(message_id, text)
+            return self.reply_markdown(message_id, text)
         except Exception as exc:
-            _LOG.warning("reply_text failed message_id=%s err=%s", message_id, exc)
-            return None
+            _LOG.warning("reply_markdown failed message_id=%s err=%s; falling back to text", message_id, exc)
+            try:
+                return self.reply_text(message_id, text)
+            except Exception as exc2:
+                _LOG.warning("reply_text failed message_id=%s err=%s", message_id, exc2)
+                return None
