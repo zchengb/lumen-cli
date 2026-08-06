@@ -444,6 +444,16 @@ def issue_for_dashboard(
         "pr_url": external_url(issue.get("pr_url")),
         "jira_key": issue.get("jira_key"),
         "jira_url": jira_browse_url(issue, common, docs_root),
+        "risk_finding_id": issue.get("risk_finding_id", ""),
+        "canonical_fingerprint": issue.get("canonical_fingerprint", ""),
+        "status_source": issue.get("status_source", "issue_registry"),
+        "resolution_basis": issue.get("resolution_basis", ""),
+        "resolution_basis_label": issue.get("resolution_basis_label", ""),
+        "verification_status": issue.get("verification_status", ""),
+        "verification_label": issue.get("verification_label", ""),
+        "resolved_by": issue.get("resolved_by", ""),
+        "last_verified_at": issue.get("last_verified_at", ""),
+        "last_verification_run_id": issue.get("last_verification_run_id", ""),
     }
 
 
@@ -545,9 +555,20 @@ def build_payload(root: Path) -> dict:
         if isinstance(repository, dict) and str(repository.get("name") or "") and str(repository.get("path") or "")
     }
     snippets_by_id, snippets_by_match = scan_code_snippets(scan_results)
+    registry_issues = deduplicate_issues(registry.get("issues", []))
+    lib_root = Path(__file__).resolve().parents[1]
+    if str(lib_root) not in sys.path:
+        sys.path.insert(0, str(lib_root))
+    try:
+        from risk.dashboard_overlay import apply_risk_overlay
+
+        project_slug = str((common.get("project") or {}).get("slug") or "")
+        registry_issues = apply_risk_overlay(root, registry_issues, project_slug=project_slug)
+    except Exception:
+        pass
     issues = sort_dashboard_issues([
         issue_for_dashboard(item, repository_paths, snippets_by_id, snippets_by_match, common, root.parent)
-        for item in deduplicate_issues(registry.get("issues", []))
+        for item in registry_issues
     ])
     issue_counts = {}
     for issue in issues:
@@ -555,7 +576,7 @@ def build_payload(root: Path) -> dict:
         issue_counts[status] = issue_counts.get(status, 0) + 1
     issue_counts["open_total"] = sum(
         1 for issue in issues
-        if str(issue.get("status", "")).lower() in {"open", "in_progress", "pr_open"}
+        if str(issue.get("status", "")).lower() in {"open", "in_progress", "pr_open", "reopened"}
     )
 
     logs = [

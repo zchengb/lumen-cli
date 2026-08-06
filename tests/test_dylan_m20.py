@@ -22,7 +22,7 @@ from risk.resolution import resolve_finding
 from risk.resolution_policy import ResolutionPolicy
 from risk.store import RiskStore, utc_now
 from risk.verification import apply_verification_receipt, display_status, mark_remediated
-from risk.verification_runner import run_verification
+from risk.verification_runner import FakeVerificationAdapter, run_verification
 
 
 def _seed_finding(store: RiskStore, finding_id: str = "FIND-demo000001", *, severity: str = "Medium") -> str:
@@ -49,7 +49,7 @@ def _seed_finding(store: RiskStore, finding_id: str = "FIND-demo000001", *, seve
 class ContractV4Tests(unittest.TestCase):
     def test_protocol_versions(self) -> None:
         self.assertEqual(SOUL_VERSION, "4")
-        self.assertEqual(PROTOCOL_VERSION, "4")
+        self.assertEqual(PROTOCOL_VERSION, "5")
 
     def test_bootstrap_classifies_intents(self) -> None:
         prompt = build_bootstrap_prompt(project_slug="demo", workspace_path="/tmp", user_message="hi")
@@ -69,7 +69,7 @@ class ContractV4Tests(unittest.TestCase):
             root = Path(tmp)
             ensure_workspace_contract(workspace=root, project_slug="demo")
             text = (root / "AGENTS.md").read_text(encoding="utf-8")
-            self.assertIn("version=4", text)
+            self.assertIn("version=5", text)
             self.assertIn("resolve <id>", text)
             self.assertIn("Never pass --observed", text)
 
@@ -106,7 +106,7 @@ class ResolutionAuthorityTests(unittest.TestCase):
                 trace_id="tr_1",
             )
             self.assertEqual(out["status"], "ok")
-            self.assertEqual(out["display_status"], "Resolved · User confirmed")
+            self.assertEqual(out["display_status"], "Resolved")
             row = dict(store.get_finding(finding_id))
             self.assertEqual(row["resolution_basis"], "user_confirmed")
             self.assertEqual(row["verification_status"], "pending_verification")
@@ -166,9 +166,17 @@ class VerificationRunnerTests(unittest.TestCase):
                 source_message_id="om_r",
                 trace_id="tr_r",
             )
-            clean = run_verification(store, workspace, finding_id, actor="u1", source_message_id="om_v", trace_id="tr_v")
+            clean = run_verification(
+                store,
+                workspace,
+                finding_id,
+                actor="u1",
+                source_message_id="om_v",
+                trace_id="tr_v",
+                scan_adapter=FakeVerificationAdapter(observed=False),
+            )
             self.assertEqual(clean["status"], "verified_clean")
-            self.assertEqual(clean["display_status"], "Resolved · Verified clean")
+            self.assertEqual(clean["display_status"], "Resolved")
             self.assertIn("receipt", clean)
             failed = apply_verification_receipt(
                 store,
@@ -178,7 +186,7 @@ class VerificationRunnerTests(unittest.TestCase):
                 scan_run_id="verify-fail-1",
             )
             self.assertEqual(failed["status"], "verification_failed")
-            self.assertEqual(failed["display_status"], "Reopened · Verification failed")
+            self.assertEqual(failed["display_status"], "Reopened")
             store.close()
 
     def test_public_cli_rejects_observed(self) -> None:
@@ -218,7 +226,7 @@ class DisplayStatusM20Tests(unittest.TestCase):
                     "verification_status": "pending_verification",
                 }
             ),
-            "Resolved · User confirmed",
+            "Resolved",
         )
 
 

@@ -71,6 +71,19 @@ def cmd_risk(args: argparse.Namespace) -> int:
         return _error("WORKSPACE_NOT_FOUND", f"workspace missing: {workspace}")
     common = _load_common(workspace)
     slug = _slug(common, args.project or "")
+    if args.subcommand == "reconcile":
+        from risk.reconcile import reconcile_project
+        from risk.store import utc_now
+
+        repair = bool(getattr(args, "repair", False))
+        dry_run = bool(getattr(args, "dry_run", False))
+        if dry_run:
+            repair = False
+        out = reconcile_project(workspace, project_slug=slug, repair=repair)
+        out["status"] = "ok"
+        out["mode"] = "repair" if repair else "dry_run"
+        out["freshness"] = {"source": "risk_store", "updated_at": utc_now()}
+        return _emit(out)
     if not slug and args.subcommand not in {"finding"}:
         return _error("PROJECT_REQUIRED", "project slug required (--project)")
     runtime = _runtime(workspace, slug)
@@ -78,7 +91,8 @@ def cmd_risk(args: argparse.Namespace) -> int:
     try:
         from agents.dylan.tools import risk_tools as rt
         from risk.store import utc_now
-        from risk.verification import display_status, mark_remediated
+        from risk.verification import display_evidence, display_status, mark_remediated
+        from risk.verification_runner import verification_capability
 
         if args.subcommand == "recent":
             out = rt.query_recent_findings(
@@ -110,6 +124,8 @@ def cmd_risk(args: argparse.Namespace) -> int:
                 if row is None:
                     return _error("FINDING_NOT_FOUND", f"finding not found: {finding_id}")
                 data = dict(row)
+                capability = verification_capability(common=common)
+                evidence = display_evidence(data)
                 out = {
                     "status": "ok",
                     "finding_id": finding_id,
@@ -117,6 +133,10 @@ def cmd_risk(args: argparse.Namespace) -> int:
                     "remediation_status": str(data.get("remediation_status") or "none"),
                     "verification_status": str(data.get("verification_status") or ""),
                     "display_status": display_status(data),
+                    "evidence": evidence,
+                    "available": bool(capability.get("available")),
+                    "mode": capability.get("mode") or "none",
+                    "reason": capability.get("reason") or "",
                     "last_verified_at": data.get("last_verified_at"),
                     "last_verification_run_id": data.get("last_verification_run_id"),
                     "freshness": {"source": "risk_store", "updated_at": utc_now()},
@@ -240,6 +260,7 @@ def cmd_scan_verify(args: argparse.Namespace) -> int:
             actor=actor,
             source_message_id=source_message_id,
             trace_id=trace_id,
+            common=common,
         )
         if out.get("status") in {"not_found", "error", "runner_failed"}:
             return _emit(out, code=1)
@@ -297,6 +318,8 @@ def build_parser() -> argparse.ArgumentParser:
     risk.add_argument("--trace-id", default="")
     risk.add_argument("--basis", default="user_confirmed")
     risk.add_argument("--override", action="store_true")
+    risk.add_argument("--repair", action="store_true")
+    risk.add_argument("--dry-run", action="store_true")
     risk.add_argument("--json", action="store_true")
 
     scan = sub.add_parser("scan")

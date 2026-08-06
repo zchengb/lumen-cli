@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from risk.models import STATUS_OPEN, STATUS_REOPENED, STATUS_RESOLVED
+from risk.registry_mirror import sync_registry_status_from_finding
 from risk.resolution_policy import ResolutionPolicy
 from risk.store import RiskStore, utc_now
 from risk.verification import display_status
@@ -154,6 +155,7 @@ def resolve_finding(
     store.commit()
     refreshed = store.get_finding(finding_id)
     payload = dict(refreshed) if refreshed is not None else data
+    mirror = sync_registry_status_from_finding(store.workspace, payload)
     return {
         "status": "ok",
         "idempotent": False,
@@ -167,6 +169,7 @@ def resolve_finding(
         "source_message_id": source,
         "trace_id": tid,
         "occurred_at": when,
+        "registry_mirror": mirror,
         "policy": {
             "allowed": True,
             "reason_code": decision.reason_code,

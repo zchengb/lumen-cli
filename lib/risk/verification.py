@@ -4,37 +4,26 @@ import json
 from typing import Any, Optional
 
 from risk.models import STATUS_IGNORED, STATUS_OPEN, STATUS_REOPENED, STATUS_RESOLVED
+from risk.registry_mirror import sync_registry_status_from_finding
+from risk.status_display import display_status as _primary_status
+from risk.status_display import evidence_summary
 from risk.store import RiskStore, utc_now
 
 
 def display_status(finding: dict[str, Any] | Any) -> str:
-    row = dict(finding) if finding is not None else {}
-    status = str(row.get("status") or "").strip()
-    remediation = str(row.get("remediation_status") or "none").strip().lower()
-    verification = str(row.get("verification_status") or "").strip().lower()
-    basis = str(row.get("resolution_basis") or "").strip().lower()
-    if status == STATUS_IGNORED:
-        return "Ignored"
-    if status == STATUS_REOPENED and verification == "verification_failed":
-        return "Reopened · Verification failed"
-    if status == STATUS_REOPENED:
-        return "Reopened"
-    if status == STATUS_RESOLVED and verification == "verified_clean":
-        return "Resolved · Verified clean"
-    if status == STATUS_RESOLVED and basis == "policy_override":
-        return "Resolved · Policy override"
-    if status == STATUS_RESOLVED and basis in {"user_confirmed", "owner_confirmed"}:
-        label = "User confirmed" if basis == "user_confirmed" else "Owner confirmed"
-        return f"Resolved · {label}"
-    if status == STATUS_RESOLVED:
-        return "Resolved"
-    if remediation == "remediated" and verification == "pending_verification":
-        return "Remediated · Pending verification"
-    if verification == "verification_failed":
-        return "Verification failed · Open"
-    if status == STATUS_OPEN or not status:
-        return "Open"
-    return status or "Open"
+    return _primary_status(finding)
+
+
+def display_evidence(finding: dict[str, Any] | Any) -> dict[str, str]:
+    return evidence_summary(finding)
+
+
+def _maybe_mirror(store: RiskStore, payload: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return sync_registry_status_from_finding(store.workspace, payload)
+    except Exception as exc:
+        return {"status": "error", "code": "registry_sync_failed", "message": str(exc)[:300]}
+
 
 
 def mark_remediated(
@@ -251,6 +240,7 @@ def apply_verification_receipt(
         payload = dict(refreshed) if refreshed is not None else data
         payload["status"] = next_status
         payload["verification_status"] = "verification_failed"
+        mirror = _maybe_mirror(store, payload)
         return {
             "status": "verification_failed",
             "finding_id": finding_id,
@@ -261,6 +251,7 @@ def apply_verification_receipt(
             "verification_status": "verification_failed",
             "display_status": display_status(payload),
             "completed_at": when,
+            "registry_mirror": mirror,
         }
 
     store.execute(
@@ -292,6 +283,7 @@ def apply_verification_receipt(
     payload["status"] = STATUS_RESOLVED
     payload["verification_status"] = "verified_clean"
     payload["resolution_basis"] = "verified_clean"
+    mirror = _maybe_mirror(store, payload)
     return {
         "status": "verified_clean",
         "finding_id": finding_id,
@@ -303,6 +295,7 @@ def apply_verification_receipt(
         "verification_status": "verified_clean",
         "display_status": display_status(payload),
         "completed_at": when,
+        "registry_mirror": mirror,
     }
 
 

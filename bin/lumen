@@ -3679,7 +3679,14 @@ out = {
   "schema_target": SCHEMA_VERSION,
   "risk_db_exists": db.is_file(),
   "risk_db": str(db),
+  "issue_registry_exists": (workspace / "state" / "issue-registry.json").is_file(),
+  "dashboard_overlay_enabled": True,
 }
+from risk.verification_runner import verification_capability
+cap = verification_capability(common=common if isinstance(common, dict) else {})
+out["verification_available"] = bool(cap.get("available"))
+out["verification_mode"] = cap.get("mode")
+out["verification_reason"] = cap.get("reason")
 if db.is_file():
     store = RiskStore(workspace)
     out["finding_count"] = len(store.list_findings(str((common.get("project") or {}).get("slug") or workspace.parent.name)))
@@ -3688,6 +3695,12 @@ if db.is_file():
     ver = store.fetchone("SELECT value FROM meta WHERE key='schema_version'")
     out["schema_version"] = int(ver["value"]) if ver else None
     store.close()
+    try:
+        from risk.reconcile import reconcile_project
+        slug = str((common.get("project") or {}).get("slug") or "")
+        out["reconcile"] = reconcile_project(workspace, project_slug=slug, repair=False)
+    except Exception as exc:
+        out["reconcile_error"] = str(exc)
 try:
     gs = GlobalAgentStore()
     out["agents_db"] = str(gs.path)
@@ -3892,6 +3905,25 @@ cmd_risk() {
         --limit "${limit}" \
         --json
       ;;
+    reconcile)
+      local project="" repair=0 dry_run=0 workspace_args=()
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --project) project="${2:-}"; workspace_args+=("$1" "$2"); shift 2 ;;
+          --repair) repair=1; shift ;;
+          --dry-run) dry_run=1; shift ;;
+          --json) shift ;;
+          *) workspace_args+=("$1"); shift ;;
+        esac
+      done
+      resolve_command_workspace "${workspace_args[@]+"${workspace_args[@]}"}"
+      python3 "${LUMEN_LIB_DIR}/run-agent-json-cli.py" risk reconcile \
+        --workspace "${RESOLVED_WORKSPACE}" \
+        ${project:+--project "${project}"} \
+        $([[ "${repair}" == "1" ]] && printf -- '--repair') \
+        $([[ "${dry_run}" == "1" ]] && printf -- '--dry-run') \
+        --json
+      ;;
     finding)
       local action="${1:-}"
       local finding_id="${2:-}"
@@ -3937,6 +3969,7 @@ cmd_risk() {
       printf '  lumen risk finding verification-status <id> --json\n'
       printf '  lumen risk finding mark-remediated <id> --actor <user> --reason <text> --source-message-id <mid> --trace-id <tid> --json\n'
       printf '  lumen risk finding resolve <id> --basis user_confirmed --actor <user> --source-message-id <mid> --trace-id <tid> --json\n'
+      printf '  lumen risk reconcile --project <slug> [--dry-run|--repair] --json\n'
       ;;
     *)
       err "Unknown risk command: ${sub}"

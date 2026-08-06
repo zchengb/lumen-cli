@@ -102,7 +102,7 @@ function durationMs(value: unknown) {
 }
 function statusTone(value: unknown) {
   const normalized = String(value || "unknown").toLowerCase().replaceAll("_", " ");
-  if (normalized === "open" || /(failed|blocked)/.test(normalized)) return "danger";
+  if (normalized === "open" || normalized === "reopened" || /(failed|blocked)/.test(normalized)) return "danger";
   if (/(completed|succeeded|clean|passed|resolved|synced|configured|included|available|approved|ready|done|pr open)/.test(normalized)) return "success";
   if (/(progress|running|active|partial|draft|not started)/.test(normalized)) return "info";
   return "neutral";
@@ -113,7 +113,7 @@ function titleStatus(value: unknown) {
     "completed with findings": "Completed", completed: "Completed", clean: "Completed",
     passed: "Passed", failed: "Failed", skipped: "Skipped", open: "Open",
     "in progress": "In progress", running: "Running", configured: "Active",
-    "not configured": "Not set", resolved: "Resolved", synced: "Synced",
+    "not configured": "Not set", resolved: "Resolved", reopened: "Reopened", synced: "Synced",
     ignored: "Ignored", blocked: "Blocked", pending: "Pending", active: "Active",
     "pr open": "PR open", "not started": "Not started", "dev done": "Dev done",
     approved: "Approved", ready: "Ready", draft: "Draft", done: "Done", clarifying: "Clarifying", changed: "Changed"
@@ -792,9 +792,9 @@ function ScanView({ data, project, notify, reload }: { data: DashboardData; proj
   const [scanBusy, setScanBusy] = useState(false);
   const [scanError, setScanError] = useState("");
   const runPageSize = 10;
-  const openIssues = issues.filter((issue: RecordValue) => ["open", "in_progress", "pr_open"].includes(String(issue.status || "").toLowerCase()));
-  const filteredIssues = issues.filter((issue: RecordValue) => filter === "all" || (filter === "open" ? ["open", "in_progress", "pr_open"].includes(String(issue.status || "").toLowerCase()) : String(issue.status || "").toLowerCase() === filter));
-  const counts = { all: issues.length, open: openIssues.length, ignored: issues.filter((item: RecordValue) => item.status === "ignored").length, resolved: issues.filter((item: RecordValue) => ["resolved", "accepted_risk", "false_positive"].includes(item.status)).length };
+  const openIssues = issues.filter((issue: RecordValue) => ["open", "in_progress", "pr_open", "reopened"].includes(String(issue.status || "").toLowerCase()));
+  const filteredIssues = issues.filter((issue: RecordValue) => filter === "all" || (filter === "open" ? ["open", "in_progress", "pr_open", "reopened"].includes(String(issue.status || "").toLowerCase()) : String(issue.status || "").toLowerCase() === filter));
+  const counts = { all: issues.length, open: openIssues.length, ignored: issues.filter((item: RecordValue) => String(item.status || "").toLowerCase() === "ignored").length, resolved: issues.filter((item: RecordValue) => String(item.status || "").toLowerCase() === "resolved").length };
   const pageRuns = runs.slice(runPage * runPageSize, (runPage + 1) * runPageSize);
   const jumpToFindings = () => document.getElementById("tracked-findings")?.scrollIntoView({ behavior: "smooth", block: "start" });
   const startScan = async () => {
@@ -851,8 +851,10 @@ function Pagination({ page, pageCount, onChange }: { page: number; pageCount: nu
 function Finding({ issue, onIgnore }: { issue: RecordValue; onIgnore: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const status = issue.status || issue.issue_status || "open";
-  const isIgnorable = !["ignored", "resolved", "accepted_risk", "false_positive"].includes(String(status).toLowerCase());
-  return <article className="finding"><div className="finding-main"><div className="finding-copy"><div className="finding-heading"><h4>{text(issue.title, "Untitled finding")}</h4><Badge value={status} /></div><p className="finding-meta"><code className="finding-id">{text(issue.id)}</code><i>|</i>{text(issue.repository, "Unknown repository")} <i>|</i> {when(issue.last_seen_at)}</p><div className="finding-links finding-row-links"><button className="finding-link" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide detail" : "View detail"}</button>{issue.jira_key && issue.jira_url && <a className="finding-link" href={issue.jira_url} target="_blank" rel="noreferrer">{issue.jira_key}<ExternalLink size={12} /></a>}{issue.pr_url && <a className="finding-link" href={issue.pr_url} target="_blank" rel="noreferrer">Pull request<ExternalLink size={12} /></a>}</div></div><div className="finding-actions">{isIgnorable && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Code" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /></div>}</article>;
+  const statusKey = String(status).toLowerCase();
+  const isIgnorable = !["ignored", "resolved"].includes(statusKey);
+  const primaryId = text(issue.jira_key) || text(issue.id);
+  return <article className="finding"><div className="finding-main"><div className="finding-copy"><div className="finding-heading"><h4>{text(issue.title, "Untitled finding")}</h4><Badge value={status} /></div><p className="finding-meta"><code className="finding-id">{primaryId}</code><i>|</i>{text(issue.repository, "Unknown repository")} <i>|</i> {when(issue.last_seen_at)}</p><div className="finding-links finding-row-links"><button className="finding-link" onClick={() => setExpanded(!expanded)}>{expanded ? "Hide detail" : "View detail"}</button>{issue.jira_key && issue.jira_url && <a className="finding-link" href={issue.jira_url} target="_blank" rel="noreferrer">{issue.jira_key}<ExternalLink size={12} /></a>}{issue.pr_url && <a className="finding-link" href={issue.pr_url} target="_blank" rel="noreferrer">Pull request<ExternalLink size={12} /></a>}</div></div><div className="finding-actions">{isIgnorable && <button className="button secondary" onClick={onIgnore}>Mark ignored</button>}</div></div>{expanded && <div className="finding-detail"><FindingDetail label="Status" value={titleStatus(status)} /><FindingDetail label="Resolution basis" value={issue.resolution_basis_label || issue.resolution_basis} /><FindingDetail label="Verification" value={issue.verification_label || issue.verification_status} /><FindingDetail label="Resolved by" value={issue.resolved_by} /><FindingDetail label="Resolved at" value={when(issue.resolved_at)} /><FindingDetail label="Last verification" value={when(issue.last_verified_at)} /><FindingDetail label="Impact" value={issue.impact} /><FindingDetail label="Trigger" value={issue.trigger} /><FindingDetail label="Root cause" value={issue.root_cause} /><FindingDetail label="Code" value={issue.code_snippet} code /><FindingDetail label="Recommended correction" value={issue.suggestion} /><FindingDetail label="Validation" value={issue.validation} /><FindingDetail label="Risk Finding ID" value={issue.risk_finding_id} /><FindingDetail label="Legacy Issue ID" value={issue.id} /><FindingDetail label="Status source" value={issue.status_source} /></div>}</article>;
 }
 
 function FindingDetail({ label, value, code = false }: { label: string; value: unknown; code?: boolean }) { return <section className="finding-detail-row"><h5>{label}</h5>{code ? <pre><code>{text(value, "No code snippet was captured for this historical finding.")}</code></pre> : <p>{text(value, "Not recorded.")}</p>}</section>; }

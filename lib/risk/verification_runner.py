@@ -5,7 +5,7 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Protocol
 
 from risk.store import RiskStore, utc_now
 from risk.verification import (
@@ -14,6 +14,87 @@ from risk.verification import (
     finding_observed_in_scan_result,
     is_verification_scan,
 )
+
+
+class VerificationAdapter(Protocol):
+    def verify(
+        self,
+        *,
+        workspace: Path,
+        finding: dict[str, Any],
+        scope: dict[str, Any],
+    ) -> dict[str, Any]:
+        ...
+
+
+class FakeVerificationAdapter:
+    def __init__(self, *, observed: bool = False, result: str = "") -> None:
+        self.observed = observed
+        self.result = result
+
+    def verify(
+        self,
+        *,
+        workspace: Path,
+        finding: dict[str, Any],
+        scope: dict[str, Any],
+    ) -> dict[str, Any]:
+        if self.result:
+            outcome = self.result
+        elif self.observed:
+            outcome = "verification_failed"
+        else:
+            outcome = "verified_clean"
+        return {
+            "mode": "fake",
+            "result": outcome,
+            "observed": True if outcome == "verification_failed" else False if outcome == "verified_clean" else None,
+            "scan": {
+                "verification_scan": True,
+                "scan_mode": "verification",
+                "run_id": f"fake-{uuid.uuid4().hex[:10]}",
+                "finished_at": utc_now(),
+                "repositories": scope.get("repositories") or [],
+                "findings": (
+                    [
+                        {
+                            "id": finding.get("id"),
+                            "repository": finding.get("repository"),
+                            "title": finding.get("title"),
+                            "canonical_fingerprint": finding.get("canonical_fingerprint"),
+                        }
+                    ]
+                    if outcome == "verification_failed"
+                    else []
+                ),
+            },
+            "error": "",
+        }
+
+
+def verification_capability(*, common: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    if str(os.environ.get("LUMEN_TEST_MODE") or "").strip() == "1":
+        return {
+            "available": True,
+            "mode": "test",
+            "reason": "LUMEN_TEST_MODE enables fake/dry verification",
+        }
+    risk = (common or {}).get("risk") if isinstance(common, dict) else {}
+    verification = risk.get("verification") if isinstance(risk, dict) else {}
+    adapter = ""
+    if isinstance(verification, dict):
+        adapter = str(verification.get("adapter") or "").strip()
+    if adapter and adapter not in {"none", "dry_run", "dry-run"}:
+        return {
+            "available": True,
+            "mode": adapter,
+            "reason": f"Configured adapter: {adapter}",
+        }
+    return {
+        "available": False,
+        "mode": "none",
+        "reason": "No real verification adapter configured",
+    }
 
 
 def build_verification_scope(finding: dict[str, Any]) -> dict[str, Any]:
@@ -47,7 +128,6 @@ def _coverage_ok(scope: dict[str, Any], scan: dict[str, Any]) -> bool:
         covered.add(str(item).strip())
     if scan.get("verification_scan") or is_verification_scan(scan):
         if not covered and repos:
-            # dry verification scans may omit repo lists; accept detector flag
             return True
     return bool(repos & covered) or bool(scan.get("verification_scan"))
 
@@ -94,7 +174,12 @@ def create_verification_request(
     return {"request_id": request_id, "scope": scope, "requested_at": when}
 
 
-def _run_verification_scan(workspace: Path, finding_id: str, *, force_observed: bool = False) -> tuple[Optional[Path], Optional[dict[str, Any]], str]:
+def _run_dry_verification_scan(
+    workspace: Path,
+    finding_id: str,
+    *,
+    force_observed: bool = False,
+) -> tuple[Optional[Path], Optional[dict[str, Any]], str]:
     env = os.environ.copy()
     env["LUMEN_DRY_RUN"] = "1"
     env["LUMEN_VERIFICATION_FINDING"] = finding_id
@@ -133,6 +218,32 @@ def _run_verification_scan(workspace: Path, finding_id: str, *, force_observed: 
     return path, data, ""
 
 
+class DryRunVerificationAdapter:
+    def __init__(self, *, force_observed: bool = False) -> None:
+        self.force_observed = force_observed
+
+    def verify(
+        self,
+        *,
+        workspace: Path,
+        finding: dict[str, Any],
+        scope: dict[str, Any],
+    ) -> dict[str, Any]:
+        path, scan, err = _run_dry_verification_scan(
+            workspace,
+            str(finding.get("id") or ""),
+            force_observed=self.force_observed,
+        )
+        return {
+            "mode": "dry_run",
+            "result": "",
+            "observed": None,
+            "scan": scan,
+            "path": path,
+            "error": err,
+        }
+
+
 def run_verification(
     store: RiskStore,
     workspace: Path,
@@ -142,6 +253,8 @@ def run_verification(
     source_message_id: str = "",
     trace_id: str = "",
     force_observed: bool = False,
+    scan_adapter: Optional[VerificationAdapter] = None,
+    common: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     row = store.get_finding(finding_id)
     if row is None:
@@ -159,6 +272,34 @@ def run_verification(
             "display_status": display_status(finding),
         }
 
+    capability = verification_capability(common=common)
+    adapter = scan_adapter
+    if adapter is None:
+        if not capability["available"]:
+            return {
+                "status": "error",
+                "code": "REAL_VERIFICATION_NOT_AVAILABLE",
+                "message": "A real verification runner is not configured for this project.",
+                "finding_id": finding_id,
+                "available": False,
+                "mode": capability.get("mode") or "none",
+                "reason": capability.get("reason") or "",
+                "display_status": display_status(finding),
+            }
+        if capability.get("mode") == "test":
+            adapter = DryRunVerificationAdapter(force_observed=force_observed)
+        else:
+            return {
+                "status": "error",
+                "code": "REAL_VERIFICATION_NOT_AVAILABLE",
+                "message": "A real verification runner is not configured for this project.",
+                "finding_id": finding_id,
+                "available": False,
+                "mode": capability.get("mode") or "none",
+                "reason": capability.get("reason") or "",
+                "display_status": display_status(finding),
+            }
+
     created = create_verification_request(
         store,
         finding,
@@ -175,7 +316,10 @@ def run_verification(
     )
     store.commit()
 
-    path, scan, err = _run_verification_scan(workspace, finding_id, force_observed=force_observed)
+    adapter_out = adapter.verify(workspace=workspace, finding=finding, scope=scope)
+    scan = adapter_out.get("scan") if isinstance(adapter_out.get("scan"), dict) else None
+    path = adapter_out.get("path")
+    err = str(adapter_out.get("error") or "")
     run_id = f"verify_run_{uuid.uuid4().hex[:12]}"
     if scan is None:
         store.execute(
@@ -205,14 +349,20 @@ def run_verification(
     if remediated_at and completed_at and completed_at < remediated_at:
         fresh = False
     covered = _coverage_ok(scope, scan)
-    observed = finding_observed_in_scan_result(scan, finding)
-
-    if not fresh or not covered:
-        result = "inconclusive"
-    elif observed:
-        result = "verification_failed"
+    forced_result = str(adapter_out.get("result") or "").strip().lower()
+    if forced_result in {"verified_clean", "verification_failed", "inconclusive"}:
+        result = forced_result
+        observed = adapter_out.get("observed")
+        if observed is None and result != "inconclusive":
+            observed = result == "verification_failed"
     else:
-        result = "verified_clean"
+        observed = finding_observed_in_scan_result(scan, finding)
+        if not fresh or not covered:
+            result = "inconclusive"
+        elif observed:
+            result = "verification_failed"
+        else:
+            result = "verified_clean"
 
     coverage = {
         "repositories": scope.get("repositories") or [],
@@ -270,6 +420,7 @@ def run_verification(
         "started_at": started,
         "completed_at": completed_at,
         "result_path": str(path) if path else None,
+        "adapter_mode": adapter_out.get("mode") or "",
     }
     out = dict(applied)
     out["request_id"] = request_id

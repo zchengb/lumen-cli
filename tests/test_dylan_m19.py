@@ -92,7 +92,7 @@ class SoulV3Tests(unittest.TestCase):
     def test_resume_mentions_proactive_closure(self) -> None:
         prompt = build_resume_prompt(user_message="修好了", project_slug="demo")
         self.assertIn("progress / explicit resolve", prompt)
-        self.assertIn("scan verify", prompt)
+        self.assertIn("do not ask for Verification", prompt)
 
 
 class StatusDisplayTests(unittest.TestCase):
@@ -105,11 +105,11 @@ class StatusDisplayTests(unittest.TestCase):
                     "verification_status": "pending_verification",
                 }
             ),
-            "Remediated · Pending verification",
+            "Open",
         )
         self.assertEqual(
             display_status({"status": "Resolved", "verification_status": "verified_clean"}),
-            "Resolved · Verified clean",
+            "Resolved",
         )
         self.assertEqual(
             display_status(
@@ -119,7 +119,7 @@ class StatusDisplayTests(unittest.TestCase):
                     "verification_status": "verification_failed",
                 }
             ),
-            "Verification failed · Open",
+            "Open",
         )
 
 
@@ -144,7 +144,7 @@ class RemediationVerificationTests(unittest.TestCase):
             )
             self.assertEqual(first["status"], "ok")
             self.assertFalse(first["idempotent"])
-            self.assertEqual(first["display_status"], "Remediated · Pending verification")
+            self.assertEqual(first["display_status"], "Open")
             second = mark_remediated(
                 store,
                 finding_id,
@@ -203,7 +203,7 @@ class WorkspaceContractTests(unittest.TestCase):
             ensure_workspace_contract(workspace=root, project_slug="demo")
             text = (root / "AGENTS.md").read_text(encoding="utf-8")
             self.assertIn("Keep me", text)
-            self.assertIn("LUMEN MANAGED START version=4", text)
+            self.assertIn("LUMEN MANAGED START version=5", text)
             self.assertIn("mark-remediated", text)
             ensure_workspace_contract(workspace=root, project_slug="demo")
             text2 = (root / "AGENTS.md").read_text(encoding="utf-8")
@@ -346,12 +346,39 @@ class CliWriteTests(unittest.TestCase):
                     "--json",
                 ]
             )
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 1)
             store = RiskStore(workspace)
             row = dict(store.get_finding(finding_id))
-            self.assertEqual(row["status"], STATUS_RESOLVED)
-            self.assertEqual(row["verification_status"], "verified_clean")
+            self.assertEqual(row["status"], STATUS_OPEN)
+            self.assertEqual(row["verification_status"], "pending_verification")
             store.close()
+            os.environ["LUMEN_TEST_MODE"] = "1"
+            try:
+                code = cli.main(
+                    [
+                        "scan",
+                        "verify",
+                        "--workspace",
+                        str(workspace),
+                        "--finding",
+                        finding_id,
+                        "--actor",
+                        "u1",
+                        "--source-message-id",
+                        "om_v",
+                        "--trace-id",
+                        "tr_v",
+                        "--json",
+                    ]
+                )
+                self.assertEqual(code, 0)
+                store = RiskStore(workspace)
+                row = dict(store.get_finding(finding_id))
+                self.assertEqual(row["status"], STATUS_RESOLVED)
+                self.assertEqual(row["verification_status"], "verified_clean")
+                store.close()
+            finally:
+                os.environ.pop("LUMEN_TEST_MODE", None)
 
 
 if __name__ == "__main__":
