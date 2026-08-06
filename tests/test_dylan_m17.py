@@ -30,7 +30,7 @@ def _v3_common(provider: str = "fake") -> dict:
                     "enabled": True,
                     "routing_mode": "agent_only",
                     "model": {"provider": provider, "model": "fake-model", "required": True},
-                    "reaction": {"enabled": True, "emoji_type": "OnIt"},
+                    "reaction": {"enabled": True, "emoji_type": "Typing"},
                     "agent_loop": {"allow_multi_task": True, "max_tool_calls": 8},
                 },
                 "risk_analyst": {"enabled": True, "conversation_v2": {"enabled": True, "grounding_guard_enabled": True}},
@@ -44,7 +44,7 @@ class ConversationV3FlagsTests(unittest.TestCase):
         flags = ConversationFlags.from_common(_v3_common())
         self.assertTrue(flags.v3_enabled)
         self.assertTrue(flags.agent_only)
-        self.assertEqual(flags.reaction.emoji_type, "OnIt")
+        self.assertEqual(flags.reaction.emoji_type, "Typing")
 
 
 class AgentOnlyPathTests(unittest.TestCase):
@@ -158,5 +158,41 @@ class ObservabilityTests(unittest.TestCase):
                 os.environ.pop("LUMEN_AGENTS_HOME", None)
 
 
-if __name__ == "__main__":
-    unittest.main()
+class RuntimeInlineJobTests(unittest.TestCase):
+    def test_run_conversation_job_observability_same_thread(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        from agents.dylan.runtime import run_conversation_job
+
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["LUMEN_AGENTS_HOME"] = tmp
+            try:
+
+                def worker() -> dict:
+                    obs = Observability()
+                    try:
+                        trace = TraceContext(trace_id=new_trace_id(), message_id="om_inline")
+                        obs.emit(trace, "message.received")
+                        obs.upsert_trace(trace, state="completed", latency_ms=1)
+                        return {"status": "ok", "action": "test", "trace_id": trace.trace_id}
+                    finally:
+                        obs.close()
+
+                with ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        run_conversation_job,
+                        message_id="om_inline",
+                        chat_id="oc_1",
+                        thread_id="",
+                        user_id="ou_1",
+                        worker=worker,
+                    )
+                    out = future.result(timeout=5)
+                self.assertEqual(out["status"], "completed")
+                self.assertEqual(out["result"]["status"], "ok")
+                obs = Observability()
+                row = obs.get_trace(out["result"]["trace_id"])
+                self.assertIsNotNone(row)
+                obs.close()
+            finally:
+                os.environ.pop("LUMEN_AGENTS_HOME", None)

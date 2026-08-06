@@ -29,13 +29,12 @@ def get_executor() -> ThreadPoolExecutor:
     return _EXECUTOR
 
 
-def submit_conversation_job(
+def _prepare_conversation_job(
     *,
     message_id: str,
     chat_id: str,
     thread_id: str,
     user_id: str,
-    worker: Callable[[], Any],
 ) -> dict[str, Any]:
     bootstrap = ConversationJobStore()
     try:
@@ -52,35 +51,97 @@ def submit_conversation_job(
                 "state": "queued",
             }
         )
+        return {"status": "queued", "job": job, "job_message_id": job_message_id}
     finally:
         bootstrap.close()
 
+
+def _execute_conversation_job(
+    *,
+    job_message_id: str,
+    chat_id: str,
+    thread_id: str,
+    worker: Callable[[], Any],
+) -> Any:
+    jobs = ConversationJobStore()
+    try:
+        lock = _SCOPE_LOCKS.lock_for(chat_id, thread_id)
+        with lock:
+            jobs.update(job_message_id, state="routing")
+            try:
+                result = worker()
+                jobs.update(
+                    job_message_id,
+                    state="completed",
+                    intent=str((result or {}).get("action") or ""),
+                    completed_at=utc_now(),
+                )
+                return result
+            except Exception as exc:
+                _LOG.exception("conversation job failed")
+                jobs.update(
+                    job_message_id,
+                    state="failed",
+                    error_code="worker_error",
+                    error_detail=str(exc)[:300],
+                )
+                raise
+    finally:
+        jobs.close()
+
+
+def run_conversation_job(
+    *,
+    message_id: str,
+    chat_id: str,
+    thread_id: str,
+    user_id: str,
+    worker: Callable[[], Any],
+) -> dict[str, Any]:
+    """Run on the current thread. Prefer this from Feishu pool workers to avoid nested-pool deadlock."""
+    prepared = _prepare_conversation_job(
+        message_id=message_id,
+        chat_id=chat_id,
+        thread_id=thread_id,
+        user_id=user_id,
+    )
+    if prepared.get("status") == "duplicate":
+        return prepared
+    result = _execute_conversation_job(
+        job_message_id=str(prepared["job_message_id"]),
+        chat_id=chat_id,
+        thread_id=thread_id,
+        worker=worker,
+    )
+    return {"status": "completed", "job": prepared.get("job"), "result": result}
+
+
+def submit_conversation_job(
+    *,
+    message_id: str,
+    chat_id: str,
+    thread_id: str,
+    user_id: str,
+    worker: Callable[[], Any],
+) -> dict[str, Any]:
+    prepared = _prepare_conversation_job(
+        message_id=message_id,
+        chat_id=chat_id,
+        thread_id=thread_id,
+        user_id=user_id,
+    )
+    if prepared.get("status") == "duplicate":
+        return prepared
+    job_message_id = str(prepared["job_message_id"])
+    job = prepared.get("job")
+
     def _run() -> Any:
-        jobs = ConversationJobStore()
-        try:
-            lock = _SCOPE_LOCKS.lock_for(chat_id, thread_id)
-            with lock:
-                jobs.update(job_message_id, state="routing")
-                try:
-                    result = worker()
-                    jobs.update(
-                        job_message_id,
-                        state="completed",
-                        intent=str((result or {}).get("action") or ""),
-                        completed_at=utc_now(),
-                    )
-                    return result
-                except Exception as exc:
-                    _LOG.exception("conversation job failed")
-                    jobs.update(
-                        job_message_id,
-                        state="failed",
-                        error_code="worker_error",
-                        error_detail=str(exc)[:300],
-                    )
-                    raise
-        finally:
-            jobs.close()
+        return _execute_conversation_job(
+            job_message_id=job_message_id,
+            chat_id=chat_id,
+            thread_id=thread_id,
+            worker=worker,
+        )
 
     future = get_executor().submit(_run)
     return {"status": "queued", "job": job, "future": future}

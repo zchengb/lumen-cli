@@ -422,7 +422,7 @@ def migrate_global(conn: sqlite3.Connection) -> None:
 
 def connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=30)
     conn.row_factory = sqlite3.Row
     migrate(conn)
     return conn
@@ -430,7 +430,8 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 def connect_global(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    # Gateway workers share agents.sqlite3 across threads; allow cross-thread use.
+    conn = sqlite3.connect(str(db_path), timeout=30, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     migrate_global(conn)
     return conn

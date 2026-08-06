@@ -245,7 +245,9 @@ def handle_conversation(
             language = "en"
             if any("\u4e00" <= ch <= "\u9fff" for ch in text):
                 language = "zh-Hant" if any(tok in text for tok in ("麼", "們", "這", "個")) else "zh-Hans"
-            msg = t(language, "agent_unavailable")
+            detail = str(exc).lower()
+            key = "agent_auth_required" if ("authentication required" in detail or "agent login" in detail or "cursor_api_key" in detail) else "agent_unavailable"
+            msg = t(language, key)
             return {
                 "status": "error",
                 "action": "agent.unavailable",

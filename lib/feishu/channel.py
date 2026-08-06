@@ -119,6 +119,9 @@ class FeishuChannel:
         handler = (
             EventDispatcherHandler.builder("", "")
             .register_p2_im_message_receive_v1(on_message)
+            .register_p2_im_message_message_read_v1(lambda *_a, **_k: None)
+            .register_p2_im_message_reaction_created_v1(lambda *_a, **_k: None)
+            .register_p2_im_message_reaction_deleted_v1(lambda *_a, **_k: None)
             .build()
         )
         ws = WsClient(

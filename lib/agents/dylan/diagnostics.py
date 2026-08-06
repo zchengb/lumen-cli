@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -16,6 +18,12 @@ def _check(name: str, status: str, detail: str = "") -> dict[str, str]:
 
 
 def doctor_deep(*, common: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    try:
+        from agents.dylan.model_client import _load_lumen_dotenv
+
+        _load_lumen_dotenv()
+    except Exception:
+        pass
     config = load_agents_config()
     flags = ConversationFlags.from_common(common or {}, config)
     checks: list[dict[str, str]] = []
@@ -41,6 +49,29 @@ def doctor_deep(*, common: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             agent_bin or "not found",
         )
     )
+    if agent_bin and flags.model.provider == "cursor":
+        try:
+            completed = subprocess.run(
+                [agent_bin, "status"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+            status_text = (completed.stdout or completed.stderr or "").strip()
+            logged_in = "not logged in" not in status_text.lower() and completed.returncode == 0
+            if os.environ.get("CURSOR_API_KEY"):
+                logged_in = True
+                status_text = "CURSOR_API_KEY present"
+            checks.append(
+                _check(
+                    "agent_auth",
+                    "PASS" if logged_in else "FAIL",
+                    status_text[:160] or f"exit={completed.returncode}",
+                )
+            )
+        except Exception as exc:
+            checks.append(_check("agent_auth", "FAIL", str(exc)[:120]))
     checks.append(
         _check(
             "model",
@@ -48,8 +79,6 @@ def doctor_deep(*, common: Optional[dict[str, Any]] = None) -> dict[str, Any]:
             f"{flags.model.provider}/{flags.model.model_name} required={flags.model.required}",
         )
     )
-    import os
-
     has_creds = bool(os.environ.get("FEISHU_DYLAN_APP_ID") and os.environ.get("FEISHU_DYLAN_APP_SECRET"))
     checks.append(_check("feishu_credentials", "PASS" if has_creds else "WARN", "FEISHU_DYLAN_APP_ID/SECRET"))
     checks.append(

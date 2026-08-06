@@ -27,7 +27,11 @@ def _load_dotenv(path: Path) -> None:
         key, value = raw.split("=", 1)
         key = key.strip()
         value = value.strip().strip("'").strip('"')
-        if key and key not in os.environ:
+        if not key:
+            continue
+        if key == "CURSOR_API_KEY" and value:
+            os.environ[key] = value
+        elif key not in os.environ:
             os.environ[key] = value
 
 

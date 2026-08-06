@@ -93,7 +93,7 @@ class FeishuMessenger:
         return self._post(
             REACTION_URL.format(message_id=message_id),
             token,
-            {"reaction_type": {"emoji_type": str(emoji_type or "OnIt")}},
+            {"reaction_type": {"emoji_type": str(emoji_type or "Typing")}},
         )
 
     def delete_reaction(self, message_id: str, reaction_id: str) -> dict[str, Any]:

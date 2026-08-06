@@ -22,7 +22,7 @@ class ReactionThinkingSession:
     ) -> None:
         self.messenger = messenger
         self.source_message_id = source_message_id
-        self.emoji_type = emoji_type or "OnIt"
+        self.emoji_type = emoji_type or "Typing"
         self.trace = trace
         self.obs = obs
         self.enabled = enabled

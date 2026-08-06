@@ -53,8 +53,8 @@ class ModelConfig:
     max_router_retries: int = 1
     max_response_retries: int = 1
     model_name: str = "cursor-grok-4.5-medium"
-    planner_timeout_seconds: int = 15
-    responder_timeout_seconds: int = 30
+    planner_timeout_seconds: int = 45
+    responder_timeout_seconds: int = 60
     required: bool = True
 
 
@@ -71,7 +71,7 @@ class TypingConfig:
 @dataclass
 class ReactionConfig:
     enabled: bool = True
-    emoji_type: str = "OnIt"
+    emoji_type: str = "Typing"
     add_immediately: bool = True
     remove_on_success: bool = True
     remove_on_failure: bool = True
@@ -134,13 +134,13 @@ class ConversationFlags:
         obs_raw = v3.get("observability") if isinstance(v3.get("observability"), dict) else {}
         model = ModelConfig(
             provider=str(model_src.get("provider") or "cursor"),
-            router_timeout_seconds=int(model_src.get("router_timeout_seconds") or model_src.get("planner_timeout_seconds") or 15),
-            response_timeout_seconds=int(model_src.get("response_timeout_seconds") or model_src.get("responder_timeout_seconds") or 30),
+            router_timeout_seconds=int(model_src.get("router_timeout_seconds") or model_src.get("planner_timeout_seconds") or 45),
+            response_timeout_seconds=int(model_src.get("response_timeout_seconds") or model_src.get("responder_timeout_seconds") or 60),
             max_router_retries=int(model_src.get("max_router_retries") or model_src.get("max_planner_retries") or 1),
             max_response_retries=int(model_src.get("max_response_retries") or model_src.get("max_responder_retries") or 1),
             model_name=str(model_src.get("model") or model_src.get("name") or "cursor-grok-4.5-medium"),
-            planner_timeout_seconds=int(model_src.get("planner_timeout_seconds") or 15),
-            responder_timeout_seconds=int(model_src.get("responder_timeout_seconds") or 30),
+            planner_timeout_seconds=int(model_src.get("planner_timeout_seconds") or 45),
+            responder_timeout_seconds=int(model_src.get("responder_timeout_seconds") or 60),
             required=bool(model_src.get("required", True if v3.get("enabled") else False)),
         )
         typing = TypingConfig(
@@ -153,7 +153,7 @@ class ConversationFlags:
         )
         reaction = ReactionConfig(
             enabled=bool(reaction_raw.get("enabled", True)),
-            emoji_type=str(reaction_raw.get("emoji_type") or "OnIt"),
+            emoji_type=str(reaction_raw.get("emoji_type") or "Typing"),
             add_immediately=bool(reaction_raw.get("add_immediately", True)),
             remove_on_success=bool(reaction_raw.get("remove_on_success", True)),
             remove_on_failure=bool(reaction_raw.get("remove_on_failure", True)),

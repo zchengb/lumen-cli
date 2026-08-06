@@ -14,8 +14,8 @@
       "model": {
         "provider": "cursor",
         "model": "cursor-grok-4.5-medium",
-        "planner_timeout_seconds": 15,
-        "responder_timeout_seconds": 30,
+        "planner_timeout_seconds": 45,
+        "responder_timeout_seconds": 60,
         "max_planner_retries": 1,
         "max_responder_retries": 1,
         "required": true
@@ -28,7 +28,7 @@
       },
       "reaction": {
         "enabled": true,
-        "emoji_type": "OnIt",
+        "emoji_type": "Typing",
         "add_immediately": true,
         "remove_on_success": true,
         "remove_on_failure": true,

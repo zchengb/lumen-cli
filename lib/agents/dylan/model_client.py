@@ -125,6 +125,42 @@ def _parse_agent_plan(data: dict[str, Any], *, source: str) -> AgentPlan:
     )
 
 
+def _load_lumen_dotenv() -> None:
+    homes = []
+    override = os.environ.get("LUMEN_HOME", "").strip()
+    if override:
+        homes.append(Path(override).expanduser())
+    homes.append(Path.home() / ".lumen")
+    seen: set[Path] = set()
+    for home in homes:
+        path = home / ".env.local"
+        if path in seen or not path.is_file():
+            continue
+        seen.add(path)
+        for line in path.read_text(encoding="utf-8").splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip("'").strip('"')
+            if not key:
+                continue
+            if key == "CURSOR_API_KEY" and value:
+                os.environ[key] = value
+            elif key not in os.environ:
+                os.environ[key] = value
+
+
+def _format_agent_error(exc: BaseException, *, timeout: int) -> str:
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return f"agent timed out after {timeout}s"
+    text = str(exc).strip()
+    if text.startswith("Command '['"):
+        return f"agent command failed/timed out after {timeout}s"
+    return text[:400]
+
+
 class CursorDylanModelClient(DylanModelClient):
     provider_name = "cursor"
 
@@ -133,9 +169,10 @@ class CursorDylanModelClient(DylanModelClient):
         self.workspace = Path(workspace).expanduser() if workspace else Path.home()
 
     def _env(self) -> dict[str, str]:
+        _load_lumen_dotenv()
         env = os.environ.copy()
-        if env.get("CURSOR_API_KEY") or not env.get("AGENT_CLI_CREDENTIAL_STORE"):
-            env["AGENT_CLI_CREDENTIAL_STORE"] = "file"
+        if env.get("CURSOR_API_KEY"):
+            env.setdefault("AGENT_CLI_CREDENTIAL_STORE", "file")
         return env
 
     def _run_agent(self, prompt: str, *, timeout: int) -> str:
@@ -157,14 +194,17 @@ class CursorDylanModelClient(DylanModelClient):
             self.config.model_name,
             prompt,
         ]
-        completed = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            env=self._env(),
-            timeout=timeout,
-            check=False,
-        )
+        try:
+            completed = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                env=self._env(),
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(_format_agent_error(exc, timeout=timeout)) from exc
         if completed.returncode != 0:
             raise RuntimeError((completed.stderr or completed.stdout or "agent failed")[:500])
         return completed.stdout or ""
@@ -181,7 +221,7 @@ class CursorDylanModelClient(DylanModelClient):
                 data = _extract_json_object(output)
                 return _parse_router_result(data, source="llm:cursor")
             except Exception as exc:
-                last_error = str(exc)
+                last_error = _format_agent_error(exc, timeout=self.config.router_timeout_seconds)
         raise RuntimeError(f"router model failed: {last_error}")
 
     def plan(self, request: dict[str, Any]) -> AgentPlan:
@@ -190,13 +230,14 @@ class CursorDylanModelClient(DylanModelClient):
         prompt = planner_prompt(request)
         attempts = max(self.config.max_router_retries, 0) + 1
         last_error = ""
+        timeout = self.config.planner_timeout_seconds or self.config.router_timeout_seconds
         for _ in range(attempts):
             try:
-                output = self._run_agent(prompt, timeout=self.config.planner_timeout_seconds)
+                output = self._run_agent(prompt, timeout=timeout)
                 data = _extract_json_object(output)
                 return _parse_agent_plan(data, source="llm:cursor")
             except Exception as exc:
-                last_error = str(exc)
+                last_error = _format_agent_error(exc, timeout=timeout)
         raise RuntimeError(f"planner model failed: {last_error}")
 
     def respond(self, request: dict[str, Any]) -> GeneratedResponse:
@@ -215,14 +256,14 @@ class CursorDylanModelClient(DylanModelClient):
                     text = output.strip()
                 return GeneratedResponse(text=text, mode="model", raw=output)
             except Exception as exc:
-                last_error = str(exc)
+                last_error = _format_agent_error(exc, timeout=timeout)
                 try:
                     output = self._run_agent(prompt, timeout=timeout)
                     text = output.strip()
                     if text:
                         return GeneratedResponse(text=text, mode="model_text", raw=output)
                 except Exception as exc2:
-                    last_error = str(exc2)
+                    last_error = _format_agent_error(exc2, timeout=timeout)
         raise RuntimeError(f"response model failed: {last_error}")
 
 
