@@ -505,6 +505,40 @@ class DeliveryWorkspaceTests(unittest.TestCase):
             self.assertEqual("not_generated", json.loads(result.read_text(encoding="utf-8"))["report"]["status"])
             self.assertFalse((workspace / "reports").exists())
 
+    def test_agent_feishu_placeholder_still_publishes(self) -> None:
+        renderer = load_scan_notification_renderer()
+        self.assertTrue(renderer._feishu_needs_publish({}))
+        self.assertTrue(renderer._feishu_needs_publish({"feishu": {"status": "not_sent", "error": None}}))
+        self.assertTrue(renderer._feishu_needs_publish({"feishu": {"status": "pending"}}))
+        self.assertFalse(renderer._feishu_needs_publish({"feishu": {"status": "sent", "error": None}}))
+        self.assertFalse(renderer._feishu_needs_publish({"feishu": {"status": "failed", "error": "boom"}}))
+        self.assertFalse(renderer._feishu_needs_publish({"feishu": {"status": "skipped"}}))
+        with tempfile.TemporaryDirectory() as temp:
+            workspace = Path(temp)
+            result = workspace / "results" / "scan-result.json"
+            result.parent.mkdir()
+            result.write_text(
+                json.dumps(
+                    {
+                        "started_at": "2026-08-05T04:00:00Z",
+                        "findings": [],
+                        "feishu": {"status": "not_sent", "error": None},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "render-report-and-notify.py"), str(result)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={**os.environ, "FEISHU_WEBHOOK_URL": ""},
+            )
+            payload = json.loads(result.read_text(encoding="utf-8"))
+            self.assertEqual("not_sent", payload["feishu"]["status"])
+            self.assertIn("FEISHU_WEBHOOK_URL", str(payload["feishu"].get("error") or ""))
+            self.assertIn("feishu_status", completed.stdout)
+
     def test_delivery_notification_uses_run_started_at_for_duration(self) -> None:
         renderer = load_delivery_notification_renderer()
         with tempfile.TemporaryDirectory() as temp:

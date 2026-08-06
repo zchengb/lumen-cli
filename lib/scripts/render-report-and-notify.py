@@ -828,6 +828,16 @@ def send_feishu(card: dict, webhook_url: str) -> None:
                 raise RuntimeError(f"Feishu webhook error: {redact(body)}")
 
 
+def _feishu_needs_publish(scan: dict) -> bool:
+    if "feishu" not in scan:
+        return True
+    feishu = scan.get("feishu")
+    if not isinstance(feishu, dict):
+        return True
+    status = str(feishu.get("status") or "").strip().lower()
+    return status in {"", "not_sent", "pending"}
+
+
 def _publish_scan_feishu(card: dict, webhook_url: str, common: dict, dry_run: bool, enabled: bool) -> dict:
     if dry_run:
         event = NotificationEvent(
@@ -973,7 +983,7 @@ def main() -> int:
         except Exception as exc:
             scan["feishu"] = {"status": "failed", "error": redact(str(exc))}
             card = None
-    if "feishu" not in scan:
+    if _feishu_needs_publish(scan):
         try:
             scan["feishu"] = _publish_scan_feishu(card or {}, webhook_url, common, dry_run, feishu_enabled)
         except Exception as exc:
