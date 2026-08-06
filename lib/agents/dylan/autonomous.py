@@ -9,6 +9,7 @@ from agents.dylan.autonomous_runtime import AgentRunResult, CursorAgentRuntime
 from agents.dylan.feishu_format import sanitize_feishu_answer
 from agents.dylan.observability import Observability, TraceContext, new_trace_id
 from agents.dylan.schemas import ConversationFlags
+from agents.dylan.reply_anchor import format_anchored_user_message, resolve_reply_anchor
 from agents.dylan.session_bootstrap import build_bootstrap_prompt, build_resume_prompt
 from agents.dylan.session_store import (
     PROTOCOL_VERSION,
@@ -18,6 +19,7 @@ from agents.dylan.session_store import (
 )
 from agents.dylan.workspace_contract import ensure_workspace_contract
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
+from feishu.messenger import FeishuMessenger
 
 
 class AutonomousUnavailableError(RuntimeError):
@@ -116,6 +118,17 @@ def handle_autonomous_conversation(
     owned_obs = obs is None
     obs = obs or Observability()
     store = SessionStore(obs.store)
+    parent_id = str(meta.get("parent_id") or "").strip()
+    anchored_text = text
+    if parent_id:
+        messenger = FeishuMessenger("dylan")
+        anchor = resolve_reply_anchor(messenger=messenger, parent_id=parent_id)
+        if anchor:
+            anchored_text = format_anchored_user_message(
+                user_message=text,
+                parent_id=parent_id,
+                anchor_text=anchor,
+            )
     if trace is None:
         trace = TraceContext(
             trace_id=new_trace_id(),
@@ -131,6 +144,8 @@ def handle_autonomous_conversation(
         trace.project_slug = slug
         trace.provider = "cursor_cli"
         trace.model = flags.model.model_name
+    if parent_id and anchored_text != text:
+        obs.emit(trace, "reply.anchor.resolved", parent_id=parent_id)
     lock = store.lock_for(scope)
     with lock:
         try:
@@ -155,7 +170,7 @@ def handle_autonomous_conversation(
                 prompt = build_bootstrap_prompt(
                     project_slug=slug,
                     workspace_path=str(workspace),
-                    user_message=text,
+                    user_message=anchored_text,
                 )
                 provider_session_id = None
             else:
@@ -171,7 +186,7 @@ def handle_autonomous_conversation(
                     prompt = build_bootstrap_prompt(
                         project_slug=slug,
                         workspace_path=str(workspace),
-                        user_message=text,
+                        user_message=anchored_text,
                     )
                     provider_session_id = None
                     is_new = True
@@ -183,7 +198,7 @@ def handle_autonomous_conversation(
                         except Exception:
                             checkpoint = None
                     prompt = build_resume_prompt(
-                        user_message=text,
+                        user_message=anchored_text,
                         project_slug=slug,
                         checkpoint=checkpoint,
                     )
@@ -220,7 +235,7 @@ def handle_autonomous_conversation(
                 prompt = build_bootstrap_prompt(
                     project_slug=slug,
                     workspace_path=str(workspace),
-                    user_message=text,
+                    user_message=anchored_text,
                 )
                 result = runner.run(
                     workspace=workspace,

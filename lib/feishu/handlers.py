@@ -43,6 +43,8 @@ def extract_message_meta(event: dict[str, Any]) -> dict[str, str]:
         "message_id": str(message.get("message_id") or "").strip(),
         "chat_id": str(message.get("chat_id") or "").strip(),
         "thread_id": str(message.get("thread_id") or message.get("root_id") or "").strip(),
+        "parent_id": str(message.get("parent_id") or "").strip(),
+        "root_id": str(message.get("root_id") or "").strip(),
         "chat_type": str(message.get("chat_type") or "").strip(),
         "user_id": str(sender_id.get("open_id") or sender_id.get("user_id") or "").strip(),
         "app_id": str(header.get("app_id") or "").strip(),
@@ -84,7 +86,11 @@ def handle_message_event(event: dict[str, Any], client: FeishuClientConfig) -> N
     meta = extract_message_meta(event)
     if not meta.get("app_id"):
         meta["app_id"] = client.app_id
-    log.info("handle text=%r meta=%s", text[:120], {k: meta.get(k) for k in ("message_id", "chat_id", "chat_type")})
+    log.info(
+        "handle text=%r meta=%s",
+        text[:120],
+        {k: meta.get(k) for k in ("message_id", "chat_id", "chat_type", "parent_id")},
+    )
     handle_agent_message(
         agent_id=client.agent_id,
         text=text,

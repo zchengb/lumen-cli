@@ -13,8 +13,9 @@ from agents.permissions import is_chat_allowed
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
 from feishu.cards import ack_card, progress_card, scan_summary_card
 from feishu.config import load_agents_config
-from feishu.messenger import FeishuMessenger
+from feishu.messenger import FeishuMessenger, extract_message_id
 from workflows.scan_adapter import ScanAdapter
+from agents.dylan.reply_anchor import remember_outbound
 
 
 def _load_workspace_common(workspace: str) -> dict[str, Any]:
@@ -174,6 +175,15 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                             obs.emit(trace, "reply.failed", level="ERROR")
                             obs.upsert_trace(trace, reply_status="failed", state="failed", error_code="reply_failed")
                             raise RuntimeError("final reply failed")
+                        try:
+                            remember_outbound(
+                                message_id=extract_message_id(sent),
+                                text=reply_text,
+                                chat_id=chat_id,
+                                agent_id="dylan",
+                            )
+                        except Exception:
+                            pass
                     obs.emit(trace, "reply.succeeded")
                     obs.upsert_trace(trace, reply_status="succeeded", state="completed")
                     obs.emit(trace, "job.completed", latency_ms=result.get("latency_ms"))

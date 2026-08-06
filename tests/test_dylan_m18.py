@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -228,6 +229,35 @@ class UserFacingErrorTests(unittest.TestCase):
 
         text = _user_facing_agent_error("Failed to reach the Cursor API", "tr_x")
         self.assertIn("Cursor Agent service", text)
+
+
+class ReplyAnchorTests(unittest.TestCase):
+    def test_format_anchor_overrides_latest_topic(self) -> None:
+        from agents.dylan.reply_anchor import format_anchored_user_message, extract_content_text, remember_outbound, lookup_outbound
+        import tempfile
+        from unittest.mock import patch
+
+        text = format_anchored_user_message(
+            user_message="按你的建議來",
+            parent_id="om_a",
+            anchor_text="建議：保持 MBPAS-1559 Open，等下次 scan 驗證。",
+        )
+        self.assertIn("FEISHU REPLY ANCHOR", text)
+        self.assertIn("MBPAS-1559", text)
+        self.assertIn("按你的建議來", text)
+        self.assertIn("PRIOR message", text)
+
+        card = {
+            "schema": "2.0",
+            "body": {"elements": [{"tag": "markdown", "content": "## 決定\n保持 Open"}]},
+        }
+        extracted = extract_content_text("interactive", json.dumps(card, ensure_ascii=False))
+        self.assertIn("保持 Open", extracted)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch("agents.dylan.reply_anchor.agents_home", return_value=Path(tmp)):
+                remember_outbound(message_id="om_x", text="suggestion A about webhook")
+                self.assertEqual(lookup_outbound("om_x"), "suggestion A about webhook")
 
 
 if __name__ == "__main__":

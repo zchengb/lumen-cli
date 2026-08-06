@@ -205,6 +205,22 @@ class FeishuMessenger:
             },
         )
 
+    def get_message(self, message_id: str) -> dict[str, Any]:
+        token = self.tenant_token()
+        return self._request(
+            "GET",
+            UPDATE_URL.format(message_id=message_id),
+            token,
+            None,
+        )
+
+    def safe_get_message(self, message_id: str) -> Optional[dict[str, Any]]:
+        try:
+            return self.get_message(message_id)
+        except Exception as exc:
+            _LOG.warning("get_message failed message_id=%s err=%s", message_id, exc)
+            return None
+
     def update_text(self, message_id: str, text: str) -> dict[str, Any]:
         token = self.tenant_token()
         return self._request(
