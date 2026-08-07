@@ -50,6 +50,12 @@ interface AgentSettings {
   soul: string;
   soul_source: string;
   soul_override_path: string;
+  app_id?: string;
+  app_id_masked?: string;
+  app_secret?: string;
+  app_secret_configured?: boolean;
+  app_secret_masked?: string;
+  credentials_path?: string;
 }
 
 interface AgentsSettingsPayload {
@@ -1671,7 +1677,9 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
   const syncAgents = (payload: AgentsSettingsPayload) => {
-    const nextAgents = Array.isArray(payload.agents) ? payload.agents.map((agent) => ({ ...agent })) : [];
+    const nextAgents = Array.isArray(payload.agents)
+      ? payload.agents.map((agent) => ({ ...agent, app_secret: "" }))
+      : [];
     setAgentsEnabled(Boolean(payload.enabled));
     setAgentDrafts(nextAgents);
     setAgentsBaseline({ enabled: Boolean(payload.enabled), agents: JSON.stringify(nextAgents) });
@@ -1682,8 +1690,18 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   };
   useEffect(() => { void request("/api/delivery/status-options", project).then((response) => setWorkflowStatuses(Array.isArray(response.options) ? response.options.map(String) : [])).catch(() => setWorkflowStatuses([])); }, [project]);
   useEffect(() => {
+    let cancelled = false;
+    void request("/api/agents", project)
+      .then((response) => {
+        if (cancelled) return;
+        syncAgents(response as AgentsSettingsPayload);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [project]);
+  useEffect(() => {
     setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setEligibleStatuses(Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean)); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setPatchInterval(String(Math.round((schedules.patch?.interval_seconds || 300) / 60))); setPatchStatuses(Array.isArray(schedules.patch?.jira_statuses) ? schedules.patch.jira_statuses.map(String) : ["To Do"]); setPatchStartStatus(String(schedules.patch?.in_progress_status || "In Progress")); setPatchDoneStatus(String(schedules.patch?.done_status || "Done")); setPatchBlockedStatus(String(schedules.patch?.blocked_status || "Block")); setPatchEnabled(Boolean(schedules.patch?.enabled)); setScanModel(modelValue(workspace.models?.scan)); setDeliveryModel(modelValue(workspace.models?.delivery)); setPatchModel(modelValue(workspace.models?.patch)); setFeishuEnabled(workspace.feishu_notifications_enabled !== false); setSecrets({}); setChangedSecrets({});
-    syncAgents(data.interactive?.agents || {});
+    if (data.interactive?.agents) syncAgents(data.interactive.agents);
     setDirty(false); onDirtyChange(false);
   }, [project]);
   useEffect(() => { setScanPublishMode(String(workspace.publish?.scan || "pr")); setDeliveryPublishMode(String(workspace.publish?.delivery || "pr")); setPatchPublishMode(String(workspace.publish?.patch || "pr")); }, [workspace.publish?.scan, workspace.publish?.delivery, workspace.publish?.patch]);
@@ -1725,20 +1743,26 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
             method: "POST",
             json: {
               enabled: agentsEnabled,
-              agents: agentDrafts.map((agent) => ({
-                id: agent.id,
-                role: agent.role,
-                workflow: agent.workflow,
-                conversation_enabled: agent.conversation_enabled,
-                mode: agent.mode,
-                model: agent.model,
-                soft_timeout_seconds: Number(agent.soft_timeout_seconds),
-                hard_timeout_seconds: Number(agent.hard_timeout_seconds),
-                reaction_enabled: agent.reaction_enabled,
-                max_concurrent_jobs: Number(agent.max_concurrent_jobs),
-                soul_version: agent.soul_version,
-                soul: agent.soul,
-              })),
+              agents: agentDrafts.map((agent) => {
+                const body: Record<string, unknown> = {
+                  id: agent.id,
+                  role: agent.role,
+                  workflow: agent.workflow,
+                  conversation_enabled: agent.conversation_enabled,
+                  mode: agent.mode,
+                  model: agent.model,
+                  soft_timeout_seconds: Number(agent.soft_timeout_seconds),
+                  hard_timeout_seconds: Number(agent.hard_timeout_seconds),
+                  reaction_enabled: agent.reaction_enabled,
+                  max_concurrent_jobs: Number(agent.max_concurrent_jobs),
+                  soul_version: agent.soul_version,
+                  soul: agent.soul,
+                  app_id: String(agent.app_id || "").trim(),
+                };
+                const secret = String(agent.app_secret || "").trim();
+                if (secret) body.app_secret = secret;
+                return body;
+              }),
             },
           });
           syncAgents(result as AgentsSettingsPayload);
@@ -1761,10 +1785,12 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
         <div className={`settings-section divider agent-role-section`} key={agent.id}>
           <div className="settings-copy">
             <div className="settings-heading"><div className="settings-title-stack"><h4>{agent.display_name}</h4><span className="muted">{agent.title}</span></div></div>
-            <p>Role {agent.role} · workflow {agent.workflow}. SOUL overrides are stored at {text(agent.soul_override_path)} ({agent.soul_source}).</p>
+            <p>Role {agent.role} · workflow {agent.workflow}. Feishu credentials live in {text(agent.credentials_path, "~/.lumen/.env.local")}. SOUL overrides are at {text(agent.soul_override_path)} ({agent.soul_source}). Restart `lumen agents start` after changing App ID/Secret.</p>
           </div>
           <div className="settings-control wide">
             <div className="form-grid compact">
+              <Field label="Feishu App ID"><input value={agent.app_id || ""} placeholder={agent.app_id_masked || "cli_…"} onChange={(event) => updateAgent(agent.id, { app_id: event.target.value })} /></Field>
+              <Field label="Feishu App Secret" help={agent.app_secret_configured ? `Configured (${agent.app_secret_masked || "set"}). Leave blank to keep.` : "Required for Feishu client login."}><input type="password" value={agent.app_secret || ""} placeholder={agent.app_secret_configured ? "Leave blank to keep current secret" : "Enter app secret"} onChange={(event) => updateAgent(agent.id, { app_secret: event.target.value })} autoComplete="new-password" /></Field>
               <Field label="Conversation"><select value={agent.conversation_enabled ? "on" : "off"} onChange={(event) => updateAgent(agent.id, { conversation_enabled: event.target.value === "on" })}><option value="on">Enabled</option><option value="off">Paused</option></select></Field>
               <ModelField label="Cursor model" value={agent.model} onChange={(value) => updateAgent(agent.id, { model: value })} markDirty={markDirty} />
               <Field label="Soft timeout, seconds"><input type="number" min="10" max="3600" value={agent.soft_timeout_seconds} onChange={(event) => updateAgent(agent.id, { soft_timeout_seconds: Number(event.target.value) || 90 })} /></Field>

@@ -1267,7 +1267,13 @@ class DashboardServer(ThreadingHTTPServer):
     def dashboard_state(self, slug: str | None = None) -> dict[str, Any]:
         workspace, project, projects = self.project_context(slug)
         data = RENDERER.build_payload(workspace)
-        from agents.soul_store import agents_settings_payload
+        agents_payload: dict[str, Any] = {"enabled": False, "agents": []}
+        try:
+            from agents.soul_store import agents_settings_payload
+
+            agents_payload = agents_settings_payload()
+        except Exception:
+            pass
 
         data["interactive"] = {
             "enabled": True,
@@ -1276,7 +1282,7 @@ class DashboardServer(ThreadingHTTPServer):
             "prompts": prompt_files(workspace),
             "schedules": schedule_payload(workspace, project),
             "workspace": workspace_payload(workspace),
-            "agents": agents_settings_payload(),
+            "agents": agents_payload,
         }
         data["delivery"] = delivery_payload(workspace)
         data["patch"] = patch_payload(workspace)

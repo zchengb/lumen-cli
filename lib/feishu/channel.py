@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
+import multiprocessing
+import sys
 import traceback
+from pathlib import Path
 from typing import Any, Callable, Optional
 
-from feishu.client_registry import FeishuClientConfig, configured_agents
+from feishu.client_registry import FeishuClientConfig, configured_agents, load_client_config
 from feishu.config import agents_home
 from feishu.dedup import MessageDeduper
 from feishu.handlers import handle_message_event
 
 _LOG = logging.getLogger("lumen.feishu.channel")
+_LIB_DIR = str(Path(__file__).resolve().parent.parent)
 
 
 def _setup_logging() -> None:
@@ -57,6 +60,22 @@ def event_to_dict(data: Any) -> dict[str, Any]:
     return payload
 
 
+def _run_single_client_process(agent_id: str, lib_dir: str) -> None:
+    # ponytail: lark_oapi.ws shares one module-level asyncio loop; one process per app
+    if lib_dir and lib_dir not in sys.path:
+        sys.path.insert(0, lib_dir)
+    channel = FeishuChannel(clients=[])
+    client = load_client_config(agent_id)
+    if client is None:
+        raise RuntimeError(f"No Feishu credentials for agent {agent_id}")
+    channel.clients = [client]
+    import lark_oapi as lark
+    from lark_oapi.event.dispatcher_handler import EventDispatcherHandler
+    from lark_oapi.ws import Client as WsClient
+
+    channel._start_client(client, lark, EventDispatcherHandler, WsClient)
+
+
 class FeishuChannel:
     def __init__(
         self,
@@ -100,18 +119,30 @@ class FeishuChannel:
                 "lark-oapi is required for Agent Gateway. Install with: pip install lark-oapi"
             ) from exc
 
-        threads: list[threading.Thread] = []
-        for client in self.clients:
-            thread = threading.Thread(
-                target=self._start_client,
-                args=(client, lark, EventDispatcherHandler, WsClient),
+        if len(self.clients) == 1:
+            self._start_client(self.clients[0], lark, EventDispatcherHandler, WsClient)
+            return
+
+        ctx = multiprocessing.get_context("spawn")
+        procs = [
+            ctx.Process(
+                target=_run_single_client_process,
+                args=(client.agent_id, _LIB_DIR),
                 name=f"feishu-ws-{client.agent_id}",
                 daemon=True,
             )
-            thread.start()
-            threads.append(thread)
-        for thread in threads:
-            thread.join()
+            for client in self.clients
+        ]
+        for proc in procs:
+            proc.start()
+            _LOG.info("spawned ws process pid=%s agent=%s", proc.pid, proc.name)
+        try:
+            for proc in procs:
+                proc.join()
+        finally:
+            for proc in procs:
+                if proc.is_alive():
+                    proc.terminate()
 
     def _start_client(self, client: FeishuClientConfig, lark, EventDispatcherHandler, WsClient) -> None:
         channel = self

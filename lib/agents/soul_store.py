@@ -3,7 +3,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from feishu.config import agents_home, load_agents_config, save_agents_config
+from feishu.config import (
+    agents_home,
+    load_agents_config,
+    lumen_env_local_path,
+    mask_credential,
+    read_lumen_env_var,
+    save_agents_config,
+    upsert_lumen_env_var,
+)
+from agents.registry import APP_ID_ENV
+from feishu.client_registry import APP_SECRET_ENV
 
 AGENT_META = {
     "dylan": {
@@ -83,6 +93,10 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
     profiles = data.get("profiles") if isinstance(data.get("profiles"), dict) else {}
     profile = profiles.get(agent) if isinstance(profiles.get(agent), dict) else {}
     soul_text, soul_source = load_agent_soul(agent)
+    app_id_env = APP_ID_ENV.get(agent, "")
+    app_secret_env = APP_SECRET_ENV.get(agent, "")
+    app_id = read_lumen_env_var(app_id_env) if app_id_env else ""
+    app_secret = read_lumen_env_var(app_secret_env) if app_secret_env else ""
     return {
         "id": agent,
         "display_name": meta["display_name"],
@@ -100,6 +114,11 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
         "soul": soul_text,
         "soul_source": soul_source,
         "soul_override_path": str(soul_override_path(agent)),
+        "app_id": app_id,
+        "app_id_masked": mask_credential(app_id),
+        "app_secret_configured": bool(app_secret),
+        "app_secret_masked": mask_credential(app_secret) if app_secret else "",
+        "credentials_path": str(lumen_env_local_path()),
     }
 
 
@@ -181,5 +200,13 @@ def apply_agent_settings(payload: dict[str, Any]) -> dict[str, Any]:
         profile["workflow"] = str(item.get("workflow") or profile.get("workflow") or meta["workflow"]).strip() or meta["workflow"]
         if "soul" in item:
             save_agent_soul(agent_id, str(item.get("soul") or ""))
+        app_id_env = APP_ID_ENV.get(agent_id, "")
+        app_secret_env = APP_SECRET_ENV.get(agent_id, "")
+        if "app_id" in item and app_id_env:
+            upsert_lumen_env_var(app_id_env, str(item.get("app_id") or "").strip())
+        if "app_secret" in item and app_secret_env:
+            secret = str(item.get("app_secret") or "").strip()
+            if secret:
+                upsert_lumen_env_var(app_secret_env, secret)
     save_agents_config(config)
     return agents_settings_payload()

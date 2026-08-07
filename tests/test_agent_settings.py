@@ -70,6 +70,43 @@ class AgentSettingsTests(unittest.TestCase):
             self.assertIn("Dylan override", text)
             self.assertIn("Dylan override", load_dylan_soul())
 
+    def test_save_feishu_credentials_to_env_local(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["LUMEN_AGENTS_HOME"] = tmp
+            os.environ["LUMEN_HOME"] = tmp
+            apply_agent_settings(
+                {
+                    "enabled": True,
+                    "agents": [
+                        {
+                            "id": "mark",
+                            "conversation_enabled": True,
+                            "model": "cursor-grok-4.5-medium",
+                            "app_id": "cli_test_mark",
+                            "app_secret": "secret_mark_value",
+                            "soul": "# Mark\n",
+                            "role": "delivery",
+                            "workflow": "auto_delivery",
+                        },
+                        {
+                            "id": "dylan",
+                            "conversation_enabled": True,
+                            "model": "cursor-grok-4.5-medium",
+                            "soul": "# Dylan\n",
+                            "role": "scan",
+                            "workflow": "auto_scan",
+                        },
+                    ],
+                }
+            )
+            payload = agents_settings_payload()
+            mark = next(agent for agent in payload["agents"] if agent["id"] == "mark")
+            self.assertEqual(mark["app_id"], "cli_test_mark")
+            self.assertTrue(mark["app_secret_configured"])
+            env_text = (Path(tmp) / ".env.local").read_text(encoding="utf-8")
+            self.assertIn("FEISHU_MARK_APP_ID=cli_test_mark", env_text)
+            self.assertIn("FEISHU_MARK_APP_SECRET=secret_mark_value", env_text)
+
 
 if __name__ == "__main__":
     unittest.main()
