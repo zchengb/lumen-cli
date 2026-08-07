@@ -3213,10 +3213,22 @@ cmd_delivery_pr() {
   python3 "${finalize_py}" "${DELIVERY_DOCS_DIR}" --story "${DELIVERY_STORY_REF}" --result "${result_file}"
 }
 
+cmd_delivery_agent_cli() {
+  local cli_py="${LUMEN_HOME}/lib/scripts/delivery_agent_cli.py"
+  [[ -f "${cli_py}" ]] || { err "Delivery agent CLI helper not found: ${cli_py}"; exit 1; }
+  command -v python3 >/dev/null 2>&1 || { err "Python 3 is required."; exit 1; }
+  python3 "${cli_py}" "$@"
+}
+
 cmd_delivery_run() {
   local docs_dir="."
   local story_ref=""
   local dry_run="0"
+  local want_json="0"
+  local actor=""
+  local source_message_id=""
+  local trace_id=""
+  local project=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -3228,6 +3240,26 @@ cmd_delivery_run() {
         dry_run="1"
         shift
         ;;
+      --json)
+        want_json="1"
+        shift
+        ;;
+      --actor)
+        actor="${2:-}"
+        shift 2
+        ;;
+      --source-message-id)
+        source_message_id="${2:-}"
+        shift 2
+        ;;
+      --trace-id)
+        trace_id="${2:-}"
+        shift 2
+        ;;
+      --project)
+        project="${2:-}"
+        shift 2
+        ;;
       --*)
         err "Unknown option: $1"
         exit 1
@@ -3238,6 +3270,20 @@ cmd_delivery_run() {
         ;;
     esac
   done
+
+  if [[ "${want_json}" == "1" || -n "${actor}" || -n "${source_message_id}" || -n "${trace_id}" ]]; then
+    local args=(run)
+    [[ -n "${story_ref}" ]] && args+=(--story "${story_ref}")
+    [[ -n "${project}" ]] && args+=(--project "${project}")
+    [[ -n "${actor}" ]] && args+=(--actor "${actor}")
+    [[ -n "${source_message_id}" ]] && args+=(--source-message-id "${source_message_id}")
+    [[ -n "${trace_id}" ]] && args+=(--trace-id "${trace_id}")
+    [[ "${dry_run}" == "1" ]] && args+=(--dry-run)
+    [[ "${want_json}" == "1" ]] && args+=(--json)
+    [[ -n "${docs_dir}" && "${docs_dir}" != "." ]] && args+=("${docs_dir}")
+    cmd_delivery_agent_cli "${args[@]}"
+    return
+  fi
 
   local run_script="${LUMEN_HOME}/lib/scripts/run-delivery.sh"
   if [[ ! -f "${run_script}" ]]; then
@@ -3253,15 +3299,47 @@ cmd_delivery_run() {
   fi
 }
 
+cmd_delivery_readiness() {
+  cmd_delivery_agent_cli readiness "$@"
+}
+
+cmd_delivery_result() {
+  cmd_delivery_agent_cli result "$@"
+}
+
+cmd_delivery_cancel() {
+  cmd_delivery_agent_cli cancel "$@"
+}
+
 cmd_delivery_status() {
   local docs_dir=""
   local workspace_root=""
+  local story_ref=""
+  local project=""
+  local run_id=""
+  local want_json="0"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --workspace)
         workspace_root="${2:-}"
         shift 2
+        ;;
+      --story)
+        story_ref="${2:-}"
+        shift 2
+        ;;
+      --project)
+        project="${2:-}"
+        shift 2
+        ;;
+      --run-id)
+        run_id="${2:-}"
+        shift 2
+        ;;
+      --json)
+        want_json="1"
+        shift
         ;;
       --*)
         err "Unknown option: $1"
@@ -3273,6 +3351,18 @@ cmd_delivery_status() {
         ;;
     esac
   done
+
+  if [[ "${want_json}" == "1" || -n "${story_ref}" || -n "${run_id}" ]]; then
+    local args=(status)
+    [[ -n "${story_ref}" ]] && args+=(--story "${story_ref}")
+    [[ -n "${project}" ]] && args+=(--project "${project}")
+    [[ -n "${run_id}" ]] && args+=(--run-id "${run_id}")
+    [[ "${want_json}" == "1" ]] && args+=(--json)
+    [[ -n "${docs_dir}" ]] && args+=("${docs_dir}")
+    [[ -n "${workspace_root}" && -z "${docs_dir}" ]] && args+=("${workspace_root}")
+    cmd_delivery_agent_cli "${args[@]}"
+    return
+  fi
 
   if [[ -z "${workspace_root}" && -z "${docs_dir}" ]]; then
     local default_workspace
@@ -3501,6 +3591,9 @@ cmd_delivery() {
     pr) cmd_delivery_pr "$@" ;;
     start) cmd_delivery_run "$@" ;;
     run) cmd_delivery_run "$@" ;;
+    readiness) cmd_delivery_readiness "$@" ;;
+    result) cmd_delivery_result "$@" ;;
+    cancel) cmd_delivery_cancel "$@" ;;
     status) cmd_delivery_status "$@" ;;
     notify) cmd_delivery_notify "$@" ;;
     watch) cmd_delivery_watch "$@" ;;

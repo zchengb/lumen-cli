@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
+from agents.soul_store import load_agent_soul
 
 
 def load_soul() -> str:
-    path = Path(__file__).resolve().parent / "soul.md"
-    if path.is_file():
-        return path.read_text(encoding="utf-8").strip()
+    text, _source = load_agent_soul("dylan")
+    if text.strip():
+        return text.strip()
     return "Dylan is an Engineering Risk Analyst. Be precise and evidence-based."

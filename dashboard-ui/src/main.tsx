@@ -33,6 +33,32 @@ declare global {
   interface Window { DASHBOARD_DATA?: DashboardData }
 }
 
+interface AgentSettings {
+  id: string;
+  display_name: string;
+  title: string;
+  role: string;
+  workflow: string;
+  conversation_enabled: boolean;
+  mode: string;
+  model: string;
+  soft_timeout_seconds: number;
+  hard_timeout_seconds: number;
+  reaction_enabled: boolean;
+  max_concurrent_jobs: number;
+  soul_version: string;
+  soul: string;
+  soul_source: string;
+  soul_override_path: string;
+}
+
+interface AgentsSettingsPayload {
+  enabled?: boolean;
+  home?: string;
+  config_path?: string;
+  agents?: AgentSettings[];
+}
+
 interface DashboardData extends RecordValue {
   interactive?: {
     enabled?: boolean;
@@ -41,6 +67,7 @@ interface DashboardData extends RecordValue {
     prompts?: Array<{ mode: "scan" | "delivery" | "patch"; path: string }>;
     schedules?: { scan?: RecordValue | null; delivery?: RecordValue | null; patch?: RecordValue | null };
     workspace?: RecordValue;
+    agents?: AgentsSettingsPayload;
   };
   delivery?: { current?: RecordValue; runs?: RecordValue[]; available_stories?: RecordValue[]; scheduler_activity?: RecordValue[]; scheduler_log_available?: boolean; config?: RecordValue };
   patch?: { current?: RecordValue; runs?: RecordValue[]; scheduler_activity?: RecordValue[]; scheduler_log_available?: boolean; config?: RecordValue };
@@ -1611,6 +1638,7 @@ function AddRepositoryDialog({ onClose, onAdd }: { onClose: () => void; onAdd: (
 function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: DashboardData; project: string; notify: Notify; onDirtyChange: (dirty: boolean) => void; reload: () => Promise<void> }) {
   const workspace = data.interactive?.workspace || {};
   const schedules = data.interactive?.schedules || {};
+  const agentsPayload = data.interactive?.agents || {};
   const [scanWindow, setScanWindow] = useState(String(workspace.scan_window_days || 7));
   const [scanCron, setScanCron] = useState(String(schedules.scan?.cron || "0 12 * * 1-5"));
   const [scanEnabled, setScanEnabled] = useState(Boolean(schedules.scan));
@@ -1636,11 +1664,28 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [deliveryPublishMode, setDeliveryPublishMode] = useState(String(workspace.publish?.delivery || "pr"));
   const [patchPublishMode, setPatchPublishMode] = useState(String(workspace.publish?.patch || "pr"));
   const [feishuEnabled, setFeishuEnabled] = useState(workspace.feishu_notifications_enabled !== false);
+  const [agentsEnabled, setAgentsEnabled] = useState(Boolean(agentsPayload.enabled));
+  const [agentDrafts, setAgentDrafts] = useState<AgentSettings[]>(Array.isArray(agentsPayload.agents) ? agentsPayload.agents.map((agent) => ({ ...agent })) : []);
+  const [agentsBaseline, setAgentsBaseline] = useState({ enabled: Boolean(agentsPayload.enabled), agents: Array.isArray(agentsPayload.agents) ? JSON.stringify(agentsPayload.agents) : "[]" });
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
+  const syncAgents = (payload: AgentsSettingsPayload) => {
+    const nextAgents = Array.isArray(payload.agents) ? payload.agents.map((agent) => ({ ...agent })) : [];
+    setAgentsEnabled(Boolean(payload.enabled));
+    setAgentDrafts(nextAgents);
+    setAgentsBaseline({ enabled: Boolean(payload.enabled), agents: JSON.stringify(nextAgents) });
+  };
+  const updateAgent = (agentId: string, patch: Partial<AgentSettings>) => {
+    setAgentDrafts((current) => current.map((agent) => agent.id === agentId ? { ...agent, ...patch } : agent));
+    markDirty();
+  };
   useEffect(() => { void request("/api/delivery/status-options", project).then((response) => setWorkflowStatuses(Array.isArray(response.options) ? response.options.map(String) : [])).catch(() => setWorkflowStatuses([])); }, [project]);
-  useEffect(() => { setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setEligibleStatuses(Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean)); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setPatchInterval(String(Math.round((schedules.patch?.interval_seconds || 300) / 60))); setPatchStatuses(Array.isArray(schedules.patch?.jira_statuses) ? schedules.patch.jira_statuses.map(String) : ["To Do"]); setPatchStartStatus(String(schedules.patch?.in_progress_status || "In Progress")); setPatchDoneStatus(String(schedules.patch?.done_status || "Done")); setPatchBlockedStatus(String(schedules.patch?.blocked_status || "Block")); setPatchEnabled(Boolean(schedules.patch?.enabled)); setScanModel(modelValue(workspace.models?.scan)); setDeliveryModel(modelValue(workspace.models?.delivery)); setPatchModel(modelValue(workspace.models?.patch)); setFeishuEnabled(workspace.feishu_notifications_enabled !== false); setSecrets({}); setChangedSecrets({}); setDirty(false); onDirtyChange(false); }, [project]);
+  useEffect(() => {
+    setScanWindow(String(workspace.scan_window_days || 7)); setScanCron(String(schedules.scan?.cron || "0 12 * * 1-5")); setScanEnabled(Boolean(schedules.scan)); setDeliveryInterval(String(Math.round((schedules.delivery?.interval_seconds || 300) / 60))); setEligibleStatuses(Array.isArray(schedules.delivery?.jira_statuses) ? schedules.delivery.jira_statuses.map(String) : String(schedules.delivery?.jira_status || "To Do,Backlog,In Progress").split(",").map((value) => value.trim()).filter(Boolean)); setInDevStatus(String(schedules.delivery?.in_dev_status || "")); setDevDoneStatus(String(schedules.delivery?.dev_done_status || "")); setBlockedStatus(String(schedules.delivery?.blocked_status || "Block")); setDeliveryEnabled(Boolean(schedules.delivery?.enabled)); setPatchInterval(String(Math.round((schedules.patch?.interval_seconds || 300) / 60))); setPatchStatuses(Array.isArray(schedules.patch?.jira_statuses) ? schedules.patch.jira_statuses.map(String) : ["To Do"]); setPatchStartStatus(String(schedules.patch?.in_progress_status || "In Progress")); setPatchDoneStatus(String(schedules.patch?.done_status || "Done")); setPatchBlockedStatus(String(schedules.patch?.blocked_status || "Block")); setPatchEnabled(Boolean(schedules.patch?.enabled)); setScanModel(modelValue(workspace.models?.scan)); setDeliveryModel(modelValue(workspace.models?.delivery)); setPatchModel(modelValue(workspace.models?.patch)); setFeishuEnabled(workspace.feishu_notifications_enabled !== false); setSecrets({}); setChangedSecrets({});
+    syncAgents(data.interactive?.agents || {});
+    setDirty(false); onDirtyChange(false);
+  }, [project]);
   useEffect(() => { setScanPublishMode(String(workspace.publish?.scan || "pr")); setDeliveryPublishMode(String(workspace.publish?.delivery || "pr")); setPatchPublishMode(String(workspace.publish?.patch || "pr")); }, [workspace.publish?.scan, workspace.publish?.delivery, workspace.publish?.patch]);
   useEffect(() => { setFeishuEnabled(workspace.feishu_notifications_enabled !== false); }, [workspace.feishu_notifications_enabled]);
   useEffect(() => { const warn = (event: BeforeUnloadEvent) => { if (!dirty) return; event.preventDefault(); event.returnValue = ""; }; window.addEventListener("beforeunload", warn); return () => window.removeEventListener("beforeunload", warn); }, [dirty]);
@@ -1656,11 +1701,16 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const deliveryScheduleChanged = deliveryEnabled !== Boolean(schedules.delivery?.enabled) || (deliveryEnabled && (deliveryInterval !== String(Math.round((schedules.delivery?.interval_seconds || 300) / 60)) || !sameValues(eligibleStatuses, configuredDeliveryStatuses) || inDevStatus !== String(schedules.delivery?.in_dev_status || "") || devDoneStatus !== String(schedules.delivery?.dev_done_status || "") || blockedStatus !== String(schedules.delivery?.blocked_status || "Block")));
   const patchScheduleChanged = patchEnabled !== Boolean(schedules.patch?.enabled) || (patchEnabled && (patchInterval !== String(Math.round((schedules.patch?.interval_seconds || 300) / 60)) || !sameValues(patchStatuses, configuredPatchStatuses) || patchStartStatus !== String(schedules.patch?.in_progress_status || "In Progress") || patchDoneStatus !== String(schedules.patch?.done_status || "Done") || patchBlockedStatus !== String(schedules.patch?.blocked_status || "Block")));
   const publishPolicyChanged = scanPublishMode !== String(workspace.publish?.scan || "pr") || deliveryPublishMode !== String(workspace.publish?.delivery || "pr") || patchPublishMode !== String(workspace.publish?.patch || "pr");
+  const agentsChanged = agentsEnabled !== agentsBaseline.enabled || JSON.stringify(agentDrafts) !== agentsBaseline.agents;
   const saveAll = async () => {
     if (saving) return;
     setSaving(true);
     try {
       if (!scanModel.trim() || !deliveryModel.trim() || !patchModel.trim()) throw new Error("Choose a preset or enter a Cursor-supported model ID for all workflows.");
+      for (const agent of agentDrafts) {
+        if (!String(agent.model || "").trim()) throw new Error(`${agent.display_name || agent.id} needs a Cursor model.`);
+        if (!String(agent.soul || "").trim()) throw new Error(`${agent.display_name || agent.id} SOUL cannot be empty.`);
+      }
       const saves = [
         () => request("/api/workspace", project, { method: "POST", json: { scan_window_days: Number(scanWindow), scan_model: scanModel.trim(), delivery_model: deliveryModel.trim(), patch_model: patchModel.trim(), feishu_notifications_enabled: feishuEnabled } }),
         ...Object.entries(changedSecrets).map(([key, value]) => () => request("/api/integration", project, { method: "POST", json: { key, value } }))
@@ -1669,6 +1719,31 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
       if (deliveryScheduleChanged) saves.push(() => request("/api/schedule", project, { method: "POST", json: deliveryEnabled ? { kind: "delivery", action: "save", interval_minutes: Number(deliveryInterval), jira_statuses: eligibleStatuses, in_dev_status: inDevStatus, dev_done_status: devDoneStatus, blocked_status: blockedStatus } : { kind: "delivery", action: "remove" } }));
       if (patchScheduleChanged) saves.push(() => request("/api/schedule", project, { method: "POST", json: patchEnabled ? { kind: "patch", action: "save", interval_minutes: Number(patchInterval), jira_statuses: patchStatuses, issue_types: ["Task", "Bug"], in_progress_status: patchStartStatus, done_status: patchDoneStatus, blocked_status: patchBlockedStatus } : { kind: "patch", action: "remove" } }));
       if (publishPolicyChanged) saves.push(() => request("/api/publish-policy", project, { method: "POST", json: { scan_mode: scanPublishMode, delivery_mode: deliveryPublishMode, patch_mode: patchPublishMode } }));
+      if (agentsChanged) {
+        saves.push(async () => {
+          const result = await request("/api/agents", project, {
+            method: "POST",
+            json: {
+              enabled: agentsEnabled,
+              agents: agentDrafts.map((agent) => ({
+                id: agent.id,
+                role: agent.role,
+                workflow: agent.workflow,
+                conversation_enabled: agent.conversation_enabled,
+                mode: agent.mode,
+                model: agent.model,
+                soft_timeout_seconds: Number(agent.soft_timeout_seconds),
+                hard_timeout_seconds: Number(agent.hard_timeout_seconds),
+                reaction_enabled: agent.reaction_enabled,
+                max_concurrent_jobs: Number(agent.max_concurrent_jobs),
+                soul_version: agent.soul_version,
+                soul: agent.soul,
+              })),
+            },
+          });
+          syncAgents(result as AgentsSettingsPayload);
+        });
+      }
       for (const save of saves) await save();
       setChangedSecrets({}); setDirty(false); onDirtyChange(false); notify("Settings saved", "success"); void reload();
     } catch (err) { notify(err instanceof Error ? err.message : "Unable to save Settings", "error"); }
@@ -1679,6 +1754,32 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
       <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Scan</h4></div></div><p>{text(schedules.scan?.description, "No recurring scan is configured.")}</p></div><div className="settings-control wide"><div className="form-grid compact scan-settings-fields" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, padding: 0, width: "100%" }}><Field label="Lookback, days"><input type="number" min="1" max="365" value={scanWindow} onChange={(event) => { setScanWindow(event.target.value); markDirty(); }} /></Field><Field label="Five-field cron"><input value={scanCron} onChange={(event) => { setScanCron(event.target.value); markDirty(); }} /></Field></div></div><div className="settings-toggle"><ScheduleToggle enabled={scanEnabled} onChange={(enabled) => { setScanEnabled(enabled); markDirty(); }} /></div></div>
       <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Delivery</h4></div></div><p>{deliveryEnabled ? `Polling every ${deliveryInterval} minute(s).` : "Delivery polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={deliveryInterval} onChange={(event) => { setDeliveryInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA statuses" help="Select every Jira status that may start Auto Delivery. The Story must also be Business Ready, Technical Approved, and not already running."><StatusMultiSelect options={statusOptions} value={eligibleStatuses} onChange={setEligibleStatuses} markDirty={markDirty} /></Field><Field label="Move to when started"><select value={inDevStatus} onChange={(event) => { setInDevStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={devDoneStatus} onChange={(event) => { setDevDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when failed"><select value={blockedStatus} onChange={(event) => { setBlockedStatus(event.target.value); markDirty(); }}>{Array.from(new Set([...statusOptions, "Block"])).map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">Select To Do, Backlog, In Progress, or any other eligible Jira status. On failure, Lumen moves the Jira card to the selected Block status and adds a Needs attention comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={deliveryEnabled} onChange={(enabled) => { setDeliveryEnabled(enabled); markDirty(); }} /></div></div>
       <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Patch</h4></div></div><p>{patchEnabled ? `Polling every ${patchInterval} minute(s) for Task and Bug cards.` : "Auto Patch polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={patchInterval} onChange={(event) => { setPatchInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA statuses"><StatusMultiSelect options={statusOptions} value={patchStatuses} onChange={setPatchStatuses} markDirty={markDirty} /></Field><Field label="Move to when started"><select value={patchStartStatus} onChange={(event) => { setPatchStartStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={patchDoneStatus} onChange={(event) => { setPatchDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when blocked"><select value={patchBlockedStatus} onChange={(event) => { setPatchBlockedStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">Only Task and Bug cards are captured. Blocked cards retry after a new external Jira comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={patchEnabled} onChange={(enabled) => { setPatchEnabled(enabled); markDirty(); }} /></div></div>
+    </Panel>
+    <Panel title="Agent Roles" action={<span className="muted">Global Feishu agents</span>}>
+      <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Agent Gateway</h4></div></div><p>Enable Feishu conversational agents. Config lives in {text(agentsPayload.config_path, "~/.lumen/agents/config.json")}. Restart `lumen agents start` after saving.</p></div><div className="settings-toggle"><ScheduleToggle enabled={agentsEnabled} onChange={(enabled) => { setAgentsEnabled(enabled); markDirty(); }} /></div></div>
+      {agentDrafts.map((agent, index) => (
+        <div className={`settings-section divider agent-role-section`} key={agent.id}>
+          <div className="settings-copy">
+            <div className="settings-heading"><div className="settings-title-stack"><h4>{agent.display_name}</h4><span className="muted">{agent.title}</span></div></div>
+            <p>Role {agent.role} · workflow {agent.workflow}. SOUL overrides are stored at {text(agent.soul_override_path)} ({agent.soul_source}).</p>
+          </div>
+          <div className="settings-control wide">
+            <div className="form-grid compact">
+              <Field label="Conversation"><select value={agent.conversation_enabled ? "on" : "off"} onChange={(event) => updateAgent(agent.id, { conversation_enabled: event.target.value === "on" })}><option value="on">Enabled</option><option value="off">Paused</option></select></Field>
+              <ModelField label="Cursor model" value={agent.model} onChange={(value) => updateAgent(agent.id, { model: value })} markDirty={markDirty} />
+              <Field label="Soft timeout, seconds"><input type="number" min="10" max="3600" value={agent.soft_timeout_seconds} onChange={(event) => updateAgent(agent.id, { soft_timeout_seconds: Number(event.target.value) || 90 })} /></Field>
+              <Field label="Hard timeout, seconds"><input type="number" min="30" max="7200" value={agent.hard_timeout_seconds} onChange={(event) => updateAgent(agent.id, { hard_timeout_seconds: Number(event.target.value) || 300 })} /></Field>
+              <Field label="Typing reaction"><select value={agent.reaction_enabled ? "on" : "off"} onChange={(event) => updateAgent(agent.id, { reaction_enabled: event.target.value === "on" })}><option value="on">Enabled</option><option value="off">Off</option></select></Field>
+              <Field label="Max concurrent jobs"><input type="number" min="1" max="32" value={agent.max_concurrent_jobs} onChange={(event) => updateAgent(agent.id, { max_concurrent_jobs: Number(event.target.value) || 3 })} /></Field>
+              <Field label="SOUL version"><input value={agent.soul_version} onChange={(event) => updateAgent(agent.id, { soul_version: event.target.value })} /></Field>
+              <Field label="Role id"><input value={agent.role} onChange={(event) => updateAgent(agent.id, { role: event.target.value })} /></Field>
+              <Field label="Workflow"><input value={agent.workflow} onChange={(event) => updateAgent(agent.id, { workflow: event.target.value })} /></Field>
+            </div>
+            <label className="field agent-soul-field"><span>SOUL.md</span><textarea rows={index === 0 ? 16 : 14} value={agent.soul} spellCheck={false} onChange={(event) => updateAgent(agent.id, { soul: event.target.value })} /></label>
+          </div>
+        </div>
+      ))}
+      {agentDrafts.length === 0 && <div className="settings-section divider"><Empty label="No agent roles available yet." /></div>}
     </Panel>
     <Panel title="Execution Models"><div className="settings-section"><div className="settings-copy"><h4>Cursor model</h4><p>Choose a preset or enter a custom Cursor model ID. Custom values must be supported by Cursor; Lumen does not validate model availability.</p></div><div className="settings-control wide"><div className="form-grid compact"><ModelField label="Auto Scan model" value={scanModel} onChange={setScanModel} markDirty={markDirty} /><ModelField label="Auto Delivery model" value={deliveryModel} onChange={setDeliveryModel} markDirty={markDirty} /><ModelField label="Auto Patch model" value={patchModel} onChange={setPatchModel} markDirty={markDirty} /></div></div></div></Panel>
     <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>Direct push uses the repository credentials already configured for Git; PR and Merge use GitHub CLI. Auto Scan keeps a PR review gate and does not support direct push.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option><option value="direct">Push directly to main branch</option></select></Field><Field label="Auto Patch"><select value={patchPublishMode} onChange={(event) => { setPatchPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="direct">Push directly to main branch</option></select></Field></div></div></div></Panel>

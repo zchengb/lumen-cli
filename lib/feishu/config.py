@@ -27,6 +27,14 @@ def load_agents_config() -> dict[str, Any]:
         return {"enabled": False}
 
 
+def save_agents_config(config: dict[str, Any]) -> Path:
+    path = agents_home() / "config.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = config if isinstance(config, dict) else {"enabled": False}
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    return path
+
+
 def agents_enabled(config: Optional[dict[str, Any]] = None) -> bool:
     data = config if config is not None else load_agents_config()
     env = os.environ.get("LUMEN_AGENTS_ENABLED", "").strip().casefold()

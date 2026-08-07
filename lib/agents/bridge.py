@@ -6,16 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from agents.actions.scan import load_recent_run, save_recent_run, scan_lock_exists
+from agents.definitions import ensure_definitions_loaded, get_definition
 from agents.dylan.schemas import ConversationFlags
 from agents.models import TriggerContext
 from agents.parser import parse_dylan_text
 from agents.permissions import is_chat_allowed
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
+from agents.runtime.reply_anchor import remember_outbound
 from feishu.cards import ack_card, progress_card, scan_summary_card
 from feishu.config import load_agents_config
 from feishu.messenger import FeishuMessenger, extract_message_id
 from workflows.scan_adapter import ScanAdapter
-from agents.dylan.reply_anchor import remember_outbound
 
 
 def _load_workspace_common(workspace: str) -> dict[str, Any]:
@@ -29,11 +30,11 @@ def _load_workspace_common(workspace: str) -> dict[str, Any]:
         return {}
 
 
-def _conversation_enabled(config: dict[str, Any], common: dict[str, Any]) -> bool:
-    return ConversationFlags.from_common(common, config).enabled
+def _conversation_enabled(config: dict[str, Any], common: dict[str, Any], agent_id: str) -> bool:
+    return ConversationFlags.from_common(common, config, agent_id=agent_id).enabled
 
 
-def _persist_agent_run(run: dict[str, Any], *, meta: dict[str, str], slug: str, action: str) -> None:
+def _persist_agent_run(run: dict[str, Any], *, meta: dict[str, str], slug: str, action: str, agent_id: str) -> None:
     try:
         from risk.store import GlobalAgentStore
 
@@ -43,7 +44,7 @@ def _persist_agent_run(run: dict[str, Any], *, meta: dict[str, str], slug: str, 
         gs.save_agent_run(
             {
                 "run_id": run.get("run_id"),
-                "agent_id": "dylan",
+                "agent_id": agent_id,
                 "project_slug": slug,
                 "chat_id": meta.get("chat_id"),
                 "thread_id": meta.get("thread_id"),
@@ -79,10 +80,159 @@ def _persist_agent_run(run: dict[str, Any], *, meta: dict[str, str], slug: str, 
         pass
 
 
+def _run_autonomous_worker(
+    *,
+    agent: str,
+    definition: Any,
+    text: str,
+    meta: dict[str, str],
+    probe_common: dict[str, Any],
+    config: dict[str, Any],
+    flags: ConversationFlags,
+    messenger: FeishuMessenger,
+    message_id: str,
+    chat_id: str,
+) -> dict[str, Any]:
+    from agents.runtime.observability import Observability, TraceContext, new_trace_id
+    from agents.runtime.reaction import ReactionThinkingSession
+    from agents.runtime.jobs_pool import run_conversation_job
+
+    trace = TraceContext(
+        trace_id=new_trace_id(),
+        message_id=message_id,
+        chat_id=chat_id,
+        thread_id=str(meta.get("thread_id") or ""),
+        user_id=str(meta.get("user_id") or ""),
+        provider=flags.model.provider,
+        model=flags.model.model_name,
+        agent_id=agent,
+        role=str(getattr(definition, "role", "") or ""),
+        workflow=str(getattr(definition, "workflow", "") or ""),
+    )
+
+    def _worker() -> dict[str, Any]:
+        obs = Observability(agent_id=agent)
+        reaction = ReactionThinkingSession(
+            messenger=messenger,
+            source_message_id=message_id,
+            emoji_type=flags.reaction.emoji_type,
+            trace=trace,
+            obs=obs,
+            enabled=flags.reaction.enabled and bool(message_id),
+            remove_on_success=flags.reaction.remove_on_success,
+            remove_on_failure=flags.reaction.remove_on_failure,
+        )
+        success = False
+        result: dict[str, Any] = {}
+        try:
+            obs.emit(trace, "message.received")
+            obs.upsert_trace(trace, state="queued")
+            if flags.reaction.add_immediately:
+                reaction.start()
+            obs.emit(trace, "job.started")
+            if flags.autonomous:
+                from agents.runtime.autonomous import handle_autonomous_conversation
+
+                result = handle_autonomous_conversation(
+                    definition=definition,
+                    text=text,
+                    meta=meta,
+                    common=probe_common,
+                    agents_config=config,
+                    obs=obs,
+                    trace=trace,
+                )
+            else:
+                from agents.dylan.conversation import handle_conversation
+
+                result = handle_conversation(
+                    text=text,
+                    meta=meta,
+                    common=probe_common,
+                    agents_config=config,
+                    known_slugs=known_project_slugs(),
+                    obs=obs,
+                    trace=trace,
+                )
+            if result.get("status") == "delegate":
+                success = True
+                return result
+            reply_text = str(result.get("text") or "暂无数据。")
+            obs.emit(trace, "reply.started")
+            reply_in_thread = bool(str(meta.get("thread_id") or "").strip())
+            if message_id:
+                sent = None
+                for attempt in range(4):
+                    sent = messenger.safe_reply_text(
+                        message_id,
+                        reply_text,
+                        reply_in_thread=reply_in_thread,
+                    )
+                    if sent is not None:
+                        break
+                    time.sleep(min(2 ** attempt, 8))
+                if sent is None:
+                    obs.emit(trace, "reply.failed", level="ERROR")
+                    obs.upsert_trace(trace, reply_status="failed", state="failed", error_code="reply_failed")
+                    raise RuntimeError("final reply failed")
+                try:
+                    remember_outbound(
+                        message_id=extract_message_id(sent),
+                        text=reply_text,
+                        chat_id=chat_id,
+                        agent_id=agent,
+                        reply_to=message_id,
+                        thread_id=str(meta.get("thread_id") or ""),
+                    )
+                except Exception:
+                    pass
+            obs.emit(trace, "reply.succeeded")
+            obs.upsert_trace(trace, reply_status="succeeded", state="completed")
+            obs.emit(trace, "job.completed", latency_ms=result.get("latency_ms"))
+            success = True
+            return result
+        except Exception as exc:
+            try:
+                obs.emit(trace, "job.failed", error=str(exc)[:300], level="ERROR")
+                obs.upsert_trace(trace, state="failed", error_code="worker_error")
+            except Exception:
+                pass
+            if message_id and result.get("status") not in {"ok", "delegate", "error"}:
+                messenger.safe_reply_text(
+                    message_id,
+                    f"I couldn't finish this turn.\nTrace ID: {trace.trace_id}",
+                    reply_in_thread=bool(str(meta.get("thread_id") or "").strip()),
+                )
+            raise
+        finally:
+            try:
+                reaction.finish(success=success)
+            except Exception:
+                pass
+            try:
+                obs.close()
+            except Exception:
+                pass
+
+    queued = run_conversation_job(
+        message_id=message_id or f"local-{chat_id}-{meta.get('thread_id')}-{meta.get('user_id')}",
+        chat_id=chat_id,
+        thread_id=str(meta.get("thread_id") or ""),
+        user_id=str(meta.get("user_id") or ""),
+        worker=_worker,
+    )
+    if queued.get("status") == "duplicate":
+        return {"status": "duplicate", "detail": "message already processed", "trace_id": trace.trace_id}
+    result = queued.get("result") if isinstance(queued.get("result"), dict) else {"status": "queued", "trace_id": trace.trace_id}
+    return result
+
+
 def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> dict[str, Any]:
     agent = str(agent_id or "").strip().lower()
-    if agent != "dylan":
-        return {"status": "ignored", "detail": f"agent {agent} not enabled in MVP"}
+    ensure_definitions_loaded()
+    definition = get_definition(agent)
+    if definition is None:
+        return {"status": "ignored", "detail": f"agent {agent} not enabled"}
 
     config = load_agents_config()
     chat_id = str(meta.get("chat_id") or "").strip()
@@ -93,143 +243,25 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
     message_id = str(meta.get("message_id") or "").strip()
     known = known_project_slugs()
 
-    # Probe common from chat-mapped project for feature flags when possible.
     mapped = resolve_project(chat_id=chat_id, mapping=load_chat_project_map())
     probe_common = _load_workspace_common(str(mapped.get("workspace") or "")) if mapped else {}
-    if _conversation_enabled(config, probe_common):
-        from agents.dylan.conversation import handle_conversation
-        from agents.dylan.observability import Observability, TraceContext, new_trace_id
-        from agents.dylan.reaction import ReactionThinkingSession
-        from agents.dylan.schemas import ConversationFlags
-        from agents.dylan.thinking import ThinkingSession
+    flags = ConversationFlags.from_common(probe_common, config, agent_id=agent)
 
-        flags = ConversationFlags.from_common(probe_common, config)
-
-        if flags.autonomous or flags.agent_only:
-            from agents.dylan.runtime import run_conversation_job
-
-            trace = TraceContext(
-                trace_id=new_trace_id(),
+    if _conversation_enabled(config, probe_common, agent):
+        if flags.autonomous or (agent == "dylan" and flags.agent_only):
+            result = _run_autonomous_worker(
+                agent=agent,
+                definition=definition,
+                text=text,
+                meta=meta,
+                probe_common=probe_common,
+                config=config,
+                flags=flags,
+                messenger=messenger,
                 message_id=message_id,
                 chat_id=chat_id,
-                thread_id=str(meta.get("thread_id") or ""),
-                user_id=str(meta.get("user_id") or ""),
-                provider=flags.model.provider,
-                model=flags.model.model_name,
             )
-
-            def _worker() -> dict[str, Any]:
-                obs = Observability()
-                reaction = ReactionThinkingSession(
-                    messenger=messenger,
-                    source_message_id=message_id,
-                    emoji_type=flags.reaction.emoji_type,
-                    trace=trace,
-                    obs=obs,
-                    enabled=flags.reaction.enabled and bool(message_id),
-                    remove_on_success=flags.reaction.remove_on_success,
-                    remove_on_failure=flags.reaction.remove_on_failure,
-                )
-                success = False
-                result: dict[str, Any] = {}
-                try:
-                    obs.emit(trace, "message.received")
-                    obs.upsert_trace(trace, state="queued")
-                    if flags.reaction.add_immediately:
-                        reaction.start()
-                    obs.emit(trace, "job.started")
-                    if flags.autonomous:
-                        from agents.dylan.autonomous import handle_autonomous_conversation
-
-                        result = handle_autonomous_conversation(
-                            text=text,
-                            meta=meta,
-                            common=probe_common,
-                            agents_config=config,
-                            obs=obs,
-                            trace=trace,
-                        )
-                    else:
-                        result = handle_conversation(
-                            text=text,
-                            meta=meta,
-                            common=probe_common,
-                            agents_config=config,
-                            known_slugs=known,
-                            obs=obs,
-                            trace=trace,
-                        )
-                    if result.get("status") == "delegate":
-                        success = True
-                        return result
-                    reply_text = str(result.get("text") or "暂无数据。")
-                    obs.emit(trace, "reply.started")
-                    reply_in_thread = bool(str(meta.get("thread_id") or "").strip())
-                    if message_id:
-                        sent = None
-                        for attempt in range(4):
-                            sent = messenger.safe_reply_text(
-                                message_id,
-                                reply_text,
-                                reply_in_thread=reply_in_thread,
-                            )
-                            if sent is not None:
-                                break
-                            time.sleep(min(2 ** attempt, 8))
-                        if sent is None:
-                            obs.emit(trace, "reply.failed", level="ERROR")
-                            obs.upsert_trace(trace, reply_status="failed", state="failed", error_code="reply_failed")
-                            raise RuntimeError("final reply failed")
-                        try:
-                            remember_outbound(
-                                message_id=extract_message_id(sent),
-                                text=reply_text,
-                                chat_id=chat_id,
-                                agent_id="dylan",
-                                reply_to=message_id,
-                                thread_id=str(meta.get("thread_id") or ""),
-                            )
-                        except Exception:
-                            pass
-                    obs.emit(trace, "reply.succeeded")
-                    obs.upsert_trace(trace, reply_status="succeeded", state="completed")
-                    obs.emit(trace, "job.completed", latency_ms=result.get("latency_ms"))
-                    success = True
-                    return result
-                except Exception as exc:
-                    try:
-                        obs.emit(trace, "job.failed", error=str(exc)[:300], level="ERROR")
-                        obs.upsert_trace(trace, state="failed", error_code="worker_error")
-                    except Exception:
-                        pass
-                    if message_id and result.get("status") not in {"ok", "delegate", "error"}:
-                        messenger.safe_reply_text(
-                            message_id,
-                            f"I couldn't finish this turn.\nTrace ID: {trace.trace_id}",
-                            reply_in_thread=bool(str(meta.get("thread_id") or "").strip()),
-                        )
-                    raise
-                finally:
-                    try:
-                        reaction.finish(success=success)
-                    except Exception:
-                        pass
-                    try:
-                        obs.close()
-                    except Exception:
-                        pass
-
-            queued = run_conversation_job(
-                message_id=message_id or f"local-{chat_id}-{meta.get('thread_id')}-{meta.get('user_id')}",
-                chat_id=chat_id,
-                thread_id=str(meta.get("thread_id") or ""),
-                user_id=str(meta.get("user_id") or ""),
-                worker=_worker,
-            )
-            if queued.get("status") == "duplicate":
-                return {"status": "duplicate", "detail": "message already processed", "trace_id": trace.trace_id}
-            result = queued.get("result") if isinstance(queued.get("result"), dict) else {"status": "queued", "trace_id": trace.trace_id}
-            if result.get("status") == "delegate":
+            if result.get("status") == "delegate" and agent == "dylan":
                 action_name = str(result.get("action") or "")
                 params = result.get("params") if isinstance(result.get("params"), dict) else {}
                 if action_name == "scan.cancel":
@@ -247,7 +279,10 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                 action = ParsedAction(name="scan.run", confidence=0.9, source="conversation_v3", params=params)
             else:
                 return result
-        else:
+        elif agent == "dylan":
+            from agents.dylan.conversation import handle_conversation
+            from agents.dylan.thinking import ThinkingSession
+
             thinking = None
             if flags.typing.enabled and message_id:
                 thinking = ThinkingSession(
@@ -300,6 +335,10 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                 if thinking is None and message_id:
                     messenger.safe_reply_text(message_id, str(result.get("text") or "暂无数据。"))
                 return result
+        else:
+            return {"status": "ignored", "detail": f"conversation disabled for {agent}"}
+    elif agent != "dylan":
+        return {"status": "ignored", "detail": f"conversation disabled for {agent}"}
     else:
         action = parse_dylan_text(text, known)
 
@@ -370,6 +409,9 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                 messenger.safe_reply_text(message_id, reply)
             return {"status": "ok", "action": action.name}
 
+    if agent != "dylan":
+        return {"status": "ignored", "detail": f"scan actions not available for {agent}"}
+
     mapping = load_chat_project_map()
     project = resolve_project(
         slug=str(action.params.get("project") or ""),
@@ -418,7 +460,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
         "workspace": workspace,
         "result_path": run.get("result_path"),
     })
-    _persist_agent_run(run, meta=meta, slug=slug, action="scan.run")
+    _persist_agent_run(run, meta=meta, slug=slug, action="scan.run", agent_id=agent)
     if message_id:
         if run.get("status") == "completed":
             scan = run.get("scan") if isinstance(run.get("scan"), dict) else {}

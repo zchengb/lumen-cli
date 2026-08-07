@@ -31,7 +31,7 @@ PROFILES: dict[str, AgentProfile] = {
     "mark": AgentProfile(
         id="mark",
         workflow="auto_delivery",
-        writable=True,
+        writable=False,
         role="delivery",
         result_contract="delivery-result.json",
     ),

@@ -45,7 +45,11 @@ from patch_runtime import patch_candidate_options, patch_config, publish_mode as
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
+LIB_DIR = SCRIPT_DIR.parent
 WORKSPACE_STATIC_DIRECTORIES = {"assets", "dashboard-app", "reports", "logs", "results"}
+
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
 
 
 def load_dashboard_renderer() -> Any:
@@ -1263,6 +1267,8 @@ class DashboardServer(ThreadingHTTPServer):
     def dashboard_state(self, slug: str | None = None) -> dict[str, Any]:
         workspace, project, projects = self.project_context(slug)
         data = RENDERER.build_payload(workspace)
+        from agents.soul_store import agents_settings_payload
+
         data["interactive"] = {
             "enabled": True,
             "project": project,
@@ -1270,6 +1276,7 @@ class DashboardServer(ThreadingHTTPServer):
             "prompts": prompt_files(workspace),
             "schedules": schedule_payload(workspace, project),
             "workspace": workspace_payload(workspace),
+            "agents": agents_settings_payload(),
         }
         data["delivery"] = delivery_payload(workspace)
         data["patch"] = patch_payload(workspace)
@@ -1722,6 +1729,13 @@ class DashboardHandler(SimpleHTTPRequestHandler):
         workspace, project, _ = self.server.project_context(query.get("project", [""])[0])
         if parsed.path == "/api/state":
             return self.respond_json(HTTPStatus.OK, self.server.dashboard_state(project))
+        if parsed.path == "/api/agents":
+            try:
+                from agents.soul_store import agents_settings_payload
+
+                return self.respond_json(HTTPStatus.OK, agents_settings_payload())
+            except Exception as exc:
+                return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/prompt":
             try:
                 path = safe_prompt_path(workspace, query.get("mode", [""])[0], query.get("path", [""])[0])
@@ -1804,6 +1818,10 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 return self.respond_json(HTTPStatus.OK, {"issue": issue})
             if parsed.path == "/api/schedule":
                 return self.respond_json(HTTPStatus.OK, {"schedules": self.server.update_schedule(body, workspace, project, push=False)})
+            if parsed.path == "/api/agents":
+                from agents.soul_store import apply_agent_settings
+
+                return self.respond_json(HTTPStatus.OK, apply_agent_settings(body))
             if parsed.path == "/api/prompt":
                 path = safe_prompt_path(workspace, str(body.get("mode", "")), str(body.get("path", "")))
                 if not path.is_file():

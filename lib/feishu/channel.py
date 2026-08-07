@@ -64,7 +64,7 @@ class FeishuChannel:
         on_event: Optional[Callable[[dict[str, Any], FeishuClientConfig], None]] = None,
     ) -> None:
         _setup_logging()
-        self.clients = clients if clients is not None else configured_agents(["dylan"])
+        self.clients = clients if clients is not None else configured_agents(["dylan", "mark"])
         self.on_event = on_event or handle_message_event
         self.deduper = MessageDeduper(agents_home() / "dedup.sqlite3")
 
@@ -88,7 +88,8 @@ class FeishuChannel:
     def start(self) -> None:
         if not self.clients:
             raise RuntimeError(
-                "No Feishu agent credentials configured. Set FEISHU_DYLAN_APP_ID and FEISHU_DYLAN_APP_SECRET."
+                "No Feishu agent credentials configured. Set FEISHU_DYLAN_APP_ID/SECRET "
+                "and/or FEISHU_MARK_APP_ID/SECRET."
             )
         try:
             import lark_oapi as lark
@@ -99,8 +100,18 @@ class FeishuChannel:
                 "lark-oapi is required for Agent Gateway. Install with: pip install lark-oapi"
             ) from exc
 
+        threads: list[threading.Thread] = []
         for client in self.clients:
-            self._start_client(client, lark, EventDispatcherHandler, WsClient)
+            thread = threading.Thread(
+                target=self._start_client,
+                args=(client, lark, EventDispatcherHandler, WsClient),
+                name=f"feishu-ws-{client.agent_id}",
+                daemon=True,
+            )
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
 
     def _start_client(self, client: FeishuClientConfig, lark, EventDispatcherHandler, WsClient) -> None:
         channel = self
@@ -109,8 +120,7 @@ class FeishuChannel:
             try:
                 raw = event_to_dict(data)
                 _LOG.info("received im.message.receive_v1 keys=%s", list(raw.keys()))
-                # Feishu requires return within ~3s; run work on bounded pool.
-                from agents.dylan.runtime import get_executor
+                from agents.runtime.jobs_pool import get_executor
 
                 get_executor().submit(channel._safe_process, raw, client)
             except Exception:

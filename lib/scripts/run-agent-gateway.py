@@ -56,7 +56,7 @@ def write_status(payload: dict) -> None:
 def cmd_status() -> int:
     path = pid_path()
     config = load_agents_config()
-    clients = configured_agents(["dylan"])
+    clients = configured_agents(["dylan", "mark"])
     running = False
     pid = None
     if path.is_file():
@@ -116,10 +116,10 @@ def cmd_start() -> int:
             file=sys.stderr,
         )
         return 1
-    clients = configured_agents(["dylan"])
+    clients = configured_agents(["dylan", "mark"])
     if not clients:
         print(
-            "No Dylan credentials found. Set FEISHU_DYLAN_APP_ID and FEISHU_DYLAN_APP_SECRET.",
+            "No agent credentials found. Set FEISHU_DYLAN_APP_ID/SECRET and/or FEISHU_MARK_APP_ID/SECRET.",
             file=sys.stderr,
         )
         return 1
@@ -173,8 +173,9 @@ def cmd_logs(argv: list[str] | None = None) -> int:
     parser.add_argument("--level", default="")
     parser.add_argument("--limit", type=int, default=200)
     args = parser.parse_args(argv or [])
-    if args.agent != "dylan":
-        print(f"Only dylan logs are supported (got {args.agent})", file=sys.stderr)
+    agent = str(args.agent or "dylan").strip().lower()
+    if agent not in {"dylan", "mark"}:
+        print(f"Supported agents: dylan, mark (got {args.agent})", file=sys.stderr)
         return 1
     from agents.dylan.diagnostics import follow_jsonl_logs, read_jsonl_logs
 
@@ -184,11 +185,12 @@ def cmd_logs(argv: list[str] | None = None) -> int:
         event=args.event,
         level=args.level,
         limit=args.limit,
+        agent_id=agent,
     )
     for row in rows:
         print(json.dumps(row, ensure_ascii=False))
     if args.follow:
-        follow_jsonl_logs(trace_id=args.trace, event=args.event, level=args.level)
+        follow_jsonl_logs(trace_id=args.trace, event=args.event, level=args.level, agent_id=agent)
     return 0
 
 

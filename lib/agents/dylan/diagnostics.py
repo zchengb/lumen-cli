@@ -177,8 +177,10 @@ def read_jsonl_logs(
     event: str = "",
     level: str = "",
     limit: int = 200,
+    agent_id: str = "dylan",
 ) -> list[dict[str, Any]]:
-    path = agents_home() / "dylan.jsonl"
+    agent = str(agent_id or "dylan").strip().lower() or "dylan"
+    path = agents_home() / f"{agent}.jsonl"
     if not path.is_file():
         return []
 
@@ -206,7 +208,6 @@ def read_jsonl_logs(
     rows = rows[-limit:]
     if not follow:
         return rows
-    # Follow: return current rows; caller prints then tails
     return rows
 
 
@@ -215,8 +216,10 @@ def follow_jsonl_logs(
     trace_id: str = "",
     event: str = "",
     level: str = "",
+    agent_id: str = "dylan",
 ) -> None:
-    path = agents_home() / "dylan.jsonl"
+    agent = str(agent_id or "dylan").strip().lower() or "dylan"
+    path = agents_home() / f"{agent}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
     with path.open("r", encoding="utf-8") as handle:

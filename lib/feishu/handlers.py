@@ -93,7 +93,7 @@ def should_handle(event: dict[str, Any], client: FeishuClientConfig) -> bool:
     thread_id = str(message.get("thread_id") or "").strip()
     if parent_id or root_id or thread_id:
         try:
-            from agents.dylan.reply_anchor import is_agent_thread_context
+            from agents.runtime.reply_anchor import is_agent_thread_context
 
             if is_agent_thread_context(
                 agent_id=agent_id,

@@ -117,18 +117,24 @@ class ConversationFlags:
     hard_timeout_seconds: int = 300
 
     @classmethod
-    def from_common(cls, common: dict[str, Any] | None, agents_config: dict[str, Any] | None = None) -> "ConversationFlags":
+    def from_common(
+        cls,
+        common: dict[str, Any] | None,
+        agents_config: dict[str, Any] | None = None,
+        agent_id: str = "dylan",
+    ) -> "ConversationFlags":
         data = common if isinstance(common, dict) else {}
         agents = data.get("agents") if isinstance(data.get("agents"), dict) else {}
-        dylan = agents.get("dylan") if isinstance(agents.get("dylan"), dict) else {}
+        key = str(agent_id or "dylan").strip().lower() or "dylan"
+        dylan = agents.get(key) if isinstance(agents.get(key), dict) else {}
         if not dylan and isinstance(agents_config, dict):
-            dylan = agents_config.get("dylan") if isinstance(agents_config.get("dylan"), dict) else {}
+            dylan = agents_config.get(key) if isinstance(agents_config.get(key), dict) else {}
         risk = dylan.get("risk_analyst") if isinstance(dylan.get("risk_analyst"), dict) else {}
         conv = risk.get("conversation_v2") if isinstance(risk.get("conversation_v2"), dict) else {}
         v3 = dylan.get("conversation_v3") if isinstance(dylan.get("conversation_v3"), dict) else {}
         v4 = dylan.get("conversation_v4") if isinstance(dylan.get("conversation_v4"), dict) else {}
         if isinstance(agents_config, dict):
-            cfg_dylan = agents_config.get("dylan") if isinstance(agents_config.get("dylan"), dict) else {}
+            cfg_dylan = agents_config.get(key) if isinstance(agents_config.get(key), dict) else {}
             if not v3:
                 v3 = cfg_dylan.get("conversation_v3") if isinstance(cfg_dylan.get("conversation_v3"), dict) else {}
             if not v4:
