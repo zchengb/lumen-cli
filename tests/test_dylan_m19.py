@@ -301,6 +301,21 @@ class CliWriteTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             workspace = Path(tmp)
+            agents_home = Path(tmp) / "agents-home"
+            agents_home.mkdir()
+            (agents_home / "config.json").write_text(
+                json.dumps(
+                    {
+                        "enabled": True,
+                        "access": {
+                            "mutation_allowed_user_ids": ["u1"],
+                            "admin_user_ids": ["u1"],
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            os.environ["LUMEN_AGENTS_HOME"] = str(agents_home)
             (workspace / "config").mkdir()
             (workspace / "config" / "common.json").write_text(
                 json.dumps({"project": {"slug": "demo"}}),
@@ -379,6 +394,7 @@ class CliWriteTests(unittest.TestCase):
                 store.close()
             finally:
                 os.environ.pop("LUMEN_TEST_MODE", None)
+                os.environ.pop("LUMEN_AGENTS_HOME", None)
 
 
 if __name__ == "__main__":

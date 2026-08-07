@@ -1,9 +1,32 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from agents.security.actions import ActionRequest
 from agents.security.errors import CapabilityDenied, ResourceDenied
+
+
+def _risk_store(request: ActionRequest):
+    from risk.store import RiskStore
+
+    args = dict(request.arguments or {})
+    workspace = str(args.get("workspace") or "").strip()
+    if workspace:
+        path = Path(workspace).expanduser().resolve()
+        if not path.is_dir():
+            raise ResourceDenied(f"workspace missing: {path}")
+        return RiskStore(path)
+    project = str(request.project_slug or args.get("project") or "").strip()
+    if project:
+        from agents.project_resolver import resolve_project
+
+        resolved = resolve_project(slug=project)
+        if resolved and resolved.get("workspace"):
+            path = Path(str(resolved["workspace"])).expanduser().resolve()
+            if path.is_dir():
+                return RiskStore(path)
+    raise ResourceDenied("workspace or project required for risk actions")
 
 
 def execute_risk_action(request: ActionRequest) -> dict[str, Any]:
@@ -12,10 +35,7 @@ def execute_risk_action(request: ActionRequest) -> dict[str, Any]:
     resource = dict(request.resource or {})
     finding_id = str(resource.get("finding_id") or args.get("finding_id") or "").strip()
     project = str(request.project_slug or args.get("project") or "").strip()
-
-    from risk.store import GlobalRiskStore
-
-    store = GlobalRiskStore()
+    store = _risk_store(request)
     try:
         if action in {"risk.read", "scan.read"}:
             if finding_id:

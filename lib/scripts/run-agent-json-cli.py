@@ -158,14 +158,19 @@ def cmd_risk(args: argparse.Namespace) -> int:
                     ActionRequest(
                         agent_id="dylan",
                         action="risk.mark_remediated",
-                        project_slug=str(getattr(args, "project", "") or ""),
+                        project_slug=slug,
                         actor_user_id=actor,
                         chat_id=str(getattr(args, "chat_id", "") or ""),
                         thread_id="",
                         source_message_id=source_message_id,
                         trace_id=trace_id,
                         resource={"finding_id": finding_id},
-                        arguments={"finding_id": finding_id, "reason": reason or "User reported the fix completed"},
+                        arguments={
+                            "finding_id": finding_id,
+                            "reason": reason or "User reported the fix completed",
+                            "workspace": str(workspace),
+                            "project": slug,
+                        },
                         explicit_authorization=True,
                     )
                 )
@@ -200,7 +205,7 @@ def cmd_risk(args: argparse.Namespace) -> int:
                     ActionRequest(
                         agent_id="dylan",
                         action="risk.resolve",
-                        project_slug=str(getattr(args, "project", "") or ""),
+                        project_slug=slug,
                         actor_user_id=actor,
                         chat_id=str(getattr(args, "chat_id", "") or ""),
                         thread_id="",
@@ -212,6 +217,8 @@ def cmd_risk(args: argparse.Namespace) -> int:
                             "reason": reason,
                             "basis": basis,
                             "override": override,
+                            "workspace": str(workspace),
+                            "project": slug,
                         },
                         explicit_authorization=True,
                     )

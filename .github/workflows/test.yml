@@ -26,6 +26,7 @@ jobs:
             tests.test_agent_platform \
             tests.test_mark_m10 \
             tests.test_agent_settings \
+            tests.security.test_agent_security_m03 \
             -v
 
   dashboard-build:
