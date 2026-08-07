@@ -140,6 +140,31 @@ def cmd_start() -> int:
         "clients": [item.agent_id for item in clients],
     })
 
+    try:
+        from agents.security.preflight import run_security_check
+
+        security = run_security_check()
+        if security.get("status") != "pass":
+            print(
+                "Agent security preflight failed. Conversation agents will not start.\n"
+                + json.dumps(security, indent=2, ensure_ascii=False),
+                file=sys.stderr,
+            )
+            path.unlink(missing_ok=True)
+            write_status({"running": False, "error": "SECURITY_PREFLIGHT_FAILED", "security": security})
+            return 1
+        write_status({
+            "running": True,
+            "pid": os.getpid(),
+            "clients": [item.agent_id for item in clients],
+            "security": security,
+        })
+    except Exception as exc:
+        print(f"Agent security preflight error: {exc}", file=sys.stderr)
+        path.unlink(missing_ok=True)
+        write_status({"running": False, "error": f"SECURITY_PREFLIGHT_ERROR:{exc}"})
+        return 1
+
     def _cleanup(*_args) -> None:
         path.unlink(missing_ok=True)
         write_status({"running": False})

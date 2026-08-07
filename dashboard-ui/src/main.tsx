@@ -56,12 +56,29 @@ interface AgentSettings {
   app_secret_configured?: boolean;
   app_secret_masked?: string;
   credentials_path?: string;
+  security?: {
+    filesystem?: string;
+    mutations?: string;
+    network?: string;
+    sandbox?: string;
+    secrets?: string;
+    actions?: string[];
+  };
+}
+
+interface AgentsAccessSettings {
+  allowed_chat_ids?: string[];
+  allowed_user_ids?: string[];
+  mutation_allowed_user_ids?: string[];
+  admin_user_ids?: string[];
 }
 
 interface AgentsSettingsPayload {
   enabled?: boolean;
   home?: string;
   config_path?: string;
+  access?: AgentsAccessSettings;
+  recent_feishu?: { user_ids?: string[]; chat_ids?: string[] };
   agents?: AgentSettings[];
 }
 
@@ -1672,7 +1689,21 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [feishuEnabled, setFeishuEnabled] = useState(workspace.feishu_notifications_enabled !== false);
   const [agentsEnabled, setAgentsEnabled] = useState(Boolean(agentsPayload.enabled));
   const [agentDrafts, setAgentDrafts] = useState<AgentSettings[]>(Array.isArray(agentsPayload.agents) ? agentsPayload.agents.map((agent) => ({ ...agent })) : []);
-  const [agentsBaseline, setAgentsBaseline] = useState({ enabled: Boolean(agentsPayload.enabled), agents: Array.isArray(agentsPayload.agents) ? JSON.stringify(agentsPayload.agents) : "[]" });
+  const [accessDraft, setAccessDraft] = useState<AgentsAccessSettings>({
+    allowed_chat_ids: agentsPayload.access?.allowed_chat_ids || [],
+    allowed_user_ids: agentsPayload.access?.allowed_user_ids || [],
+    mutation_allowed_user_ids: agentsPayload.access?.mutation_allowed_user_ids || [],
+    admin_user_ids: agentsPayload.access?.admin_user_ids || [],
+  });
+  const [recentFeishu, setRecentFeishu] = useState({
+    user_ids: agentsPayload.recent_feishu?.user_ids || [],
+    chat_ids: agentsPayload.recent_feishu?.chat_ids || [],
+  });
+  const [agentsBaseline, setAgentsBaseline] = useState({
+    enabled: Boolean(agentsPayload.enabled),
+    agents: Array.isArray(agentsPayload.agents) ? JSON.stringify(agentsPayload.agents) : "[]",
+    access: JSON.stringify(agentsPayload.access || {}),
+  });
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
@@ -1680,9 +1711,30 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     const nextAgents = Array.isArray(payload.agents)
       ? payload.agents.map((agent) => ({ ...agent, app_secret: "" }))
       : [];
+    const nextAccess = {
+      allowed_chat_ids: payload.access?.allowed_chat_ids || [],
+      allowed_user_ids: payload.access?.allowed_user_ids || [],
+      mutation_allowed_user_ids: payload.access?.mutation_allowed_user_ids || [],
+      admin_user_ids: payload.access?.admin_user_ids || [],
+    };
     setAgentsEnabled(Boolean(payload.enabled));
     setAgentDrafts(nextAgents);
-    setAgentsBaseline({ enabled: Boolean(payload.enabled), agents: JSON.stringify(nextAgents) });
+    setAccessDraft(nextAccess);
+    setRecentFeishu({
+      user_ids: payload.recent_feishu?.user_ids || [],
+      chat_ids: payload.recent_feishu?.chat_ids || [],
+    });
+    setAgentsBaseline({ enabled: Boolean(payload.enabled), agents: JSON.stringify(nextAgents), access: JSON.stringify(nextAccess) });
+  };
+  const addAccessId = (field: keyof AgentsAccessSettings, value: string) => {
+    const id = value.trim();
+    if (!id) return;
+    setAccessDraft((current) => {
+      const existing = current[field] || [];
+      if (existing.includes(id)) return current;
+      return { ...current, [field]: [...existing, id] };
+    });
+    markDirty();
   };
   const updateAgent = (agentId: string, patch: Partial<AgentSettings>) => {
     setAgentDrafts((current) => current.map((agent) => agent.id === agentId ? { ...agent, ...patch } : agent));
@@ -1719,7 +1771,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const deliveryScheduleChanged = deliveryEnabled !== Boolean(schedules.delivery?.enabled) || (deliveryEnabled && (deliveryInterval !== String(Math.round((schedules.delivery?.interval_seconds || 300) / 60)) || !sameValues(eligibleStatuses, configuredDeliveryStatuses) || inDevStatus !== String(schedules.delivery?.in_dev_status || "") || devDoneStatus !== String(schedules.delivery?.dev_done_status || "") || blockedStatus !== String(schedules.delivery?.blocked_status || "Block")));
   const patchScheduleChanged = patchEnabled !== Boolean(schedules.patch?.enabled) || (patchEnabled && (patchInterval !== String(Math.round((schedules.patch?.interval_seconds || 300) / 60)) || !sameValues(patchStatuses, configuredPatchStatuses) || patchStartStatus !== String(schedules.patch?.in_progress_status || "In Progress") || patchDoneStatus !== String(schedules.patch?.done_status || "Done") || patchBlockedStatus !== String(schedules.patch?.blocked_status || "Block")));
   const publishPolicyChanged = scanPublishMode !== String(workspace.publish?.scan || "pr") || deliveryPublishMode !== String(workspace.publish?.delivery || "pr") || patchPublishMode !== String(workspace.publish?.patch || "pr");
-  const agentsChanged = agentsEnabled !== agentsBaseline.enabled || JSON.stringify(agentDrafts) !== agentsBaseline.agents;
+  const agentsChanged = agentsEnabled !== agentsBaseline.enabled || JSON.stringify(agentDrafts) !== agentsBaseline.agents || JSON.stringify(accessDraft) !== agentsBaseline.access;
   const saveAll = async () => {
     if (saving) return;
     setSaving(true);
@@ -1743,6 +1795,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
             method: "POST",
             json: {
               enabled: agentsEnabled,
+              access: accessDraft,
               agents: agentDrafts.map((agent) => {
                 const body: Record<string, unknown> = {
                   id: agent.id,
@@ -1780,12 +1833,55 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
       <div className="settings-section divider"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Auto Patch</h4></div></div><p>{patchEnabled ? `Polling every ${patchInterval} minute(s) for Task and Bug cards.` : "Auto Patch polling is paused."}</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Interval, minutes"><input type="number" min="1" value={patchInterval} onChange={(event) => { setPatchInterval(event.target.value); markDirty(); }} /></Field><Field label="Eligible JIRA statuses"><StatusMultiSelect options={statusOptions} value={patchStatuses} onChange={setPatchStatuses} markDirty={markDirty} /></Field><Field label="Move to when started"><select value={patchStartStatus} onChange={(event) => { setPatchStartStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when completed"><select value={patchDoneStatus} onChange={(event) => { setPatchDoneStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field><Field label="Move to when blocked"><select value={patchBlockedStatus} onChange={(event) => { setPatchBlockedStatus(event.target.value); markDirty(); }}>{statusOptions.map((value) => <option value={value} key={value}>{value}</option>)}</select></Field></div><p className="schedule-note">Only Task and Bug cards are captured. Blocked cards retry after a new external Jira comment.</p></div><div className="settings-toggle"><ScheduleToggle enabled={patchEnabled} onChange={(enabled) => { setPatchEnabled(enabled); markDirty(); }} /></div></div>
     </Panel>
     <Panel title="Agent Roles" action={<span className="muted">Global Feishu agents</span>}>
-      <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Agent Gateway</h4></div></div><p>Enable Feishu conversational agents. Config lives in {text(agentsPayload.config_path, "~/.lumen/agents/config.json")}. Restart `lumen agents start` after saving.</p></div><div className="settings-toggle"><ScheduleToggle enabled={agentsEnabled} onChange={(enabled) => { setAgentsEnabled(enabled); markDirty(); }} /></div></div>
+      <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Agent Gateway</h4></div></div><p>Enable Feishu conversational agents. Config lives in {text(agentsPayload.config_path, "~/.lumen/agents/config.json")}. Restart `lumen agents start` after saving. Mutations fail closed until mutation users are configured.</p></div><div className="settings-toggle"><ScheduleToggle enabled={agentsEnabled} onChange={(enabled) => { setAgentsEnabled(enabled); markDirty(); }} /></div></div>
+      <div className="settings-section divider">
+        <div className="settings-copy">
+          <div className="settings-heading"><div className="settings-title-stack"><h4>Access Control</h4></div></div>
+          <p>Configure who may talk to agents and who may mutate (resolve findings, update scan schedule, start delivery). Save writes to {text(agentsPayload.config_path, "~/.lumen/agents/config.json")}.</p>
+          <p className="schedule-note">Feishu user IDs look like <code>ou_…</code> (open_id). Chat IDs look like <code>oc_…</code>. Easiest: message Dylan/Mark once, then click a recent ID below. Or copy open_id from Feishu Open Platform → your app → event/debug logs, or from the sender payload in gateway logs.</p>
+        </div>
+        <div className="settings-control wide">
+          <div className="form-grid compact">
+            <Field label="Allowed chat IDs" help="Empty = all chats may message agents."><input value={(accessDraft.allowed_chat_ids || []).join(", ")} placeholder="oc_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, allowed_chat_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
+            <Field label="Allowed user IDs" help="Empty = all users may ask read-only questions."><input value={(accessDraft.allowed_user_ids || []).join(", ")} placeholder="ou_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, allowed_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
+            <Field label="Mutation user IDs" help="Required for resolve / schedule update / delivery start. Fail-closed when empty."><input value={(accessDraft.mutation_allowed_user_ids || []).join(", ")} placeholder="ou_… required for mutations" onChange={(event) => { setAccessDraft((current) => ({ ...current, mutation_allowed_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
+            <Field label="Admin user IDs" help="Admins can also mutate."><input value={(accessDraft.admin_user_ids || []).join(", ")} placeholder="ou_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, admin_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
+          </div>
+          {(recentFeishu.user_ids.length > 0 || recentFeishu.chat_ids.length > 0) && (
+            <div className="schedule-note" style={{ marginTop: 12 }}>
+              <div>Recent Feishu IDs from agent traffic — click to add:</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                {recentFeishu.user_ids.map((id) => (
+                  <button type="button" className="button ghost" key={`user-${id}`} onClick={() => addAccessId("mutation_allowed_user_ids", id)} title="Add to Mutation user IDs">
+                    {id}
+                  </button>
+                ))}
+                {recentFeishu.chat_ids.map((id) => (
+                  <button type="button" className="button ghost" key={`chat-${id}`} onClick={() => addAccessId("allowed_chat_ids", id)} title="Add to Allowed chat IDs">
+                    {id}
+                  </button>
+                ))}
+              </div>
+              {recentFeishu.user_ids[0] && (
+                <div style={{ marginTop: 8 }}>
+                  <button type="button" className="button ghost" onClick={() => { addAccessId("mutation_allowed_user_ids", recentFeishu.user_ids[0]); addAccessId("admin_user_ids", recentFeishu.user_ids[0]); addAccessId("allowed_user_ids", recentFeishu.user_ids[0]); }}>
+                    Use latest user as owner ({recentFeishu.user_ids[0]})
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          {recentFeishu.user_ids.length === 0 && (
+            <p className="schedule-note" style={{ marginTop: 12 }}>No recent Feishu user IDs yet. Send any message to Dylan or Mark, refresh Settings, then click the ID here.</p>
+          )}
+        </div>
+      </div>
       {agentDrafts.map((agent, index) => (
         <div className={`settings-section divider agent-role-section`} key={agent.id}>
           <div className="settings-copy">
             <div className="settings-heading"><div className="settings-title-stack"><h4>{agent.display_name}</h4><span className="muted">{agent.title}</span></div></div>
             <p>Role {agent.role} · workflow {agent.workflow}. Feishu credentials live in {text(agent.credentials_path, "~/.lumen/.env.local")}. SOUL overrides are at {text(agent.soul_override_path)} ({agent.soul_source}). Restart `lumen agents start` after changing App ID/Secret.</p>
+            <p className="schedule-note">Security: filesystem {text(agent.security?.filesystem, "workspace_read")} · mutations {text(agent.security?.mutations, "brokered")} · network {text(agent.security?.network, "deny")} · sandbox {text(agent.security?.sandbox, "enabled")} · secrets {text(agent.security?.secrets, "isolated")}</p>
           </div>
           <div className="settings-control wide">
             <div className="form-grid compact">

@@ -10,7 +10,7 @@ from agents.definitions import ensure_definitions_loaded, get_definition
 from agents.dylan.schemas import ConversationFlags
 from agents.models import TriggerContext
 from agents.parser import parse_dylan_text
-from agents.permissions import is_chat_allowed
+from agents.permissions import is_chat_allowed, is_user_allowed
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
 from agents.runtime.reply_anchor import remember_outbound
 from feishu.cards import ack_card, progress_card, scan_summary_card
@@ -236,8 +236,11 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
 
     config = load_agents_config()
     chat_id = str(meta.get("chat_id") or "").strip()
+    user_id = str(meta.get("user_id") or "").strip()
     if not is_chat_allowed(chat_id, config):
         return {"status": "denied", "detail": "chat not allowed"}
+    if not is_user_allowed(user_id, config):
+        return {"status": "denied", "detail": "user not allowed"}
 
     messenger = FeishuMessenger(agent)
     message_id = str(meta.get("message_id") or "").strip()

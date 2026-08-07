@@ -7,6 +7,7 @@ from agents.definitions import AgentDefinition
 from agents.dylan.session_bootstrap import build_bootstrap_prompt, build_resume_prompt
 from agents.dylan.workspace_contract import ensure_workspace_contract
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
+from agents.security.actions import DYLAN_ACTIONS
 
 
 def _resolve_workspace(project_slug: str, chat_id: str) -> tuple[str, Path]:
@@ -35,9 +36,14 @@ DYLAN_DEFINITION = AgentDefinition(
     result_contract="scan-result.json",
     permission_profile="workspace_autonomous",
     capabilities=AgentCapabilities(
-        direct_workspace_write=True,
+        actions=DYLAN_ACTIONS,
+        read_scopes=("workspace", "risk", "scan"),
+        filesystem_mode="workspace_read",
+        network_profile="deny",
+        secret_profile="isolated",
+        direct_workspace_write=False,
         allowed_workflows=("risk.query", "risk.resolve", "scan.verify"),
-        allowed_mutations=("risk.mark_remediated", "risk.resolve"),
+        allowed_mutations=("risk.mark_remediated", "risk.resolve", "scan.schedule.update"),
         external_side_effects=("feishu.reply",),
     ),
     build_bootstrap_prompt=build_bootstrap_prompt,

@@ -142,6 +142,9 @@ def cmd_risk(args: argparse.Namespace) -> int:
                     "freshness": {"source": "risk_store", "updated_at": utc_now()},
                 }
             elif args.finding_action == "mark-remediated":
+                from agents.security.actions import ActionRequest
+                from agents.security.broker import CapabilityBroker
+
                 actor = str(getattr(args, "actor", "") or "").strip()
                 reason = str(getattr(args, "reason", "") or "").strip()
                 source_message_id = str(getattr(args, "source_message_id", "") or "").strip()
@@ -151,21 +154,41 @@ def cmd_risk(args: argparse.Namespace) -> int:
                         "WRITE_META_REQUIRED",
                         "mark-remediated requires --actor, --source-message-id, and --trace-id",
                     )
-                out = mark_remediated(
-                    store,
-                    finding_id,
-                    actor=actor,
-                    reason=reason or "User reported the fix completed",
-                    source_message_id=source_message_id,
-                    trace_id=trace_id,
+                receipt = CapabilityBroker().execute(
+                    ActionRequest(
+                        agent_id="dylan",
+                        action="risk.mark_remediated",
+                        project_slug=str(getattr(args, "project", "") or ""),
+                        actor_user_id=actor,
+                        chat_id=str(getattr(args, "chat_id", "") or ""),
+                        thread_id="",
+                        source_message_id=source_message_id,
+                        trace_id=trace_id,
+                        resource={"finding_id": finding_id},
+                        arguments={"finding_id": finding_id, "reason": reason or "User reported the fix completed"},
+                        explicit_authorization=True,
+                    )
                 )
+                if receipt.status != "succeeded":
+                    return _emit(
+                        {
+                            "status": "denied" if receipt.status == "denied" else "error",
+                            "code": receipt.error_code or "BROKER_DENIED",
+                            "message": receipt.error or receipt.status,
+                            "receipt": receipt.to_dict(),
+                        },
+                        code=1,
+                    )
+                out = dict(receipt.result or {})
+                out["receipt_id"] = receipt.receipt_id
                 if out.get("status") == "not_found":
                     return _emit(out, code=1)
                 if out.get("status") == "error":
                     return _emit(out, code=1)
                 out["freshness"] = {"source": "risk_store", "updated_at": utc_now()}
             elif args.finding_action == "resolve":
-                from risk.resolution import resolve_finding
+                from agents.security.actions import ActionRequest
+                from agents.security.broker import CapabilityBroker
 
                 actor = str(getattr(args, "actor", "") or "").strip()
                 reason = str(getattr(args, "reason", "") or "").strip()
@@ -173,17 +196,38 @@ def cmd_risk(args: argparse.Namespace) -> int:
                 trace_id = str(getattr(args, "trace_id", "") or "").strip()
                 basis = str(getattr(args, "basis", "") or "user_confirmed").strip() or "user_confirmed"
                 override = bool(getattr(args, "override", False))
-                out = resolve_finding(
-                    store,
-                    finding_id,
-                    basis=basis,
-                    actor=actor,
-                    reason=reason,
-                    source_message_id=source_message_id,
-                    trace_id=trace_id,
-                    override=override,
-                    common=common,
+                receipt = CapabilityBroker().execute(
+                    ActionRequest(
+                        agent_id="dylan",
+                        action="risk.resolve",
+                        project_slug=str(getattr(args, "project", "") or ""),
+                        actor_user_id=actor,
+                        chat_id=str(getattr(args, "chat_id", "") or ""),
+                        thread_id="",
+                        source_message_id=source_message_id,
+                        trace_id=trace_id,
+                        resource={"finding_id": finding_id},
+                        arguments={
+                            "finding_id": finding_id,
+                            "reason": reason,
+                            "basis": basis,
+                            "override": override,
+                        },
+                        explicit_authorization=True,
+                    )
                 )
+                if receipt.status != "succeeded":
+                    return _emit(
+                        {
+                            "status": "denied" if receipt.status == "denied" else "error",
+                            "code": receipt.error_code or "BROKER_DENIED",
+                            "message": receipt.error or receipt.status,
+                            "receipt": receipt.to_dict(),
+                        },
+                        code=1,
+                    )
+                out = dict(receipt.result or {})
+                out["receipt_id"] = receipt.receipt_id
                 if out.get("status") != "ok":
                     return _emit(out, code=1)
                 out["freshness"] = {"source": "risk_store", "updated_at": utc_now()}

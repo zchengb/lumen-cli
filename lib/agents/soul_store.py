@@ -97,6 +97,30 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
     app_secret_env = APP_SECRET_ENV.get(agent, "")
     app_id = read_lumen_env_var(app_id_env) if app_id_env else ""
     app_secret = read_lumen_env_var(app_secret_env) if app_secret_env else ""
+    security = {
+        "filesystem": "workspace_read",
+        "mutations": "brokered",
+        "network": "deny",
+        "sandbox": "enabled",
+        "secrets": "isolated",
+    }
+    try:
+        from agents.definitions import ensure_definitions_loaded, get_definition
+
+        ensure_definitions_loaded()
+        definition = get_definition(agent)
+        if definition is not None:
+            caps = definition.capabilities
+            security = {
+                "filesystem": caps.filesystem_mode,
+                "mutations": "brokered",
+                "network": caps.network_profile,
+                "sandbox": "enabled",
+                "secrets": caps.secret_profile,
+                "actions": list(caps.actions),
+            }
+    except Exception:
+        pass
     return {
         "id": agent,
         "display_name": meta["display_name"],
@@ -119,15 +143,37 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
         "app_secret_configured": bool(app_secret),
         "app_secret_masked": mask_credential(app_secret) if app_secret else "",
         "credentials_path": str(lumen_env_local_path()),
+        "security": security,
     }
 
 
 def agents_settings_payload() -> dict[str, Any]:
     config = load_agents_config()
+    access = config.get("access") if isinstance(config.get("access"), dict) else {}
+    recent = {"user_ids": [], "chat_ids": []}
+    try:
+        from risk.store import GlobalAgentStore
+
+        store = GlobalAgentStore()
+        try:
+            recent = store.list_recent_feishu_ids(limit=20)
+        finally:
+            store.close()
+    except Exception:
+        pass
     return {
         "enabled": bool(config.get("enabled", False)),
         "home": str(agents_home()),
         "config_path": str(agents_home() / "config.json"),
+        "access": {
+            "allowed_chat_ids": [str(x) for x in (access.get("allowed_chat_ids") or []) if str(x).strip()],
+            "allowed_user_ids": [str(x) for x in (access.get("allowed_user_ids") or []) if str(x).strip()],
+            "mutation_allowed_user_ids": [
+                str(x) for x in (access.get("mutation_allowed_user_ids") or []) if str(x).strip()
+            ],
+            "admin_user_ids": [str(x) for x in (access.get("admin_user_ids") or []) if str(x).strip()],
+        },
+        "recent_feishu": recent,
         "agents": [agent_settings_view(agent_id, config) for agent_id in AGENT_META],
     }
 
@@ -136,6 +182,19 @@ def apply_agent_settings(payload: dict[str, Any]) -> dict[str, Any]:
     config = load_agents_config()
     if "enabled" in payload:
         config["enabled"] = bool(payload.get("enabled"))
+    if "access" in payload and isinstance(payload.get("access"), dict):
+        access_in = payload["access"]
+        access = _ensure_dict(config, "access")
+        for key in ("allowed_chat_ids", "allowed_user_ids", "mutation_allowed_user_ids", "admin_user_ids"):
+            if key in access_in:
+                raw = access_in.get(key)
+                if isinstance(raw, str):
+                    values = [part.strip() for part in raw.replace("\n", ",").split(",") if part.strip()]
+                elif isinstance(raw, list):
+                    values = [str(item).strip() for item in raw if str(item).strip()]
+                else:
+                    values = []
+                access[key] = values
     profiles = _ensure_dict(config, "profiles")
     agents = payload.get("agents")
     if not isinstance(agents, list):

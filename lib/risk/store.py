@@ -568,3 +568,38 @@ class GlobalAgentStore:
             ),
         )
         self.conn.commit()
+
+    def list_recent_feishu_ids(self, *, limit: int = 20) -> dict[str, list[str]]:
+        cap = max(1, min(int(limit or 20), 50))
+        users: list[str] = []
+        chats: list[str] = []
+        seen_users: set[str] = set()
+        seen_chats: set[str] = set()
+        queries = (
+            ("user_id", "SELECT user_id AS value FROM conversation_context WHERE user_id != '' ORDER BY updated_at DESC LIMIT ?"),
+            ("user_id", "SELECT user_id AS value FROM agent_run WHERE user_id != '' ORDER BY updated_at DESC LIMIT ?"),
+            ("user_id", "SELECT user_id AS value FROM conversation_log WHERE user_id != '' ORDER BY created_at DESC LIMIT ?"),
+            ("chat_id", "SELECT chat_id AS value FROM conversation_context WHERE chat_id != '' ORDER BY updated_at DESC LIMIT ?"),
+            ("chat_id", "SELECT chat_id AS value FROM agent_run WHERE chat_id != '' ORDER BY updated_at DESC LIMIT ?"),
+            ("chat_id", "SELECT chat_id AS value FROM chat_project_map WHERE chat_id != '' ORDER BY updated_at DESC LIMIT ?"),
+        )
+        for kind, sql in queries:
+            try:
+                rows = self.conn.execute(sql, (cap,)).fetchall()
+            except Exception:
+                continue
+            for row in rows:
+                value = str(row["value"] if isinstance(row, sqlite3.Row) else row[0] or "").strip()
+                if not value:
+                    continue
+                if kind == "user_id":
+                    if not value.startswith("ou_") or value in seen_users:
+                        continue
+                    seen_users.add(value)
+                    users.append(value)
+                elif kind == "chat_id":
+                    if not value.startswith("oc_") or value in seen_chats:
+                        continue
+                    seen_chats.add(value)
+                    chats.append(value)
+        return {"user_ids": users[:cap], "chat_ids": chats[:cap]}

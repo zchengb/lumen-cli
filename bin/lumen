@@ -2719,6 +2719,12 @@ cmd_schedule_scan() {
     add) cmd_schedule_add "$@" ;;
     remove|rm) cmd_schedule_remove "$@" ;;
     list|ls) cmd_schedule_list "$@" ;;
+    show|update)
+      local schedule_py="${LUMEN_LIB_DIR}/scan_schedule_cli.py"
+      [[ -f "${schedule_py}" ]] || { err "Scan schedule helper not found: ${schedule_py}"; exit 1; }
+      require_python3
+      python3 "${schedule_py}" "${sub}" "$@"
+      ;;
     *) err "Unknown scan schedule command: ${sub}"; exit 1 ;;
   esac
 }
@@ -4084,11 +4090,18 @@ cmd_agents() {
     start|status|stop|logs)
       python3 "${gateway_py}" "${sub}" "$@"
       ;;
+    security-check|action)
+      local security_py="${LUMEN_LIB_DIR}/agent_security_cli.py"
+      [[ -f "${security_py}" ]] || { err "Agent security helper not found: ${security_py}"; exit 1; }
+      python3 "${security_py}" "${sub}" "$@"
+      ;;
     ""|help|-h|--help)
       printf 'Usage:\n'
       printf '  lumen agents start\n'
       printf '  lumen agents status\n'
       printf '  lumen agents stop\n'
+      printf '  lumen agents security-check [--agent dylan|mark] [--project <slug>]\n'
+      printf '  lumen agents action --agent <id> --action <name> [options]\n'
       printf '  lumen agents logs --agent dylan [--follow] [--trace id] [--event name] [--level LEVEL]\n'
       printf '\nEnable with ~/.lumen/agents/config.json {"enabled": true} or LUMEN_AGENTS_ENABLED=1\n'
       printf 'Credentials: FEISHU_DYLAN_APP_ID / FEISHU_DYLAN_APP_SECRET\n'

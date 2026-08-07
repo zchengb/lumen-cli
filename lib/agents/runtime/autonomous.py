@@ -35,6 +35,12 @@ _RESUME_RETRY_TOKENS = (
 
 def _user_facing_agent_error(error: str, trace_id: str) -> str:
     lower = (error or "").lower()
+    if "sandbox_unavailable" in lower or "security_error" in lower:
+        return (
+            "I can't run that turn because the secure Cursor sandbox is unavailable. "
+            "Conversation agents stay offline until security-check passes.\n"
+            f"Trace ID: {trace_id}"
+        )
     if any(tok in lower for tok in ("failed to reach", "cursor api", "proxy", "https_proxy")):
         return (
             "I couldn't reach the Cursor Agent service just now, so I couldn't finish that turn.\n"
@@ -86,6 +92,28 @@ def handle_autonomous_conversation(
         project_slug = known[0] if len(known) == 1 else ""
     slug, workspace = definition.resolve_workspace(project_slug, chat_id)
     definition.ensure_workspace_contract(workspace=workspace, project_slug=slug)
+
+    try:
+        from risk.store import GlobalAgentStore
+
+        gs = GlobalAgentStore()
+        try:
+            if chat_id and user_id:
+                gs.upsert_conversation_context(
+                    {
+                        "chat_id": chat_id,
+                        "thread_id": thread_id,
+                        "user_id": user_id,
+                        "project_slug": slug,
+                        "last_intent": f"{agent_id}.message",
+                    }
+                )
+            if chat_id and slug:
+                gs.set_chat_project(chat_id, slug)
+        finally:
+            gs.close()
+    except Exception:
+        pass
 
     scope = conversation_scope_id(
         agent_id=agent_id,
@@ -223,6 +251,11 @@ def handle_autonomous_conversation(
                 model=flags.model.model_name,
                 soft_timeout_seconds=flags.soft_timeout_seconds,
                 hard_timeout_seconds=flags.hard_timeout_seconds,
+                sandbox="enabled",
+                force=False,
+                trust=True,
+                agent_id=agent_id,
+                project=slug,
             )
             obs.upsert_trace(trace, state="running", project_slug=slug)
             result = runner.run(

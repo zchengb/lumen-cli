@@ -31,8 +31,12 @@ class AgentPlatformTests(unittest.TestCase):
         assert dylan is not None and mark is not None
         self.assertEqual(dylan.role, "scan")
         self.assertEqual(mark.role, "delivery")
-        self.assertTrue(dylan.capabilities.direct_workspace_write)
+        self.assertFalse(dylan.capabilities.direct_workspace_write)
         self.assertFalse(mark.capabilities.direct_workspace_write)
+        self.assertEqual(dylan.capabilities.filesystem_mode, "workspace_read")
+        self.assertEqual(mark.capabilities.filesystem_mode, "workspace_read")
+        self.assertIn("risk.resolve", dylan.capabilities.actions)
+        self.assertIn("delivery.start", mark.capabilities.actions)
 
     def test_unknown_agent_ignored(self) -> None:
         from agents.bridge import handle_agent_message

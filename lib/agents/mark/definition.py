@@ -8,6 +8,7 @@ from agents.mark.delivery_adapter import DeliveryActionAdapter
 from agents.mark.session_bootstrap import PROTOCOL_VERSION, SOUL_VERSION, build_bootstrap_prompt, build_resume_prompt
 from agents.mark.workspace_contract import ensure_workspace_contract
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
+from agents.security.actions import MARK_ACTIONS
 
 
 def _resolve_workspace(project_slug: str, chat_id: str) -> tuple[str, Path]:
@@ -20,7 +21,6 @@ def _resolve_workspace(project_slug: str, chat_id: str) -> tuple[str, Path]:
         raise RuntimeError("workspace not resolved")
     slug = str(project.get("slug") or project_slug or "").strip()
     workspace = Path(str(project["workspace"])).expanduser().resolve()
-    # Prefer delivery docs root when lumen workspace is nested.
     parent = workspace.parent
     if (parent / "stories").is_dir():
         workspace = parent
@@ -45,6 +45,11 @@ MARK_DEFINITION = AgentDefinition(
     result_contract="delivery-result.json",
     permission_profile="delivery_conversational",
     capabilities=AgentCapabilities(
+        actions=MARK_ACTIONS,
+        read_scopes=("delivery_docs", "story", "technical_plan"),
+        filesystem_mode="workspace_read",
+        network_profile="deny",
+        secret_profile="isolated",
         direct_workspace_write=False,
         allowed_workflows=("delivery.readiness", "delivery.status", "delivery.run", "delivery.cancel"),
         allowed_mutations=("delivery.start",),

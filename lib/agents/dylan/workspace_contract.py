@@ -50,8 +50,16 @@ def _managed_block(project_slug: str) -> str:
         f"- lumen risk reconcile --project {slug} [--dry-run|--repair] --json\n"
         f"- lumen risk trend --project {slug} --json\n"
         f"- lumen scan latest --project {slug} --json\n"
-        f"- lumen scan verify --finding <id> --actor <user> --source-message-id <mid> "
-        f"--trace-id <tid> --json\n\n"
+        f"- lumen scan schedule show --project {slug} --json\n"
+        f"- lumen scan schedule update --project {slug} --cron \"0 12 * * 1-5\" "
+        f"--actor <user> --source-message-id <mid> --trace-id <tid> --json\n"
+        f"- lumen agents action --agent dylan --action risk.resolve "
+        f"--finding <id> --actor <user> --source-message-id <mid> --trace-id <tid> --json\n\n"
+        f"## Security Boundary\n"
+        f"- Conversational Dylan is workspace read-only\n"
+        f"- Never edit ~/Desktop, ~/Library/LaunchAgents, ~/.ssh, or ~/.lumen secrets\n"
+        f"- Host mutations go through Capability Broker only\n"
+        f"- Do not use python/node/curl to mutate the host\n\n"
         f"## Verification Policy\n"
         f"- Never pass --observed\n"
         f"- Production verification requires a real adapter; dry-run must not change production state\n"
@@ -64,10 +72,11 @@ def _managed_block(project_slug: str) -> str:
         f"- Explicit resolve must not ask twice and must not auto-ask Verification\n"
         f"- Write CLIs must include actor, source-message-id, and trace-id\n\n"
         f"## Engineering rules\n"
-        f"- Inspect before modifying.\n"
+        f"- Inspect before answering.\n"
         f"- Do not invent findings, Jira, PRs, or scan status.\n"
         f"- Never expose secret values in the final response.\n"
         f"- For read-only questions, do not modify files.\n"
+        f"- Never write outside the Lumen workspace.\n"
         f"{_MANAGED_END}\n"
     )
 
@@ -96,5 +105,5 @@ def ensure_workspace_contract(*, workspace: Path, project_slug: str) -> Path:
         agents.write_text(updated, encoding="utf-8")
     from agents.dylan.permission_policy import write_permission_profile
 
-    write_permission_profile(root)
+    write_permission_profile(root, force=True)
     return root

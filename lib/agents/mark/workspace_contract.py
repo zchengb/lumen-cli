@@ -30,7 +30,13 @@ def _managed_block(project_slug: str) -> str:
         f"- lumen delivery readiness --story <id> --json\n"
         f"- lumen delivery status --story <id> --json\n"
         f"- lumen delivery run --story <id> --actor <user> --source-message-id <mid> --trace-id <tid> --json\n"
-        f"- lumen delivery result --run-id <id> --json\n\n"
+        f"- lumen delivery result --run-id <id> --json\n"
+        f"- lumen agents action --agent mark --action delivery.start --story <id> "
+        f"--actor <user> --source-message-id <mid> --trace-id <tid> --json\n\n"
+        f"## Security Boundary\n"
+        f"- Conversational Mark is read-only over delivery docs\n"
+        f"- Never modify business source, Desktop, or host secrets\n"
+        f"- Start delivery only through brokered Lumen CLIs\n\n"
         f"## Rules\n"
         f"- Do not modify business source in conversational Mark session.\n"
         f"- Do not invent PR / verification / Jira status.\n"
@@ -55,6 +61,8 @@ def _upsert_managed_block(existing: str, project_slug: str) -> str:
 
 
 def ensure_workspace_contract(*, workspace: Path, project_slug: str) -> Path:
+    from agents.dylan.permission_policy import write_permission_profile
+
     root = Path(workspace).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     agents = root / "AGENTS.md"
@@ -62,4 +70,5 @@ def ensure_workspace_contract(*, workspace: Path, project_slug: str) -> Path:
     updated = _upsert_managed_block(current, project_slug)
     if updated != current:
         agents.write_text(updated, encoding="utf-8")
+    write_permission_profile(root, force=True)
     return root

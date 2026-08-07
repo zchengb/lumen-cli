@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import time
@@ -33,9 +32,11 @@ class CursorAgentRuntime:
         model: str = "cursor-grok-4.5-medium",
         soft_timeout_seconds: int = 90,
         hard_timeout_seconds: int = 300,
-        sandbox: str = "disabled",
-        force: bool = True,
+        sandbox: str = "enabled",
+        force: bool = False,
         trust: bool = True,
+        agent_id: str = "",
+        project: str = "",
     ) -> None:
         self.model = model
         self.soft_timeout_seconds = soft_timeout_seconds
@@ -43,6 +44,8 @@ class CursorAgentRuntime:
         self.sandbox = sandbox
         self.force = force
         self.trust = trust
+        self.agent_id = agent_id
+        self.project = project
 
     def _agent_bin(self) -> str:
         for name in ("agent", "cursor-agent"):
@@ -52,11 +55,10 @@ class CursorAgentRuntime:
         raise RuntimeError("cursor agent CLI not found")
 
     def _env(self) -> dict[str, str]:
+        from agents.security.env import build_agent_env
+
         _load_lumen_dotenv()
-        env = os.environ.copy()
-        if env.get("CURSOR_API_KEY"):
-            env.setdefault("AGENT_CLI_CREDENTIAL_STORE", "file")
-        return env
+        return build_agent_env(agent_id=self.agent_id, project=self.project)
 
     def run(
         self,
@@ -67,6 +69,13 @@ class CursorAgentRuntime:
         trace: TraceContext | None = None,
         obs: Observability | None = None,
     ) -> AgentRunResult:
+        if self.sandbox != "enabled" or self.force:
+            return AgentRunResult(
+                text="",
+                provider_session_id=provider_session_id or "",
+                status="security_error",
+                error="SANDBOX_UNAVAILABLE",
+            )
         agent_bin = self._agent_bin()
         workspace = Path(workspace).expanduser().resolve()
         args = [agent_bin]
@@ -77,7 +86,7 @@ class CursorAgentRuntime:
                 "--workspace",
                 str(workspace),
                 "--sandbox",
-                self.sandbox,
+                "enabled",
                 "-p",
                 "--output-format",
                 "stream-json",
@@ -87,8 +96,6 @@ class CursorAgentRuntime:
         )
         if self.trust:
             args.append("--trust")
-        if self.force:
-            args.append("-f")
         args.append(prompt)
 
         if obs and trace:
@@ -200,6 +207,27 @@ class CursorAgentRuntime:
                 duration_ms=duration,
                 status="timed_out",
                 error=f"agent hard timeout after {self.hard_timeout_seconds}s",
+            )
+
+        combined_err = f"{stderr}\n{stdout}".lower()
+        if any(
+            token in combined_err
+            for token in (
+                "sandbox unavailable",
+                "sandbox failed",
+                "failed to initialize sandbox",
+                "sandbox policy",
+            )
+        ):
+            if obs and trace:
+                obs.emit(trace, "security.sandbox.unavailable", level="ERROR", error=(stderr or stdout)[:300])
+            return AgentRunResult(
+                text="",
+                provider_session_id=provider_session_id or "",
+                duration_ms=duration,
+                status="security_error",
+                error="SANDBOX_UNAVAILABLE",
+                raw_event_count=len(parsed.events),
             )
 
         code = process.returncode if process.returncode is not None else 1

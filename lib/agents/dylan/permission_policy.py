@@ -5,23 +5,24 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_PERMISSIONS = {
+SECURE_PERMISSIONS = {
     "permissions": {
         "allow": [
             "Read(**)",
-            "Write(**)",
-            "Shell(git)",
             "Shell(lumen)",
+            "Shell(git)",
+            "Shell(rg)",
+            "Shell(ls)",
+            "Shell(cat)",
+            "Shell(head)",
+            "Shell(tail)",
+            "Shell(find)",
+            "Shell(wc)",
             "Shell(pytest)",
-            "Shell(npm)",
-            "Shell(pnpm)",
-            "Shell(yarn)",
-            "Shell(gradle)",
-            "Shell(./gradlew)",
-            "Shell(python)",
-            "Shell(python3)",
         ],
         "deny": [
+            "Write(**)",
+            "Delete(**)",
             "Read(**/.env*)",
             "Read(**/*.pem)",
             "Read(**/*.key)",
@@ -32,17 +33,30 @@ DEFAULT_PERMISSIONS = {
             "Shell(ssh)",
             "Shell(scp)",
             "Shell(rm)",
+            "Shell(curl)",
+            "Shell(wget)",
+            "Shell(launchctl)",
+            "Shell(osascript)",
+            "Shell(python)",
+            "Shell(python3)",
+            "Shell(node)",
+            "Shell(npm)",
+            "Shell(pnpm)",
+            "Shell(yarn)",
         ],
     }
 }
 
+# Backward-compatible alias
+DEFAULT_PERMISSIONS = SECURE_PERMISSIONS
 
-def write_permission_profile(workspace: Path) -> Path:
+
+def write_permission_profile(workspace: Path, *, force: bool = True) -> Path:
     cursor_dir = Path(workspace).expanduser().resolve() / ".cursor"
     cursor_dir.mkdir(parents=True, exist_ok=True)
     path = cursor_dir / "cli.json"
-    if not path.is_file():
-        path.write_text(json.dumps(DEFAULT_PERMISSIONS, indent=2) + "\n", encoding="utf-8")
+    if force or not path.is_file():
+        path.write_text(json.dumps(SECURE_PERMISSIONS, indent=2) + "\n", encoding="utf-8")
     return path
 
 

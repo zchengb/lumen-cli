@@ -169,11 +169,10 @@ class CursorDylanModelClient(DylanModelClient):
         self.workspace = Path(workspace).expanduser() if workspace else Path.home()
 
     def _env(self) -> dict[str, str]:
+        from agents.security.env import build_agent_env
+
         _load_lumen_dotenv()
-        env = os.environ.copy()
-        if env.get("CURSOR_API_KEY"):
-            env.setdefault("AGENT_CLI_CREDENTIAL_STORE", "file")
-        return env
+        return build_agent_env(agent_id="dylan")
 
     def _run_agent(self, prompt: str, *, timeout: int) -> str:
         agent_bin = shutil.which("agent")
@@ -184,10 +183,9 @@ class CursorDylanModelClient(DylanModelClient):
             "--workspace",
             str(self.workspace),
             "--sandbox",
-            "disabled",
+            "enabled",
             "--trust",
             "-p",
-            "-f",
             "--output-format",
             "text",
             "--model",
