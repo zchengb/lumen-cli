@@ -4,10 +4,12 @@ import json
 import logging
 import multiprocessing
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from feishu.catchup import StartupCatchup, message_create_time
 from feishu.client_registry import FeishuClientConfig, GATEWAY_AGENTS, configured_agents, load_client_config
 from feishu.config import agents_home
 from feishu.dedup import MessageDeduper
@@ -86,8 +88,51 @@ class FeishuChannel:
         self.clients = clients if clients is not None else configured_agents(list(GATEWAY_AGENTS))
         self.on_event = on_event or handle_message_event
         self.deduper = MessageDeduper(agents_home() / "dedup.sqlite3")
+        self.started_at = time.time()
+        self.catchup = StartupCatchup(
+            started_at=self.started_at,
+            on_flush=self._dispatch_event,
+            mark_seen=lambda message_id: self.deduper.claim(message_id),
+        )
 
     def process_event(self, event: dict[str, Any], client: FeishuClientConfig) -> None:
+        event_body = event.get("event") if isinstance(event.get("event"), dict) else event
+        message = event_body.get("message") if isinstance(event_body, dict) else {}
+        message_id = ""
+        chat_id = ""
+        create_time = 0.0
+        if isinstance(message, dict):
+            message_id = str(message.get("message_id") or "").strip()
+            chat_id = str(message.get("chat_id") or "").strip()
+            create_time = message_create_time(message)
+        decision = self.catchup.offer(
+            agent_id=client.agent_id,
+            chat_id=chat_id,
+            message_id=message_id,
+            create_time=create_time,
+            event=event,
+            client=client,
+        )
+        if decision == "catchup_buffer":
+            _LOG.info(
+                "catchup buffer agent=%s chat_id=%s message_id=%s",
+                client.agent_id,
+                chat_id or "-",
+                message_id or "-",
+            )
+            return
+        if decision in {"catchup_drop", "outdated"}:
+            _LOG.info(
+                "skip %s agent=%s message_id=%s create_time=%s",
+                decision,
+                client.agent_id,
+                message_id or "-",
+                int(create_time) if create_time else "-",
+            )
+            return
+        self._dispatch_event(event, client)
+
+    def _dispatch_event(self, event: dict[str, Any], client: FeishuClientConfig) -> None:
         message_id = ""
         event_body = event.get("event") if isinstance(event.get("event"), dict) else event
         message = event_body.get("message") if isinstance(event_body, dict) else {}
