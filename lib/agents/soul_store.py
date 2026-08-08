@@ -227,7 +227,13 @@ def agents_settings_payload(*, network: bool = False) -> dict[str, Any]:
                 "user_ids": recent_ids.get("user_ids", []),
                 "chat_ids": recent_ids.get("chat_ids", []),
                 "users": [item for item in enriched.get("users", []) if item.get("id") in recent_user_set],
-                "chats": [item for item in enriched.get("chats", []) if item.get("id") in recent_chat_set],
+                "chats": [
+                    item
+                    for item in enriched.get("chats", [])
+                    if item.get("id") in recent_chat_set
+                    and str(item.get("name") or "").strip()
+                    and str(item.get("name") or "").strip() != "Direct message"
+                ],
                 "names": enriched.get("names") or {},
             }
         finally:
