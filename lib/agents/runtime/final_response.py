@@ -175,10 +175,24 @@ def is_planning_reply(text: str) -> bool:
     return any(lowered.startswith(s) for s in starters)
 
 
-def _nested_outcome(job: dict[str, Any]) -> str:
+_CAPABILITY_PHRASES = {
+    "test_case.generate": "test case generation",
+    "scan.run": "code scan",
+    "agent.job.create": "job create",
+    "agent.job.retry": "job retry",
+}
+
+
+def _nested_inner(job: dict[str, Any]) -> dict[str, Any]:
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
     inner = result.get("result") if isinstance(result.get("result"), dict) else result
-    if not isinstance(inner, dict):
+    return inner if isinstance(inner, dict) else {}
+
+
+def _nested_outcome(job: dict[str, Any]) -> str:
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    inner = _nested_inner(job)
+    if not inner:
         return ""
     lines: list[str] = []
     if str(inner.get("status") or "").lower() == "failed":
@@ -199,7 +213,7 @@ def _nested_outcome(job: dict[str, Any]) -> str:
         label = (view_name or "Open Test Cases sheet").replace("'", "").strip() or "Open Test Cases sheet"
         lines.append(f"<link icon='sheet-bitable_outlined' url='{sheet_url}'>{label}</link>")
         lines.append(sheet_url)
-    return "\n  ".join(lines).strip()
+    return "\n".join(lines).strip()
 
 
 def _issue_key(job: dict[str, Any]) -> str:
@@ -220,29 +234,53 @@ def _issue_key(job: dict[str, Any]) -> str:
     return ""
 
 
-def _format_one_job(job: dict[str, Any]) -> str:
-    job_id = str(job.get("job_id") or "").strip() or "job"
-    status = str(job.get("status") or "unknown").strip()
-    capability = str(job.get("capability") or "").strip()
+def _capability_phrase(capability: str) -> str:
+    key = str(capability or "").strip()
+    if not key:
+        return "work"
+    return _CAPABILITY_PHRASES.get(key, key.replace(".", " ").replace("_", " "))
+
+
+def _agent_display(job: dict[str, Any]) -> str:
     owner = str(job.get("target_agent") or job.get("delegated_by") or "").strip()
+    return owner[:1].upper() + owner[1:] if owner else ""
+
+
+def _effective_status(job: dict[str, Any]) -> str:
+    status = str(job.get("status") or "unknown").strip().lower() or "unknown"
+    inner = _nested_inner(job)
+    if str(inner.get("status") or "").lower() == "failed":
+        return "failed"
+    if str(inner.get("code") or "").startswith("TEST_CASE_"):
+        return "failed"
+    return status
+
+
+def _format_one_job(job: dict[str, Any]) -> str:
+    capability = str(job.get("capability") or "").strip()
     issue = _issue_key(job)
     outcome = _nested_outcome(job)
-    if outcome and status == "completed":
-        lower = outcome.lower()
-        if "failed" in lower or outcome.startswith("TEST_CASE_"):
-            status = "completed (inner failed)"
-    head = f"- **{job_id}**"
-    bits = [status]
-    if owner:
-        bits.append(f"owner={owner}")
-    if capability:
-        bits.append(capability)
-    if issue:
-        bits.append(issue)
-    line = f"{head}: {', '.join(bits)}"
-    if outcome:
-        line = f"{line}\n  {outcome}"
-    return line
+    if not capability and not outcome:
+        return ""
+    status = _effective_status(job)
+    phrase = _capability_phrase(capability)
+    who = _agent_display(job)
+    subject = f"{phrase} for {issue}" if issue else phrase
+    if status in {"completed", "succeeded", "success"}:
+        head = f"{who} finished {subject}." if who else f"{subject[:1].upper() + subject[1:]} is complete."
+    elif status == "failed":
+        head = f"{who} failed {subject}." if who else f"{subject[:1].upper() + subject[1:]} failed."
+    elif status in {"queued", "pending", "created"}:
+        head = f"{subject[:1].upper() + subject[1:]} is queued" + (f" with {who}." if who else ".")
+    elif status in {"running", "in_progress"}:
+        head = f"{subject[:1].upper() + subject[1:]} is running" + (f" with {who}." if who else ".")
+    else:
+        head = f"{subject[:1].upper() + subject[1:]} is {status}" + (f" ({who})." if who else ".")
+    if not outcome:
+        return head
+    if outcome.lower().startswith(head.lower().rstrip(".")):
+        return outcome
+    return f"{head}\n{outcome}"
 
 
 def _format_jobs_payload(result: dict[str, Any]) -> str:
@@ -259,21 +297,19 @@ def _format_jobs_payload(result: dict[str, Any]) -> str:
         if children:
             jobs = children
         overall = str(summary.get("overall_state") or "").strip()
-        parent = str(summary.get("parent_job_id") or result.get("job_id") or "").strip()
-        lines = []
-        if parent or overall:
-            lines.append(f"**Job status**{f' (`{parent}`)' if parent else ''}: {overall or 'unknown'}")
+        lines = ["**Job status**" + (f": {overall}" if overall else "")]
         for child in children or jobs:
-            lines.append(_format_one_job(child))
+            text = _format_one_job(child)
+            if text:
+                lines.append(text)
         next_dep = str(summary.get("next_dependency") or "").strip()
-        if next_dep:
-            lines.append(f"- **Next:** {next_dep}")
-        return "\n".join(lines).strip()
-    if not jobs:
+        if next_dep and not next_dep.startswith("job_"):
+            lines.append(f"Next: {next_dep}")
+        return "\n\n".join(line for line in lines if line).strip()
+    formatted = [text for text in (_format_one_job(job) for job in jobs[:12]) if text]
+    if not formatted:
         return ""
-    lines = ["**Job status**"]
-    lines.extend(_format_one_job(job) for job in jobs[:12])
-    return "\n".join(lines).strip()
+    return "**Job status**\n\n" + "\n\n".join(formatted)
 
 
 def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:

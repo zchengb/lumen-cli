@@ -49,7 +49,8 @@ def test_job_list_receipt_becomes_status_reply() -> None:
         "Checking Mark’s queue now."
     )
     text = prefer_action_summary(placeholder, receipts)
-    assert "job_mark_94ccf628fb20" in text
+    assert "job_mark_94ccf628fb20" not in text
+    assert "Mark failed test case generation for MBPAS-1491." in text
     assert "TEST_CASE_CONFIG_MISSING" in text
     assert "I'll pull" not in text
     assert "Action results:" not in format_action_receipts_summary(receipts)
@@ -80,8 +81,9 @@ def test_job_list_outranks_agent_list_for_status_asks() -> None:
         },
     ]
     text = prefer_action_summary("**Agents:** dylan, mark, milchick, irving", receipts)
-    assert "job_mark_bdb66f270fd0" in text
-    assert "MBPAS-1491" in text
+    assert "job_mark_bdb66f270fd0" not in text
+    assert "Mark finished test case generation for MBPAS-1491." in text
+    assert "Generated 3 test cases" in text
     assert text.startswith("**Job status**")
     assert "**Agents:**" not in text
 
@@ -120,7 +122,8 @@ def test_denied_mutation_surfaces_instead_of_planning_lie() -> None:
         "- **Status (last confirmed):** queued — still **no running/completed/failed payload**"
     )
     text = prefer_action_summary(invented, receipts)
-    assert "job_mark_94ccf628fb20" in text
+    assert "job_mark_94ccf628fb20" not in text
+    assert "Mark finished test case generation for MBPAS-1491." in text
     assert "queued" not in text.lower()
     assert "Action blocked" in text
     assert "agent.job.create" in text
