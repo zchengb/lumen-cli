@@ -1,0 +1,22 @@
+{
+  "test_cases": [
+    {
+      "ac_refs": ["AC2"],
+      "title": "Banner 列表預設展示全部狀態的資料",
+      "preconditions": ["至少存在一筆已發布、一筆已下架、一筆草稿 Banner。"],
+      "steps": ["進入活動 Banner 管理列表。", "保持篩選條件為「全部」。"],
+      "expected_results": ["列表同時顯示已發布、已下架與草稿 Banner。"],
+      "case_type": "filter",
+      "rationale": "AC2 all statuses"
+    },
+    {
+      "ac_refs": ["AC2"],
+      "title": "使用「已發布」篩選僅顯示已發布 Banner",
+      "preconditions": ["列表頁已有多種狀態 Banner。"],
+      "steps": ["點擊狀態 Tab「已發布」。"],
+      "expected_results": ["列表僅顯示已發布 Banner。"],
+      "case_type": "filter",
+      "rationale": "AC2 published filter"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "test_cases": [
+    {
+      "ac_refs": ["AC5"],
+      "title": "Banner 圖片超過 1MB 時阻擋上傳並顯示錯誤",
+      "preconditions": ["管理員位於 Banner 新增頁。", "準備一張大於 1MB 的 PNG。"],
+      "steps": ["選擇超過 1MB 的圖片上傳。"],
+      "expected_results": ["系統阻擋上傳並顯示大小超限錯誤提示。"],
+      "case_type": "validation",
+      "rationale": "explicit size validation"
+    }
+  ]
+}

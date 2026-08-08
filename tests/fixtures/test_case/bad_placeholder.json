@@ -1,0 +1,13 @@
+{
+  "test_cases": [
+    {
+      "ac_refs": ["AC1"],
+      "title": "壞案例",
+      "preconditions": ["準備相關資料。"],
+      "steps": ["依驗收條件執行"],
+      "expected_results": ["確認符合預期"],
+      "case_type": "functional",
+      "rationale": "bad"
+    }
+  ]
+}

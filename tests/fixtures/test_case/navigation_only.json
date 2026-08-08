@@ -1,0 +1,13 @@
+{
+  "test_cases": [
+    {
+      "ac_refs": ["AC1"],
+      "title": "行銷選單顯示「活動Banner」入口",
+      "preconditions": ["管理員已登入後台管理系統。"],
+      "steps": ["查看後台左側導航選單。", "展開「行銷」分類。"],
+      "expected_results": ["「行銷」分類下顯示「活動Banner」入口。"],
+      "case_type": "navigation",
+      "rationale": "AC1 menu entry"
+    }
+  ]
+}

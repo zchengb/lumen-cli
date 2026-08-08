@@ -23,7 +23,9 @@ REQUIRED_FIELDS = (
 HEADER_COLUMNS = [name for name, _ in REQUIRED_FIELDS]
 
 SHEET_HEADER_COLUMNS = (
+    "AC",
     "Title",
+    "Preconditions",
     "Steps",
     "Expected Result",
     "Type",
@@ -31,7 +33,7 @@ SHEET_HEADER_COLUMNS = (
     "Note",
 )
 
-VERIFY_STATUS_OPTIONS = ("Succeed", "Failed")
+VERIFY_STATUS_CANONICAL = ("passed", "failed")
 
 SUPPORTED_LANGUAGES = ("zh-Hant", "zh-Hans", "en")
 

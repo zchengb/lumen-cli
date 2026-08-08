@@ -1,0 +1,13 @@
+{
+  "test_cases": [
+    {
+      "ac_refs": ["AC7"],
+      "title": "主標題輸入達 12 字上限後無法繼續輸入",
+      "preconditions": ["管理員位於 Banner 新增頁。"],
+      "steps": ["在主標題輸入恰好 12 字。", "嘗試再輸入第 13 字。"],
+      "expected_results": ["計數顯示 12/12。", "無法再輸入或發布按鈕依規則置灰。"],
+      "case_type": "boundary",
+      "rationale": "explicit title length boundary"
+    }
+  ]
+}

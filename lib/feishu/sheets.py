@@ -190,3 +190,51 @@ class FeishuSheets:
             f"/sheets/v2/spreadsheets/{token}/values_append?insertDataOption=INSERT_ROWS",
             {"valueRange": {"range": range_a1, "values": values}},
         )
+
+    def format_sheet(
+        self,
+        spreadsheet_token: str,
+        *,
+        sheet_id: str,
+        column_widths: list[tuple[int, int]] | None = None,
+        freeze_rows: int = 1,
+    ) -> dict[str, Any]:
+        token = parse_spreadsheet_token(spreadsheet_token)
+        sid = str(sheet_id or "").strip()
+        if not sid:
+            return {}
+        requests: list[dict[str, Any]] = []
+        for col_index, width in column_widths or []:
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sid,
+                            "majorDimension": "COLUMNS",
+                            "startIndex": int(col_index),
+                            "endIndex": int(col_index) + 1,
+                        },
+                        "properties": {"visibleSize": int(width)},
+                        "fields": "visibleSize",
+                    }
+                }
+            )
+        if freeze_rows > 0:
+            requests.append(
+                {
+                    "updateSheetProperties": {
+                        "properties": {
+                            "sheetId": sid,
+                            "frozenRowCount": int(freeze_rows),
+                        },
+                        "fields": "frozenRowCount",
+                    }
+                }
+            )
+        if not requests:
+            return {}
+        return self._request(
+            "POST",
+            f"/sheets/v2/spreadsheets/{token}/sheets_batch_update",
+            {"requests": requests},
+        )

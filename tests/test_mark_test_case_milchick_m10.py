@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -80,6 +81,7 @@ class FakeSheets:
         self.appended: list[list[Any]] = []
         self.ensured_names: list[str] = []
         self.dropdowns: list[dict[str, Any]] = []
+        self.formatted: list[dict[str, Any]] = []
 
     def ensure_sheet(self, spreadsheet_token: str, sheet_name: str) -> dict[str, Any]:
         self.ensured_names.append(sheet_name)
@@ -101,6 +103,50 @@ class FakeSheets:
         self.dropdowns.append({"sheet_id": sheet_id, "range_a1": range_a1, "options": list(options)})
         return {}
 
+    def format_sheet(self, spreadsheet_token: str, *, sheet_id: str, column_widths=None, freeze_rows: int = 1) -> dict[str, Any]:
+        self.formatted.append({"sheet_id": sheet_id, "column_widths": list(column_widths or []), "freeze_rows": freeze_rows})
+        return {}
+
+
+def _mock_design_runner(payload: dict[str, Any]):
+    def _runner(_prompt: str) -> str:
+        return json.dumps(payload, ensure_ascii=False)
+
+    return _runner
+
+
+LOGIN_DESIGN = {
+    "test_cases": [
+        {
+            "ac_refs": ["AC1"],
+            "title": "使用 Email 成功登入",
+            "preconditions": ["使用者帳號已啟用。"],
+            "steps": ["開啟登入頁。", "輸入正確 Email 與密碼並提交。"],
+            "expected_results": ["成功進入首頁。"],
+            "case_type": "functional",
+            "rationale": "login happy path",
+        },
+        {
+            "ac_refs": ["AC1"],
+            "title": "錯誤密碼時顯示登入失敗",
+            "preconditions": ["使用者帳號已啟用。"],
+            "steps": ["開啟登入頁。", "輸入正確 Email 與錯誤密碼並提交。"],
+            "expected_results": ["顯示登入失敗提示且不進入首頁。"],
+            "case_type": "validation",
+            "rationale": "invalid password",
+        },
+        {
+            "ac_refs": ["AC1"],
+            "title": "登入頁顯示登入表單",
+            "preconditions": ["未登入狀態。"],
+            "steps": ["開啟登入頁。"],
+            "expected_results": ["顯示 Email、密碼欄位與提交按鈕。"],
+            "case_type": "ui",
+            "rationale": "login form visible",
+        },
+    ]
+}
+
 
 class TestCaseSkillTests(unittest.TestCase):
     def test_generator_covers_ac_types(self) -> None:
@@ -113,15 +159,18 @@ class TestCaseSkillTests(unittest.TestCase):
         )
         cases = generate_test_cases(story)
         types = {c.case_type for c in cases}
-        self.assertEqual(types, {"Functional", "Negative", "Boundary"})
+        self.assertEqual(types, {"functional", "validation", "boundary"})
         self.assertGreaterEqual(len(cases), 6)
         for case in cases:
             self.assertTrue(case.title)
             self.assertTrue(case.steps)
             self.assertTrue(case.expected_result)
             self.assertFalse(case.title.startswith(story.key))
-            fields = case.to_sheet_fields()
-            self.assertEqual(list(fields), ["Title", "Steps", "Expected Result", "Type", "Verify Status", "Note"])
+            fields = case.to_sheet_fields("zh-Hant")
+            self.assertEqual(
+                list(fields),
+                ["AC", "Title", "Preconditions", "Steps", "Expected Result", "Type", "Verify Status", "Note"],
+            )
         zh = generate_test_cases(story, language="zh-Hant")
         self.assertTrue(any("正常路徑" in c.title for c in zh))
         self.assertEqual(story_sheet_name("MBPAS-1", "Hello"), "MBPAS-1 · Hello")
@@ -143,9 +192,9 @@ class TestCaseSkillTests(unittest.TestCase):
 
     def test_dedupe_skips_existing_titles(self) -> None:
         generated = [
-            TestCase("A", "1", "ok", "Functional", "MBPAS-1", "t"),
-            TestCase("B", "1", "ok", "Functional", "MBPAS-1", "t"),
-            TestCase("a", "1", "ok", "Functional", "MBPAS-1", "t"),
+            TestCase("A", "1", "ok", "functional", "MBPAS-1", "t"),
+            TestCase("B", "1", "ok", "functional", "MBPAS-1", "t"),
+            TestCase("a", "1", "ok", "functional", "MBPAS-1", "t"),
         ]
         created, skipped = partition_new_cases(generated, {"A"})
         self.assertEqual([c.title for c in created], ["B"])
@@ -153,7 +202,7 @@ class TestCaseSkillTests(unittest.TestCase):
 
     def test_skill_writes_additive_rows(self) -> None:
         fake = FakeBitable()
-        fake.records.append({"fields": {"Story Key": "MBPAS-1601", "Title": "AC1 正常路徑：User can log in"}})
+        fake.records.append({"fields": {"Story Key": "MBPAS-1601", "Title": "使用 Email 成功登入"}})
 
         def reader(key: str) -> StoryContext:
             return StoryContext(
@@ -170,6 +219,7 @@ class TestCaseSkillTests(unittest.TestCase):
             config={"projects": {"mbpass": {"test_case": {"base_app_token": "bas_test", "table_name": "Test Cases", "language": "zh-Hant"}}}},
             client=fake,
             story_reader=reader,
+            designer_runner=_mock_design_runner(LOGIN_DESIGN),
         )
         self.assertEqual(result["status"], "completed")
         self.assertGreaterEqual(result["created"], 2)
@@ -206,19 +256,25 @@ class TestCaseSkillTests(unittest.TestCase):
             },
             sheets_client=fake,
             story_reader=reader,
+            designer_runner=_mock_design_runner(LOGIN_DESIGN),
         )
         self.assertEqual(result["status"], "completed")
         self.assertGreaterEqual(result["created"], 3)
         self.assertEqual(fake.ensured_names, ["MBPAS-1601 · Login flow"])
         self.assertEqual(result["view_name"], "MBPAS-1601 · Login flow")
-        self.assertEqual(fake.rows[0], ["Title", "Steps", "Expected Result", "Type", "Verify Status", "Note"])
+        self.assertEqual(
+            fake.rows[0],
+            ["AC", "Title", "Preconditions", "Steps", "Expected Result", "Type", "Verify Status", "Note"],
+        )
         for row in fake.rows[1:]:
-            self.assertFalse(str(row[0]).startswith("MBPAS-1601"))
-            self.assertEqual(len(row), 6)
-            self.assertEqual(row[4], "")
-            self.assertEqual(row[5], "")
-        self.assertEqual(fake.dropdowns[0]["options"], ["Succeed", "Failed"])
-        self.assertIn("E2:E2000", fake.dropdowns[0]["range_a1"])
+            self.assertFalse(str(row[1]).startswith("MBPAS-1601"))
+            self.assertEqual(len(row), 8)
+            self.assertIn(row[5], {"功能", "驗證", "介面"})
+            self.assertEqual(row[6], "")
+            self.assertEqual(row[7], "")
+        self.assertEqual(fake.dropdowns[0]["options"], ["通過", "失敗"])
+        self.assertIn("G2:G2000", fake.dropdowns[0]["range_a1"])
+        self.assertTrue(fake.formatted)
         self.assertIn("/sheets/OG4Js7cIlh7d0QtHOEnc1kDfnvf?sheet=sht1", result["sheet_url"])
 
     def test_broker_mark_action_allowed(self) -> None:
