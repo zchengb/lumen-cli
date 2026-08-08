@@ -196,8 +196,9 @@ def _nested_outcome(job: dict[str, Any]) -> str:
     view_name = str(inner.get("view_name") or result.get("view_name") or "").strip()
     message = "\n".join(lines)
     if sheet_url and sheet_url not in message:
-        label = view_name or "Open Test Cases sheet"
-        lines.append(f"[{label}]({sheet_url})")
+        label = (view_name or "Open Test Cases sheet").replace("'", "").strip() or "Open Test Cases sheet"
+        lines.append(f"<link icon='sheet-bitable_outlined' url='{sheet_url}'>{label}</link>")
+        lines.append(sheet_url)
     return "\n  ".join(lines).strip()
 
 

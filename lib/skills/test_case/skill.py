@@ -33,17 +33,25 @@ def _ensure_fields(client: FeishuBitable, app_token: str, table_id: str) -> None
 
 def _ensure_story_view(client: FeishuBitable, app_token: str, table_id: str, *, story_key: str, story_title: str) -> tuple[str, str]:
     view_name = f"{story_key} · {(story_title or story_key)[:80]}".strip()
-    for view in client.list_views(app_token, table_id):
-        name = str(view.get("view_name") or view.get("name") or "").strip()
-        if name == view_name:
-            view_id = str(view.get("view_id") or view.get("id") or "").strip()
-            return view_name, view_id
+
+    def _find() -> tuple[str, str]:
+        for view in client.list_views(app_token, table_id):
+            name = str(view.get("view_name") or view.get("name") or "").strip()
+            if name == view_name:
+                return view_name, str(view.get("view_id") or view.get("id") or "").strip()
+        return view_name, ""
+
+    found_name, found_id = _find()
+    if found_id:
+        return found_name, found_id
     try:
         created = client.create_view(app_token, table_id, name=view_name)
         view_id = str(created.get("view_id") or created.get("id") or "").strip()
-        return view_name, view_id
+        if view_id:
+            return view_name, view_id
     except Exception:
-        return view_name, ""
+        pass
+    return _find()
 
 
 def build_sheet_url(
@@ -54,15 +62,23 @@ def build_sheet_url(
     host: str = "inspiregroup.feishu.cn",
 ) -> str:
     token = str(app_token or "").strip()
-    if not token:
+    table = str(table_id or "").strip()
+    if not token or not table:
         return ""
     base = f"https://{str(host or 'inspiregroup.feishu.cn').strip()}/base/{token}"
-    query = []
-    if table_id:
-        query.append(f"table={table_id}")
-    if view_id:
-        query.append(f"view={view_id}")
-    return f"{base}?{'&'.join(query)}" if query else base
+    query = [f"table={table}"]
+    view = str(view_id or "").strip()
+    if view:
+        query.append(f"view={view}")
+    return f"{base}?{'&'.join(query)}"
+
+
+def format_sheet_link(sheet_url: str, label: str = "Open Test Cases sheet") -> str:
+    url = str(sheet_url or "").strip()
+    if not url:
+        return ""
+    text = (label or "Open Test Cases sheet").replace("'", "").strip() or "Open Test Cases sheet"
+    return f"<link icon='sheet-bitable_outlined' url='{url}'>{text}</link>\n{url}"
 
 
 def _existing_titles_for_story(records: list[dict[str, Any]], story_key: str) -> set[str]:
@@ -94,10 +110,9 @@ def format_summary(result: dict[str, Any]) -> str:
         "",
         "Feishu Test Cases sheet:",
     ]
-    if sheet_url and view_name:
-        lines.append(f"[{view_name}]({sheet_url})")
-    elif sheet_url:
-        lines.append(sheet_url)
+    link = format_sheet_link(sheet_url, view_name or "Open Test Cases sheet")
+    if link:
+        lines.append(link)
     elif view_name:
         lines.append(view_name)
     warnings = result.get("warnings") if isinstance(result.get("warnings"), list) else []
