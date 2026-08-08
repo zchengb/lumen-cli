@@ -81,6 +81,72 @@ class FeishuSheets:
             return sheets[0]
         raise RuntimeError(f"No worksheet found in spreadsheet for tab {wanted!r}")
 
+    def add_sheet(self, spreadsheet_token: str, title: str, *, index: int | None = None) -> dict[str, Any]:
+        token = parse_spreadsheet_token(spreadsheet_token)
+        props: dict[str, Any] = {"title": str(title or "Sheet").strip() or "Sheet"}
+        if index is not None:
+            props["index"] = int(index)
+        data = self._request(
+            "POST",
+            f"/sheets/v2/spreadsheets/{token}/sheets_batch_update",
+            {"requests": [{"addSheet": {"properties": props}}]},
+        )
+        replies = data.get("replies") if isinstance(data, dict) else []
+        if isinstance(replies, list):
+            for reply in replies:
+                if not isinstance(reply, dict):
+                    continue
+                added = reply.get("addSheet") if isinstance(reply.get("addSheet"), dict) else {}
+                properties = added.get("properties") if isinstance(added.get("properties"), dict) else added
+                if isinstance(properties, dict) and (properties.get("sheetId") or properties.get("sheet_id")):
+                    return properties
+        return data if isinstance(data, dict) else {}
+
+    def ensure_sheet(self, spreadsheet_token: str, sheet_name: str) -> dict[str, Any]:
+        wanted = str(sheet_name or "").strip()
+        if not wanted:
+            raise ValueError("sheet_name required")
+        for sheet in self.list_sheets(spreadsheet_token):
+            title = str(sheet.get("title") or sheet.get("name") or "").strip()
+            if title == wanted:
+                return sheet
+        created = self.add_sheet(spreadsheet_token, wanted)
+        sheet_id = str(created.get("sheetId") or created.get("sheet_id") or "").strip()
+        if sheet_id:
+            return {"sheetId": sheet_id, "title": wanted, **created}
+        for sheet in self.list_sheets(spreadsheet_token):
+            title = str(sheet.get("title") or sheet.get("name") or "").strip()
+            if title == wanted:
+                return sheet
+        raise RuntimeError(f"failed to create worksheet {wanted!r}")
+
+    def set_dropdown(
+        self,
+        spreadsheet_token: str,
+        *,
+        sheet_id: str,
+        range_a1: str,
+        options: list[str],
+    ) -> dict[str, Any]:
+        token = parse_spreadsheet_token(spreadsheet_token)
+        sid = str(sheet_id or "").strip()
+        values = [str(item).strip() for item in options if str(item).strip()]
+        if not sid or not values:
+            return {}
+        target = range_a1 if "!" in range_a1 else f"{sid}!{range_a1}"
+        return self._request(
+            "POST",
+            f"/sheets/v2/spreadsheets/{token}/dataValidation",
+            {
+                "range": target,
+                "dataValidationType": "list",
+                "dataValidation": {
+                    "conditionValues": values,
+                    "options": {"multipleValues": False, "highlightValidData": True, "colors": ["#34C759", "#FF3B30"][: len(values)]},
+                },
+            },
+        )
+
     def get_values(self, spreadsheet_token: str, range_a1: str) -> list[list[Any]]:
         token = parse_spreadsheet_token(spreadsheet_token)
         encoded = urllib.parse.quote(range_a1, safe="!:")

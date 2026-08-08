@@ -5,11 +5,23 @@ from typing import Any, Optional
 
 from feishu.bitable import FeishuBitable
 from feishu.sheets import FeishuSheets, column_letter, parse_spreadsheet_token
-from skills.test_case.config import HEADER_COLUMNS, REQUIRED_FIELDS, load_test_case_config
+from skills.test_case.config import (
+    REQUIRED_FIELDS,
+    SHEET_HEADER_COLUMNS,
+    VERIFY_STATUS_OPTIONS,
+    load_test_case_config,
+)
 from skills.test_case.dedupe import partition_new_cases
 from skills.test_case.generator import generate_test_cases
 from skills.test_case.jira_read import read_jira_issue
 from skills.test_case.workspace_context import enrich_story_from_workspace, load_workspace_context
+
+
+def story_sheet_name(story_key: str, story_title: str) -> str:
+    key = str(story_key or "").strip() or "Story"
+    title = str(story_title or "").strip() or key
+    name = f"{key} · {title}".strip()
+    return name[:100]
 
 
 def _ensure_table(client: FeishuBitable, app_token: str, table_name: str) -> str:
@@ -63,11 +75,16 @@ def build_sheet_url(
     host: str = "inspiregroup.feishu.cn",
     destination: str = "bitable",
     spreadsheet_token: str = "",
+    sheet_id: str = "",
 ) -> str:
     host_name = str(host or "inspiregroup.feishu.cn").strip() or "inspiregroup.feishu.cn"
     if str(destination or "").strip().lower() == "sheet":
         token = parse_spreadsheet_token(spreadsheet_token or app_token)
-        return f"https://{host_name}/sheets/{token}" if token else ""
+        if not token:
+            return ""
+        url = f"https://{host_name}/sheets/{token}"
+        sid = str(sheet_id or "").strip()
+        return f"{url}?sheet={sid}" if sid else url
     token = str(app_token or "").strip()
     table = str(table_id or "").strip()
     if not token or not table:
@@ -102,6 +119,16 @@ def _existing_titles_for_story(records: list[dict[str, Any]], story_key: str) ->
     return titles
 
 
+def _existing_sheet_titles(records: list[dict[str, Any]]) -> set[str]:
+    titles: set[str] = set()
+    for record in records:
+        fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+        title = str(fields.get("Title") or "").strip()
+        if title:
+            titles.add(title)
+    return titles
+
+
 def _sheet_rows_to_records(rows: list[list[Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
@@ -122,16 +149,17 @@ def _sheet_rows_to_records(rows: list[list[Any]]) -> list[dict[str, Any]]:
 
 
 def _ensure_sheet_headers(client: FeishuSheets, spreadsheet_token: str, sheet_id: str, rows: list[list[Any]]) -> list[list[Any]]:
+    headers = list(SHEET_HEADER_COLUMNS)
     if rows and any(str(cell or "").strip() for cell in rows[0]):
         return rows
-    end_col = column_letter(len(HEADER_COLUMNS) - 1)
+    end_col = column_letter(len(headers) - 1)
     client.append_values(
         spreadsheet_token,
         sheet_id=sheet_id,
-        values=[list(HEADER_COLUMNS)],
+        values=[headers],
         end_col=end_col,
     )
-    return [list(HEADER_COLUMNS)]
+    return [headers]
 
 
 def _write_cases_to_sheet(
@@ -143,34 +171,45 @@ def _write_cases_to_sheet(
     generated: list[Any],
 ) -> dict[str, Any]:
     spreadsheet_token = str(cfg.get("spreadsheet_token") or "").strip()
-    sheet_name = str(cfg.get("sheet_name") or "Sheet1").strip() or "Sheet1"
-    sheet = client.resolve_sheet(spreadsheet_token, sheet_name)
+    tab_name = story_sheet_name(story_key, story_title)
+    sheet = client.ensure_sheet(spreadsheet_token, tab_name)
     sheet_id = str(sheet.get("sheetId") or sheet.get("sheet_id") or "").strip()
     if not sheet_id:
         raise RuntimeError("Feishu sheet id missing")
-    end_col = column_letter(len(HEADER_COLUMNS) - 1)
+    headers = list(SHEET_HEADER_COLUMNS)
+    end_col = column_letter(len(headers) - 1)
     rows = client.get_values(spreadsheet_token, f"{sheet_id}!A1:{end_col}2000")
     rows = _ensure_sheet_headers(client, spreadsheet_token, sheet_id, rows)
     records = _sheet_rows_to_records(rows)
-    existing = _existing_titles_for_story(records, story_key)
+    existing = _existing_sheet_titles(records)
     created, skipped = partition_new_cases(generated, existing)
     values = []
     for case in created:
         case.generated_by = "mark"
-        fields = case.to_fields()
-        values.append([str(fields.get(col) or "") for col in HEADER_COLUMNS])
+        fields = case.to_sheet_fields()
+        values.append([str(fields.get(col) or "") for col in headers])
     if values:
         client.append_values(spreadsheet_token, sheet_id=sheet_id, values=values, end_col=end_col)
-    view_name = f"{story_key} · {(story_title or story_key)[:80]}".strip()
+    verify_col = column_letter(headers.index("Verify Status"))
+    try:
+        client.set_dropdown(
+            spreadsheet_token,
+            sheet_id=sheet_id,
+            range_a1=f"{verify_col}2:{verify_col}2000",
+            options=list(VERIFY_STATUS_OPTIONS),
+        )
+    except Exception:
+        pass
     sheet_url = build_sheet_url(
         destination="sheet",
         spreadsheet_token=spreadsheet_token,
+        sheet_id=sheet_id,
         host=str(cfg.get("feishu_base_host") or "inspiregroup.feishu.cn"),
     )
     return {
         "created_cases": created,
         "skipped_cases": skipped,
-        "view_name": view_name,
+        "view_name": tab_name,
         "table_id": sheet_id,
         "view_id": "",
         "sheet_url": sheet_url,

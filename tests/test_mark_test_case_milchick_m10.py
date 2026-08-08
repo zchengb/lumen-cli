@@ -20,7 +20,7 @@ from agents.security.broker import CapabilityBroker
 from skills.test_case.dedupe import partition_new_cases
 from skills.test_case.generator import generate_test_cases
 from skills.test_case.models import StoryContext, TestCase
-from skills.test_case.skill import generate_test_cases_for_issue
+from skills.test_case.skill import generate_test_cases_for_issue, story_sheet_name
 
 
 class FakeBitable:
@@ -78,6 +78,12 @@ class FakeSheets:
     def __init__(self) -> None:
         self.rows: list[list[Any]] = []
         self.appended: list[list[Any]] = []
+        self.ensured_names: list[str] = []
+        self.dropdowns: list[dict[str, Any]] = []
+
+    def ensure_sheet(self, spreadsheet_token: str, sheet_name: str) -> dict[str, Any]:
+        self.ensured_names.append(sheet_name)
+        return {"sheetId": "sht1", "title": sheet_name}
 
     def resolve_sheet(self, spreadsheet_token: str, sheet_name: str = "Sheet1") -> dict[str, Any]:
         return {"sheetId": "sht1", "title": sheet_name}
@@ -90,6 +96,10 @@ class FakeSheets:
             self.rows.append(list(row))
             self.appended.append(list(row))
         return {"updatedRows": len(values)}
+
+    def set_dropdown(self, spreadsheet_token: str, *, sheet_id: str, range_a1: str, options: list[str]) -> dict[str, Any]:
+        self.dropdowns.append({"sheet_id": sheet_id, "range_a1": range_a1, "options": list(options)})
+        return {}
 
 
 class TestCaseSkillTests(unittest.TestCase):
@@ -109,8 +119,12 @@ class TestCaseSkillTests(unittest.TestCase):
             self.assertTrue(case.title)
             self.assertTrue(case.steps)
             self.assertTrue(case.expected_result)
+            self.assertFalse(case.title.startswith(story.key))
+            fields = case.to_sheet_fields()
+            self.assertEqual(list(fields), ["Title", "Steps", "Expected Result", "Type", "Verify Status", "Note"])
         zh = generate_test_cases(story, language="zh-Hant")
         self.assertTrue(any("正常路徑" in c.title for c in zh))
+        self.assertEqual(story_sheet_name("MBPAS-1", "Hello"), "MBPAS-1 · Hello")
 
     def test_dedupe_skips_existing_titles(self) -> None:
         generated = [
@@ -124,7 +138,7 @@ class TestCaseSkillTests(unittest.TestCase):
 
     def test_skill_writes_additive_rows(self) -> None:
         fake = FakeBitable()
-        fake.records.append({"fields": {"Story Key": "MBPAS-1601", "Title": "MBPAS-1601 AC1 正常路徑：User can log in"}})
+        fake.records.append({"fields": {"Story Key": "MBPAS-1601", "Title": "AC1 正常路徑：User can log in"}})
 
         def reader(key: str) -> StoryContext:
             return StoryContext(
@@ -180,8 +194,17 @@ class TestCaseSkillTests(unittest.TestCase):
         )
         self.assertEqual(result["status"], "completed")
         self.assertGreaterEqual(result["created"], 3)
-        self.assertTrue(any(row and row[0] == "Story Key" for row in fake.rows))
-        self.assertIn("/sheets/OG4Js7cIlh7d0QtHOEnc1kDfnvf", result["sheet_url"])
+        self.assertEqual(fake.ensured_names, ["MBPAS-1601 · Login flow"])
+        self.assertEqual(result["view_name"], "MBPAS-1601 · Login flow")
+        self.assertEqual(fake.rows[0], ["Title", "Steps", "Expected Result", "Type", "Verify Status", "Note"])
+        for row in fake.rows[1:]:
+            self.assertFalse(str(row[0]).startswith("MBPAS-1601"))
+            self.assertEqual(len(row), 6)
+            self.assertEqual(row[4], "")
+            self.assertEqual(row[5], "")
+        self.assertEqual(fake.dropdowns[0]["options"], ["Succeed", "Failed"])
+        self.assertIn("E2:E2000", fake.dropdowns[0]["range_a1"])
+        self.assertIn("/sheets/OG4Js7cIlh7d0QtHOEnc1kDfnvf?sheet=sht1", result["sheet_url"])
 
     def test_broker_mark_action_allowed(self) -> None:
         ensure_definitions_loaded()

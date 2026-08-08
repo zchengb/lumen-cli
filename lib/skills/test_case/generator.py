@@ -54,7 +54,7 @@ def generate_test_cases(
             cases.extend(
                 [
                     TestCase(
-                        title=f"{story.key} {label} 正常路徑：{focus}",
+                        title=f"{label} 正常路徑：{focus}",
                         steps=_steps(
                             f"依 Story「{title}」進入對應功能畫面／流程",
                             f"依驗收條件執行：{focus}",
@@ -66,7 +66,7 @@ def generate_test_cases(
                         story_title=title,
                     ),
                     TestCase(
-                        title=f"{story.key} {label} 負向路徑：{focus}",
+                        title=f"{label} 負向路徑：{focus}",
                         steps=_steps(
                             f"準備不符合「{focus}」的無效、缺漏或未授權條件",
                             "以相同操作路徑再次嘗試",
@@ -78,7 +78,7 @@ def generate_test_cases(
                         story_title=title,
                     ),
                     TestCase(
-                        title=f"{story.key} {label} 邊界路徑：{focus}",
+                        title=f"{label} 邊界路徑：{focus}",
                         steps=_steps(
                             f"找出與「{focus}」相關的邊界值（長度、數量、狀態、權限）",
                             "在允許範圍上下限各執行一次",
@@ -95,7 +95,7 @@ def generate_test_cases(
             cases.extend(
                 [
                     TestCase(
-                        title=f"{story.key} {label} happy path: {focus}",
+                        title=f"{label} happy path: {focus}",
                         steps=_steps(
                             f"Open the feature for {story.key}: {title}",
                             f"Perform the acceptance criterion: {focus}",
@@ -107,7 +107,7 @@ def generate_test_cases(
                         story_title=title,
                     ),
                     TestCase(
-                        title=f"{story.key} {label} negative path: {focus}",
+                        title=f"{label} negative path: {focus}",
                         steps=_steps(
                             f"Prepare invalid or unauthorized input for: {focus}",
                             "Retry the same user action under the invalid condition",
@@ -119,7 +119,7 @@ def generate_test_cases(
                         story_title=title,
                     ),
                     TestCase(
-                        title=f"{story.key} {label} boundary: {focus}",
+                        title=f"{label} boundary: {focus}",
                         steps=_steps(
                             f"Identify edge values relevant to: {focus}",
                             "Execute the flow at the lower and upper allowed limits",
@@ -137,7 +137,7 @@ def generate_test_cases(
         if lang in {"zh-Hant", "zh-Hans"}:
             cases.append(
                 TestCase(
-                    title=f"{story.key} 附件對照檢查",
+                    title="附件對照檢查",
                     steps=_steps(
                         f"檢視相關附件：{names}",
                         "比對實際 UI／API 與附件規格或稿面",
@@ -152,7 +152,7 @@ def generate_test_cases(
         else:
             cases.append(
                 TestCase(
-                    title=f"{story.key} attachment-informed UI check",
+                    title="attachment-informed UI check",
                     steps=_steps(
                         f"Review attached references: {names}",
                         "Compare the live UI/API against the referenced mock or specification",
@@ -169,7 +169,7 @@ def generate_test_cases(
         if lang in {"zh-Hant", "zh-Hans"}:
             cases.append(
                 TestCase(
-                    title=f"{story.key} 技術方案對齊檢查",
+                    title="技術方案對齊檢查",
                     steps=_steps(
                         "開啟本 Story 的 technical-plan.md",
                         "逐項比對計畫步驟與 Jira／Story 驗收條件",
@@ -184,7 +184,7 @@ def generate_test_cases(
         else:
             cases.append(
                 TestCase(
-                    title=f"{story.key} technical-plan alignment",
+                    title="technical-plan alignment",
                     steps=_steps(
                         "Open technical-plan.md for this story",
                         "Walk the planned user/system steps against the current acceptance criteria",
