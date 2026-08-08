@@ -267,6 +267,9 @@ def _format_jobs_payload(result: dict[str, Any]) -> str:
 def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
     if not receipts:
         return ""
+    job_detail = ""
+    agent_detail = ""
+    note_detail = ""
     for receipt in receipts:
         action = str(receipt.get("action") or "").strip()
         if action not in _STATUS_READ_ACTIONS:
@@ -274,11 +277,12 @@ def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
         if receipt.get("status") != "succeeded":
             continue
         result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
-        if action in {"agent.job.list", "agent.job.show"}:
+        if action in {"agent.job.list", "agent.job.show"} and not job_detail:
             detail = _format_jobs_payload(result)
             if detail:
-                return detail
-        if action in {"agent.health", "agent.list"}:
+                job_detail = detail
+            continue
+        if action in {"agent.health", "agent.list"} and not agent_detail:
             agents = result.get("agents") if isinstance(result.get("agents"), list) else []
             if agents:
                 names = [
@@ -287,10 +291,19 @@ def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
                     if isinstance(a, dict)
                 ]
                 names = [n for n in names if n]
-                return "**Agents:** " + ", ".join(names[:12])
-        note = str(result.get("note") or result.get("status") or "").strip()
-        if note:
-            return f"**{action}:** {note}"
+                if names:
+                    agent_detail = "**Agents:** " + ", ".join(names[:12])
+            continue
+        if not note_detail:
+            note = str(result.get("note") or result.get("status") or "").strip()
+            if note:
+                note_detail = f"**{action}:** {note}"
+    if job_detail:
+        return job_detail
+    if agent_detail:
+        return agent_detail
+    if note_detail:
+        return note_detail
     lines = []
     for receipt in receipts:
         action = receipt.get("action") or "action"

@@ -55,6 +55,37 @@ def test_job_list_receipt_becomes_status_reply() -> None:
     assert "Action results:" not in format_action_receipts_summary(receipts)
 
 
+def test_job_list_outranks_agent_list_for_status_asks() -> None:
+    receipts = [
+        {
+            "action": "agent.health",
+            "status": "succeeded",
+            "result": {"agents": [{"id": "dylan"}, {"id": "mark"}, {"id": "milchick"}, {"id": "irving"}]},
+        },
+        {
+            "action": "agent.job.list",
+            "status": "succeeded",
+            "result": {
+                "jobs": [
+                    {
+                        "job_id": "job_mark_bdb66f270fd0",
+                        "status": "completed",
+                        "target_agent": "mark",
+                        "capability": "test_case.generate",
+                        "input": {"issue_key": "MBPAS-1491"},
+                        "result": {"result": {"status": "completed", "summary": "Generated 3 test cases"}},
+                    }
+                ]
+            },
+        },
+    ]
+    text = prefer_action_summary("**Agents:** dylan, mark, milchick, irving", receipts)
+    assert "job_mark_bdb66f270fd0" in text
+    assert "MBPAS-1491" in text
+    assert text.startswith("**Job status**")
+    assert "**Agents:**" not in text
+
+
 def test_denied_mutation_surfaces_instead_of_planning_lie() -> None:
     from agents.security.access_policy import classify_authorization_intent
 
@@ -98,5 +129,6 @@ def test_denied_mutation_surfaces_instead_of_planning_lie() -> None:
 if __name__ == "__main__":
     test_planning_reply_detects_status_placeholder()
     test_job_list_receipt_becomes_status_reply()
+    test_job_list_outranks_agent_list_for_status_asks()
     test_denied_mutation_surfaces_instead_of_planning_lie()
     print("ok")
