@@ -48,7 +48,7 @@ def _seed_finding(store: RiskStore, finding_id: str = "FIND-demo000001", *, seve
 
 class ContractV4Tests(unittest.TestCase):
     def test_protocol_versions(self) -> None:
-        self.assertEqual(SOUL_VERSION, "4")
+        self.assertEqual(SOUL_VERSION, "5")
         self.assertEqual(PROTOCOL_VERSION, "5")
 
     def test_bootstrap_classifies_intents(self) -> None:

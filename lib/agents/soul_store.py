@@ -28,6 +28,18 @@ AGENT_META = {
         "workflow": "auto_delivery",
         "title": "Delivery Lead",
     },
+    "irving": {
+        "display_name": "Irving",
+        "role": "patch",
+        "workflow": "auto_patch",
+        "title": "Remediation Engineer",
+    },
+    "milchick": {
+        "display_name": "Milchick",
+        "role": "orchestrator",
+        "workflow": "operations",
+        "title": "Engineering Operations Manager",
+    },
 }
 
 

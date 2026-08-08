@@ -68,7 +68,8 @@ class MarkM10Tests(unittest.TestCase):
         self.assertIn("Never modify business source code", prompt)
         resume = build_resume_prompt(user_message="继续", project_slug="mbpass")
         self.assertIn("Remain Mark", resume)
-        self.assertIn("that is Dylan", prompt)
+        self.assertIn("Relationship — Dylan", prompt)
+        self.assertIn("Soul Version: **2**", prompt)
         self.assertTrue(prompt.startswith("[MARK SESSION BOOTSTRAP]"))
 
     def test_workspace_contract(self) -> None:

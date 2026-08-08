@@ -75,8 +75,9 @@ class FakeRuntime(CursorAgentRuntime):
 class SoulV3Tests(unittest.TestCase):
     def test_soul_has_proactive_closure(self) -> None:
         soul = load_soul()
-        self.assertIn("Remediated · Pending verification", soul)
         self.assertIn("Humor", soul)
+        self.assertIn("Soul Version: **5**", soul)
+        self.assertIn("Meta-awareness", soul)
         self.assertNotIn("restrained, precise, slightly uneasy", soul)
 
     def test_bootstrap_lists_write_commands(self) -> None:

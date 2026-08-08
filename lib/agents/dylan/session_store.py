@@ -9,7 +9,7 @@ from agents.runtime.session_store import (
 )
 
 PROTOCOL_VERSION = "5"
-SOUL_VERSION = "4"
+SOUL_VERSION = "5"
 
 
 def conversation_scope_id(

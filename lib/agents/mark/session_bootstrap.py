@@ -6,7 +6,7 @@ from typing import Any
 from agents.mark.soul_loader import load_soul
 
 PROTOCOL_VERSION = "1"
-SOUL_VERSION = "1"
+SOUL_VERSION = "2"
 
 
 def _default_commands(project_slug: str) -> list[str]:

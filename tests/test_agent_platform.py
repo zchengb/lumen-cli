@@ -59,7 +59,7 @@ class AgentPlatformTests(unittest.TestCase):
                 conversation_scope_id=dylan_scope,
                 workspace_path=tmp,
                 project_slug="mbpass",
-                soul_version="4",
+                soul_version="5",
                 protocol_version="5",
                 provider_session_id="prov-dylan",
             )
@@ -69,7 +69,7 @@ class AgentPlatformTests(unittest.TestCase):
                 conversation_scope_id=mark_scope,
                 workspace_path=tmp,
                 project_slug="mbpass",
-                soul_version="1",
+                soul_version="2",
                 protocol_version="1",
                 provider_session_id="prov-mark",
             )
@@ -82,9 +82,9 @@ class AgentPlatformTests(unittest.TestCase):
                 store.get_active(agent_id="mark", conversation_scope_id=mark_scope)["session_id"],
                 mark["session_id"],
             )
-            self.assertTrue(session_contract_current(dylan, soul_version="4", protocol_version="5"))
+            self.assertTrue(session_contract_current(dylan, soul_version="5", protocol_version="5"))
             self.assertFalse(session_contract_current(dylan, soul_version="1", protocol_version="1"))
-            self.assertTrue(session_contract_current(mark, soul_version="1", protocol_version="1"))
+            self.assertTrue(session_contract_current(mark, soul_version="2", protocol_version="1"))
             store.close()
 
     def test_reply_anchors_isolated(self) -> None:

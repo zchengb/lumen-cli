@@ -78,7 +78,7 @@ def _write_registry(workspace: Path, issue_id: str = "ISSUE-cd6fa30c22", status:
 
 class ContractM21Tests(unittest.TestCase):
     def test_protocol_bump(self) -> None:
-        self.assertEqual(SOUL_VERSION, "4")
+        self.assertEqual(SOUL_VERSION, "5")
         self.assertEqual(PROTOCOL_VERSION, "5")
 
     def test_bootstrap_no_auto_verify_ask(self) -> None:
