@@ -12,6 +12,8 @@ _AC_LINE = re.compile(
     r"^\s*(?:[-*•]|\d+[.)]|AC\s*\d+[:.)]?)\s*(.+)$",
     re.IGNORECASE,
 )
+_AC_HEAD = re.compile(r"^\s*(AC\s*\d+)\s*[：:.)\-]\s*(.*)$", re.IGNORECASE)
+_ADF_HARD_BREAK = re.compile(r'\{\s*"type"\s*:\s*"hardBreak"\s*\}', re.IGNORECASE)
 _IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 _PDF_EXT = {".pdf"}
 
@@ -37,6 +39,33 @@ def _text_of(value: Any) -> str:
     return str(value).strip()
 
 
+def _clean_description(description: str) -> str:
+    text = _ADF_HARD_BREAK.sub("\n", str(description or ""))
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _extract_numbered_ac_blocks(description: str) -> list[str]:
+    blocks: list[str] = []
+    current_id = ""
+    current_lines: list[str] = []
+    for line in _clean_description(description).splitlines():
+        match = _AC_HEAD.match(line)
+        if match:
+            if current_id:
+                body = "\n".join(current_lines).strip()
+                blocks.append(f"{current_id}: {body}" if body else current_id)
+            current_id = match.group(1).replace(" ", "").upper()
+            rest = match.group(2).strip()
+            current_lines = [rest] if rest else []
+            continue
+        if current_id and line.strip():
+            current_lines.append(line.strip())
+    if current_id:
+        body = "\n".join(current_lines).strip()
+        blocks.append(f"{current_id}: {body}" if body else current_id)
+    return [item for item in blocks if item]
+
+
 def _extract_acceptance_criteria(description: str, workitem: dict[str, Any]) -> list[str]:
     criteria: list[str] = []
     for key in ("acceptanceCriteria", "acceptance_criteria", "Acceptance Criteria"):
@@ -47,8 +76,12 @@ def _extract_acceptance_criteria(description: str, workitem: dict[str, Any]) -> 
             criteria.append(_text_of(raw))
     if criteria:
         return [c for c in criteria if c]
+    numbered = _extract_numbered_ac_blocks(description)
+    if numbered:
+        return numbered
     collecting = False
-    for line in (description or "").splitlines():
+    cleaned = _clean_description(description)
+    for line in cleaned.splitlines():
         lower = line.strip().lower()
         if "acceptance criteria" in lower or lower.startswith("ac:"):
             collecting = True
@@ -65,10 +98,11 @@ def _extract_acceptance_criteria(description: str, workitem: dict[str, Any]) -> 
                 break
             elif criteria:
                 criteria[-1] = f"{criteria[-1]} {line.strip()}".strip()
-    if not criteria and description.strip():
-        criteria = [description.strip()[:400]]
+    if not criteria and cleaned:
+        first = cleaned.splitlines()[0].strip().lower() if cleaned.splitlines() else ""
+        if first not in {"summary", "background"}:
+            criteria = [cleaned[:400]]
     return [c for c in criteria if c]
-
 
 def _normalize_attachment(item: Any) -> dict[str, Any] | None:
     if not isinstance(item, dict):

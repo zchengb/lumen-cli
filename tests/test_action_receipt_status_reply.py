@@ -129,9 +129,74 @@ def test_denied_mutation_surfaces_instead_of_planning_lie() -> None:
     assert "agent.job.create" in text
 
 
+def test_job_list_keeps_latest_per_issue_only() -> None:
+    receipts = [
+        {
+            "action": "agent.job.list",
+            "status": "succeeded",
+            "result": {
+                "jobs": [
+                    {
+                        "job_id": "job_mark_new",
+                        "status": "completed",
+                        "created_at": "2026-08-08T11:54:21Z",
+                        "target_agent": "mark",
+                        "capability": "test_case.generate",
+                        "input": {"issue_key": "MBPAS-1491"},
+                        "result": {
+                            "status": "completed",
+                            "summary": "Generated 5 test cases for MBPAS-1491.",
+                            "sheet_url": "https://inspiregroup.feishu.cn/sheets/OG4Js7cIlh7d0QtHOEnc1kDfnvf?sheet=3LwiOc",
+                        },
+                    },
+                    {
+                        "job_id": "job_parent_old",
+                        "status": "completed",
+                        "created_at": "2026-08-08T08:06:11Z",
+                        "input": {"issue_key": "MBPAS-1491"},
+                    },
+                    {
+                        "job_id": "job_mark_old",
+                        "status": "completed",
+                        "created_at": "2026-08-08T08:06:11Z",
+                        "target_agent": "mark",
+                        "capability": "test_case.generate",
+                        "input": {"issue_key": "MBPAS-1491"},
+                        "result": {
+                            "status": "completed",
+                            "summary": "Generated 3 test cases for MBPAS-1491.",
+                            "sheet_url": "https://inspiregroup.feishu.cn/base/old",
+                        },
+                    },
+                    {
+                        "job_id": "job_mark_failed",
+                        "status": "failed",
+                        "created_at": "2026-08-08T06:42:21Z",
+                        "target_agent": "mark",
+                        "capability": "test_case.generate",
+                        "input": {"issue_key": "MBPAS-1491"},
+                        "result": {
+                            "status": "failed",
+                            "code": "TEST_CASE_CONFIG_MISSING",
+                            "message": "No Feishu Bitable app token configured for project mbpass",
+                        },
+                    },
+                ]
+            },
+        }
+    ]
+    text = prefer_action_summary("how's MBPAS-1491 going?", receipts)
+    assert "Generated 5 test cases" in text
+    assert "Generated 3 test cases" not in text
+    assert "TEST_CASE_CONFIG_MISSING" not in text
+    assert "/sheets/" in text
+    assert "/base/old" not in text
+
+
 if __name__ == "__main__":
     test_planning_reply_detects_status_placeholder()
     test_job_list_receipt_becomes_status_reply()
     test_job_list_outranks_agent_list_for_status_asks()
     test_denied_mutation_surfaces_instead_of_planning_lie()
+    test_job_list_keeps_latest_per_issue_only()
     print("ok")

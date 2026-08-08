@@ -220,15 +220,15 @@ def _issue_key(job: dict[str, Any]) -> str:
     for blob in (job.get("input"), job.get("result")):
         if not isinstance(blob, dict):
             continue
-        key = str(blob.get("issue_key") or "").strip()
+        key = str(blob.get("issue_key") or blob.get("story") or "").strip()
         if key:
             return key
         resource = blob.get("resource") if isinstance(blob.get("resource"), dict) else {}
-        key = str(resource.get("issue_key") or "").strip()
+        key = str(resource.get("issue_key") or resource.get("story") or "").strip()
         if key:
             return key
         nested = blob.get("result") if isinstance(blob.get("result"), dict) else {}
-        key = str(nested.get("issue_key") or "").strip()
+        key = str(nested.get("issue_key") or nested.get("story") or "").strip()
         if key:
             return key
     return ""
@@ -283,6 +283,24 @@ def _format_one_job(job: dict[str, Any]) -> str:
     return f"{head}\n{outcome}"
 
 
+def _latest_capability_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    latest: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        capability = str(job.get("capability") or "").strip()
+        if not capability:
+            continue
+        issue = _issue_key(job) or str(job.get("job_id") or "")
+        key = (capability, issue.upper())
+        if key in seen:
+            continue
+        seen.add(key)
+        latest.append(job)
+    return latest
+
+
 def _format_jobs_payload(result: dict[str, Any]) -> str:
     jobs: list[dict[str, Any]] = []
     if isinstance(result.get("jobs"), list):
@@ -298,7 +316,7 @@ def _format_jobs_payload(result: dict[str, Any]) -> str:
             jobs = children
         overall = str(summary.get("overall_state") or "").strip()
         lines = ["**Job status**" + (f": {overall}" if overall else "")]
-        for child in children or jobs:
+        for child in _latest_capability_jobs(children or jobs):
             text = _format_one_job(child)
             if text:
                 lines.append(text)
@@ -306,11 +324,10 @@ def _format_jobs_payload(result: dict[str, Any]) -> str:
         if next_dep and not next_dep.startswith("job_"):
             lines.append(f"Next: {next_dep}")
         return "\n\n".join(line for line in lines if line).strip()
-    formatted = [text for text in (_format_one_job(job) for job in jobs[:12]) if text]
+    formatted = [text for text in (_format_one_job(job) for job in _latest_capability_jobs(jobs)[:8]) if text]
     if not formatted:
         return ""
     return "**Job status**\n\n" + "\n\n".join(formatted)
-
 
 def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
     if not receipts:

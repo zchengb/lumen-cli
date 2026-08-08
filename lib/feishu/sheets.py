@@ -120,6 +120,17 @@ class FeishuSheets:
                 return sheet
         raise RuntimeError(f"failed to create worksheet {wanted!r}")
 
+    def delete_sheet(self, spreadsheet_token: str, sheet_id: str) -> dict[str, Any]:
+        token = parse_spreadsheet_token(spreadsheet_token)
+        sid = str(sheet_id or "").strip()
+        if not sid:
+            raise ValueError("sheet_id required")
+        return self._request(
+            "POST",
+            f"/sheets/v2/spreadsheets/{token}/sheets_batch_update",
+            {"requests": [{"deleteSheet": {"sheetId": sid}}]},
+        )
+
     def set_dropdown(
         self,
         spreadsheet_token: str,

@@ -104,6 +104,17 @@ def load_workspace_story(*, workspace: Path | None, issue_key: str) -> StoryCont
     )
 
 
+def _weak_acceptance(criteria: list[str]) -> bool:
+    items = [str(item or "").strip() for item in criteria if str(item or "").strip()]
+    if not items:
+        return True
+    if len(items) == 1:
+        first = items[0].splitlines()[0].strip().lower()
+        if first in {"summary", "background"} or first.startswith("summary"):
+            return True
+    return False
+
+
 def enrich_story_from_workspace(
     story: StoryContext,
     *,
@@ -114,7 +125,12 @@ def enrich_story_from_workspace(
         return story
     summary = story.summary or local.summary
     description = story.description or local.description
-    acceptance = list(story.acceptance_criteria or []) or list(local.acceptance_criteria or [])
+    jira_ac = list(story.acceptance_criteria or [])
+    local_ac = list(local.acceptance_criteria or [])
+    if local_ac and (_weak_acceptance(jira_ac) or len(local_ac) > len(jira_ac)):
+        acceptance = local_ac
+    else:
+        acceptance = jira_ac or local_ac
     warnings = list(story.warnings or [])
     for item in local.warnings:
         if item not in warnings:
@@ -129,7 +145,6 @@ def enrich_story_from_workspace(
         attachments=list(story.attachments or []),
         warnings=warnings,
     )
-
 
 def load_workspace_context(*, workspace: Path | None, issue_key: str) -> dict[str, Any]:
     root = Path(workspace).expanduser().resolve() if workspace else None

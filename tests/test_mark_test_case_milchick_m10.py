@@ -126,6 +126,21 @@ class TestCaseSkillTests(unittest.TestCase):
         self.assertTrue(any("正常路徑" in c.title for c in zh))
         self.assertEqual(story_sheet_name("MBPAS-1", "Hello"), "MBPAS-1 · Hello")
 
+    def test_jira_ac_blocks_ignore_summary_header(self) -> None:
+        from skills.test_case.jira_read import _extract_acceptance_criteria
+
+        description = (
+            "Summary\n：後台新增活動Banner\n"
+            "Background\n：需要後台管理\n"
+            "AC 1：左側選單新增入口\nGiven Admin登入\nWhen 檢視選單\nThen 出現入口\n"
+            'AC 2：列表支援狀態篩選\n{"type": "hardBreak"}\nGiven 進入列表\nThen 可篩選'
+        )
+        criteria = _extract_acceptance_criteria(description, {})
+        self.assertEqual(len(criteria), 2)
+        self.assertTrue(criteria[0].startswith("AC1:"))
+        self.assertIn("左側選單", criteria[0])
+        self.assertNotIn("Summary", criteria[0])
+
     def test_dedupe_skips_existing_titles(self) -> None:
         generated = [
             TestCase("A", "1", "ok", "Functional", "MBPAS-1", "t"),
