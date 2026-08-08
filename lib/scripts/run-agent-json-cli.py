@@ -170,6 +170,7 @@ def cmd_risk(args: argparse.Namespace) -> int:
                             "reason": reason or "User reported the fix completed",
                             "workspace": str(workspace),
                             "project": slug,
+                            "chat_type": "dm",
                         },
                         explicit_authorization=True,
                     )
@@ -219,6 +220,7 @@ def cmd_risk(args: argparse.Namespace) -> int:
                             "override": override,
                             "workspace": str(workspace),
                             "project": slug,
+                            "chat_type": "dm",
                         },
                         explicit_authorization=True,
                     )

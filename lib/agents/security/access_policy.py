@@ -99,8 +99,11 @@ def _user_in(store: Any, user_id: str, allowed: frozenset[str]) -> bool:
     return bool(expanded_user & (allowed | expanded_allowed))
 
 
-def is_dm_chat(chat_type: str, *, thread_id: str = "") -> bool:
-    return str(chat_type or "").strip().lower() in {"p2p", "private", "dm"}
+def is_dm_chat(chat_type: str, *, thread_id: str = "", chat_id: str = "") -> bool:
+    kind = str(chat_type or "").strip().lower()
+    if kind in {"p2p", "private", "dm"}:
+        return True
+    return not kind and not str(chat_id or "").strip()
 
 
 def interaction_context_from_meta(
@@ -112,17 +115,18 @@ def interaction_context_from_meta(
 ) -> InteractionContext:
     user_id = str(meta.get("user_id") or "").strip()
     chat_type = str(meta.get("chat_type") or "").strip()
+    chat_id = str(meta.get("chat_id") or "").strip()
     owners = _expand_user_ids(store, policy.owners)
     admins = _expand_user_ids(store, policy.admins)
     allowed = _expand_user_ids(store, policy.allowed_user_ids)
     return InteractionContext(
         agent_id=str(agent_id or "").strip().lower(),
         user_id=user_id,
-        chat_id=str(meta.get("chat_id") or "").strip(),
+        chat_id=chat_id,
         chat_type=chat_type,
         thread_id=str(meta.get("thread_id") or "").strip(),
         message_id=str(meta.get("message_id") or "").strip(),
-        is_dm=is_dm_chat(chat_type),
+        is_dm=is_dm_chat(chat_type, chat_id=chat_id),
         is_owner=_user_in(store, user_id, owners)
         or (
             _user_in(store, user_id, allowed)
@@ -235,11 +239,12 @@ def resolve_trust_zone(
         return "DENY"
 
     if context.is_dm:
-        return (
-            "PRIVATE"
-            if _user_in(store, user, policy.owners | policy.admins | policy.allowed_user_ids)
-            else "DENY"
-        )
+        allow = policy.owners | policy.admins | policy.allowed_user_ids
+        if allow:
+            return "DENY"
+        if policy.source == "legacy":
+            return "PRIVATE" if policy.exposure_mode in {"owner_private", "admin_private"} else "RESTRICTED"
+        return "DENY"
 
     if policy.source == "legacy" and not policy.allowed_chat_ids:
         return "RESTRICTED"

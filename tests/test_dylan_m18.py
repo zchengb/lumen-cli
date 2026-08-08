@@ -155,7 +155,7 @@ class AutonomousRuntimeTests(unittest.TestCase):
             ), patch("agents.dylan.autonomous.load_chat_project_map", return_value={}):
                 first = handle_autonomous_conversation(
                     text="summarize risks",
-                    meta={"chat_id": "oc1", "thread_id": "t1", "user_id": "u1", "message_id": "m1"},
+                    meta={"chat_id": "oc1", "chat_type": "p2p", "thread_id": "t1", "user_id": "u1", "message_id": "m1"},
                     common=_v4_common(),
                     runtime=fake,
                 )
@@ -166,7 +166,7 @@ class AutonomousRuntimeTests(unittest.TestCase):
 
                 second = handle_autonomous_conversation(
                     text="and the top one?",
-                    meta={"chat_id": "oc1", "thread_id": "t1", "user_id": "u1", "message_id": "m2"},
+                    meta={"chat_id": "oc1", "chat_type": "p2p", "thread_id": "t1", "user_id": "u1", "message_id": "m2"},
                     common=_v4_common(),
                     runtime=fake,
                 )
@@ -199,13 +199,13 @@ class AutonomousRuntimeTests(unittest.TestCase):
             ), patch("agents.dylan.autonomous.load_chat_project_map", return_value={}):
                 handle_autonomous_conversation(
                     text="hi",
-                    meta={"chat_id": "oc1", "user_id": "u1", "message_id": "m1"},
+                    meta={"chat_id": "oc1", "chat_type": "p2p", "user_id": "u1", "message_id": "m1"},
                     common=_v4_common(),
                     runtime=fake,
                 )
                 recovered = handle_autonomous_conversation(
                     text="Are you happy in Lumon?",
-                    meta={"chat_id": "oc1", "user_id": "u1", "message_id": "m2"},
+                    meta={"chat_id": "oc1", "chat_type": "p2p", "user_id": "u1", "message_id": "m2"},
                     common=_v4_common(),
                     runtime=fake,
                 )

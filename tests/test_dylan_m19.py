@@ -255,6 +255,7 @@ class SessionContractUpgradeTests(unittest.TestCase):
                                 text="hi",
                                 meta={
                                     "chat_id": "oc1",
+                                    "chat_type": "p2p",
                                     "thread_id": "om_root",
                                     "user_id": "u1",
                                     "message_id": "om_msg",

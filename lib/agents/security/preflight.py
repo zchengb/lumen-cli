@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 from agents.dylan.permission_policy import SECURE_PERMISSIONS
-from agents.runner.runner_env import build_runner_env
 from agents.runner.workspace_mounts import ensure_runner_dirs
 from agents.security.actions import ActionRequest
 from agents.security.broker import CapabilityBroker
@@ -85,6 +84,8 @@ def run_security_check(
         checks["cursor_api_key"] = "absent"
 
     if flags.get("workspace_isolation_v2"):
+        from agents.runner.runner_env import build_runner_env
+
         dirs = ensure_runner_dirs(agent)
         runner_env = build_runner_env(agent_id=agent, project=project, source={"PATH": "/usr/bin"})
         checks["runner"] = "local_isolated"
