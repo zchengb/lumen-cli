@@ -107,8 +107,8 @@ class FeishuChannel:
     def start(self) -> None:
         if not self.clients:
             raise RuntimeError(
-                "No Feishu agent credentials configured. Set FEISHU_DYLAN_APP_ID/SECRET "
-                "and/or FEISHU_MARK_APP_ID/SECRET."
+                "No Feishu agent credentials configured. Set FEISHU_*_APP_ID/SECRET "
+                "for dylan, mark, and/or milchick."
             )
         try:
             import lark_oapi as lark

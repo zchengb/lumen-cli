@@ -5,7 +5,6 @@ import mermaid from "mermaid";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import TurndownService from "turndown";
-import { version as lumenVersion } from "../package.json";
 import {
   Activity, Bold, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, CircleCheck, CircleDot, CircleHelp, Code2, Copy,
   Calendar, Eye, EyeOff, ExternalLink, FileCode2, FolderGit2, GitBranch, Heading2, Italic, Link2, List, ListFilter, LoaderCircle,
@@ -13,6 +12,8 @@ import {
   Maximize2, Minimize2, ShieldCheck, Sparkles, Truck, Workflow, X, ZoomIn, ZoomOut
 } from "lucide-react";
 import "./styles.css";
+
+const lumenVersion = __LUMEN_VERSION__;
 
 mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
 marked.setOptions({ gfm: true, breaks: false });
