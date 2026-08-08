@@ -1930,14 +1930,14 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
       <div className="settings-section divider access-control-section">
         <div className="settings-copy">
           <div className="settings-heading"><div className="settings-title-stack"><h4>Access Control</h4></div></div>
-          <p>Who may talk to agents, and who may mutate (resolve findings, update schedules, start delivery).</p>
+          <p>Who may talk to agents, and who may mutate (resolve findings, update schedules, start delivery). Add Allowed chat IDs to let Dylan/Milchick reply in those groups when @mentioned.</p>
           {Boolean(accessDraft.legacy_warning ?? agentsPayload.access?.legacy_warning) && (
             <p className="schedule-note">Legacy allow mode is unsafe for local agents. Prefer per-agent Access &amp; Exposure with default_policy=deny.</p>
           )}
         </div>
         <div className="settings-control wide access-control-panel">
           <div className="form-grid compact">
-            <Field label="Allowed chat IDs" help="Empty = all chats may message agents."><input value={(accessDraft.allowed_chat_ids || []).join(", ")} placeholder="oc_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, allowed_chat_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
+            <Field label="Allowed chat IDs" help="Whitelist group chats. Dylan/Milchick stay DM-only unless a chat is listed here; @mention is still required in groups."><input value={(accessDraft.allowed_chat_ids || []).join(", ")} placeholder="oc_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, allowed_chat_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
             <Field label="Allowed user IDs" help="Empty = all users may ask read-only questions."><input value={(accessDraft.allowed_user_ids || []).join(", ")} placeholder="ou_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, allowed_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
             <Field label="Mutation user IDs" help="Required for resolve / schedule update / delivery start. Fail-closed when empty."><input value={(accessDraft.mutation_allowed_user_ids || []).join(", ")} placeholder="ou_… required for mutations" onChange={(event) => { setAccessDraft((current) => ({ ...current, mutation_allowed_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
             <Field label="Admin user IDs" help="Admins can also mutate."><input value={(accessDraft.admin_user_ids || []).join(", ")} placeholder="ou_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, admin_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>

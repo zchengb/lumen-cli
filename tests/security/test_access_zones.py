@@ -199,6 +199,31 @@ class AccessZoneTests(unittest.TestCase):
             config=_config(),
         )
         self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason_code, "DM_ONLY")
+
+    def test_milchick_whitelisted_group_allowed(self) -> None:
+        cfg = _config()
+        cfg["access"]["agents"]["milchick"]["allowed_chat_ids"] = [SHARED]
+        decision = authorize_agent_interaction(
+            agent_id="milchick",
+            meta={"user_id": OWNER, "chat_id": SHARED, "chat_type": "group", "message_id": "om1"},
+            config=cfg,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.trust_zone, "RESTRICTED")
+        self.assertTrue(decision.mutation_allowed)
+        self.assertNotIn("lumen.system.health", decision.effective_capabilities)
+
+    def test_milchick_global_chat_whitelist(self) -> None:
+        cfg = _config()
+        cfg["access"]["allowed_chat_ids"] = [SHARED]
+        decision = authorize_agent_interaction(
+            agent_id="milchick",
+            meta={"user_id": OWNER, "chat_id": SHARED, "chat_type": "group", "message_id": "om1"},
+            config=cfg,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.trust_zone, "RESTRICTED")
 
     def test_unconfigured_agent_denied(self) -> None:
         decision = authorize_agent_interaction(

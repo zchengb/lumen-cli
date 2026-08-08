@@ -137,6 +137,7 @@ def load_agent_access_policy(agent_id: str, config: Optional[dict[str, Any]] = N
     legacy = load_access_config(data)
     owners = _as_set(access.get("owners") or access.get("admin_user_ids") or legacy.get("admin_user_ids"))
     admins = _as_set(access.get("admins") or access.get("admin_user_ids") or legacy.get("admin_user_ids"))
+    global_chats = _as_set(access.get("allowed_chat_ids") or legacy.get("allowed_chat_ids"))
     default_policy = str(access.get("default_policy") or "legacy_allow").strip().lower() or "legacy_allow"
     agent = str(agent_id or "").strip().lower()
     agents = access.get("agents") if isinstance(access.get("agents"), dict) else {}
@@ -149,7 +150,7 @@ def load_agent_access_policy(agent_id: str, config: Optional[dict[str, Any]] = N
             agent_id=agent,
             exposure_mode=exposure,
             allowed_user_ids=_as_set(legacy.get("allowed_user_ids")) | owners | admins,
-            allowed_chat_ids=_as_set(legacy.get("allowed_chat_ids")),
+            allowed_chat_ids=global_chats,
             dm_only=dm_only,
             host_read_mode="selected" if exposure == "owner_private" else ("system_only" if exposure == "admin_private" else "deny"),
             host_read_capabilities=DEFAULT_HOST_CAPS.get(agent, frozenset()),
@@ -165,7 +166,7 @@ def load_agent_access_policy(agent_id: str, config: Optional[dict[str, Any]] = N
             agent_id=agent,
             exposure_mode=DEFAULT_EXPOSURE.get(agent, "restricted_team"),
             allowed_user_ids=frozenset(),
-            allowed_chat_ids=frozenset(),
+            allowed_chat_ids=global_chats,
             dm_only=True,
             host_read_mode="deny",
             host_read_capabilities=frozenset(),
@@ -185,7 +186,7 @@ def load_agent_access_policy(agent_id: str, config: Optional[dict[str, Any]] = N
         agent_id=agent,
         exposure_mode=exposure,
         allowed_user_ids=_as_set(raw.get("allowed_user_ids")),
-        allowed_chat_ids=_as_set(raw.get("allowed_chat_ids")),
+        allowed_chat_ids=_as_set(raw.get("allowed_chat_ids")) | global_chats,
         dm_only=bool(raw.get("dm_only", exposure in {"owner_private", "admin_private"})),
         host_read_mode=host_mode,
         host_read_capabilities=caps,
@@ -204,7 +205,8 @@ def resolve_trust_zone(
     store: Any = None,
 ) -> TrustZone:
     if policy.dm_only and not context.is_dm:
-        return "DENY"
+        if not policy.allowed_chat_ids or context.chat_id not in policy.allowed_chat_ids:
+            return "DENY"
     user = context.user_id
     if not user:
         return "DENY"
@@ -226,6 +228,8 @@ def resolve_trust_zone(
     if policy.allowed_chat_ids:
         if context.chat_id in policy.allowed_chat_ids:
             if policy.exposure_mode == "restricted_team":
+                return "RESTRICTED"
+            if policy.dm_only and policy.exposure_mode in {"owner_private", "admin_private"}:
                 return "RESTRICTED"
             return "SHARED"
         return "DENY"
