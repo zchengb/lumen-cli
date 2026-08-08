@@ -5,6 +5,47 @@ from pathlib import Path
 from typing import Any
 
 
+HOST_INTROSPECTION_DENY = [
+    "Shell(system_profiler)",
+    "Shell(hostname)",
+    "Shell(scutil)",
+    "Shell(sw_vers)",
+    "Shell(uname)",
+    "Shell(sysctl)",
+    "Shell(ioreg)",
+    "Shell(diskutil)",
+    "Shell(ifconfig)",
+    "Shell(networksetup)",
+    "Shell(ps)",
+    "Shell(launchctl)",
+    "Shell(whoami)",
+    "Shell(id)",
+    "Shell(dscl)",
+    "Shell(defaults)",
+    "Shell(mdfind)",
+    "Shell(top)",
+    "Shell(lsof)",
+    "Shell(netstat)",
+    "Shell(open)",
+    "Shell(osascript)",
+]
+
+GIT_WRITE_DENY = [
+    "Shell(git checkout)",
+    "Shell(git reset)",
+    "Shell(git clean)",
+    "Shell(git commit)",
+    "Shell(git push)",
+    "Shell(git fetch)",
+    "Shell(git pull)",
+    "Shell(git clone)",
+    "Shell(git switch)",
+    "Shell(git restore)",
+    "Shell(git rebase)",
+    "Shell(git merge)",
+]
+
+# M0.3.1 Permission Profile v2 — project-centric, no host enumeration shells.
 SECURE_PERMISSIONS = {
     "permissions": {
         "allow": [
@@ -12,13 +53,6 @@ SECURE_PERMISSIONS = {
             "Shell(lumen)",
             "Shell(git)",
             "Shell(rg)",
-            "Shell(ls)",
-            "Shell(cat)",
-            "Shell(head)",
-            "Shell(tail)",
-            "Shell(find)",
-            "Shell(wc)",
-            "Shell(pytest)",
         ],
         "deny": [
             "Write(**)",
@@ -29,25 +63,31 @@ SECURE_PERMISSIONS = {
             "Write(**/.env*)",
             "Write(**/*.pem)",
             "Write(**/*.key)",
+            "Shell(ls)",
+            "Shell(find)",
+            "Shell(cat)",
+            "Shell(head)",
+            "Shell(tail)",
+            "Shell(wc)",
+            "Shell(pytest)",
             "Shell(sudo)",
             "Shell(ssh)",
             "Shell(scp)",
             "Shell(rm)",
             "Shell(curl)",
             "Shell(wget)",
-            "Shell(launchctl)",
-            "Shell(osascript)",
             "Shell(python)",
             "Shell(python3)",
             "Shell(node)",
             "Shell(npm)",
             "Shell(pnpm)",
             "Shell(yarn)",
+            *HOST_INTROSPECTION_DENY,
+            *GIT_WRITE_DENY,
         ],
     }
 }
 
-# Backward-compatible alias
 DEFAULT_PERMISSIONS = SECURE_PERMISSIONS
 
 

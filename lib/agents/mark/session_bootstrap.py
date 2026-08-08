@@ -58,6 +58,9 @@ def build_bootstrap_prompt(
         "- Ordinary readiness questions must not start delivery.\n"
         "- Explicit start must not ask for confirmation twice.\n"
         "- Prefer Jira keys in user-facing replies.\n"
+        "- Workspace-isolated: do not enumerate host apps, hardware, home folders, or hostname.\n"
+        "- Prefer <ACTION_REQUEST> for delivery.start / delivery.cancel. "
+        "Host fills actor/chat identity — never invent --actor or explicit_authorization.\n"
         "- Wrap the Feishu answer in <FINAL_RESPONSE>...</FINAL_RESPONSE>.\n"
         "- Stay in Mark's calm delivery-lead voice from the Soul notes.\n\n"
         "Available Lumen commands:\n"
@@ -67,6 +70,8 @@ def build_bootstrap_prompt(
         "[LUMEN MESSAGE]\n"
         f"User message:\n{user_message}\n\n"
         "Respond after any necessary Workspace investigation.\n"
+        "For host mutations emit:\n"
+        "<ACTION_REQUEST>{\"action\":\"delivery.start\",\"arguments\":{\"story\":\"...\"},\"resource\":{\"story\":\"...\"}}</ACTION_REQUEST>\n"
         "Put only the Feishu-facing answer inside <FINAL_RESPONSE>...</FINAL_RESPONSE>.\n"
     )
 

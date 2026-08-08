@@ -8,11 +8,14 @@ from typing import Any, Optional
 from agents.definitions import AgentDefinition
 from agents.dylan.schemas import ConversationFlags
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
+from agents.runner import default_runner
 from agents.runtime.cursor_runtime import CursorAgentRuntime
-from agents.runtime.final_response import extract_final_response
+from agents.runtime.final_response import extract_final_response, format_action_receipts_summary
 from agents.runtime.observability import Observability, TraceContext, new_trace_id
 from agents.runtime.reply_anchor import format_anchored_user_message, resolve_reply_anchor
 from agents.runtime.session_store import SessionStore, conversation_scope_id, session_contract_current
+from agents.security.flags import workspace_isolation_v2_enabled
+from agents.security.trusted import execute_trusted_actions, trusted_context_from_meta
 from feishu.messenger import FeishuMessenger
 
 
@@ -247,7 +250,7 @@ def handle_autonomous_conversation(
                     )
                     provider_session_id = session.get("provider_session_id") or None
 
-            runner = runtime or CursorAgentRuntime(
+            cursor = runtime or CursorAgentRuntime(
                 model=flags.model.model_name,
                 soft_timeout_seconds=flags.soft_timeout_seconds,
                 hard_timeout_seconds=flags.hard_timeout_seconds,
@@ -257,14 +260,23 @@ def handle_autonomous_conversation(
                 agent_id=agent_id,
                 project=slug,
             )
-            obs.upsert_trace(trace, state="running", project_slug=slug)
-            result = runner.run(
-                workspace=workspace,
-                prompt=prompt,
-                provider_session_id=provider_session_id,
-                trace=trace,
-                obs=obs,
+            runner = (
+                default_runner(runtime=cursor)
+                if workspace_isolation_v2_enabled() and runtime is None
+                else cursor
             )
+            obs.upsert_trace(trace, state="running", project_slug=slug)
+            run_kwargs = {
+                "workspace": workspace,
+                "prompt": prompt,
+                "provider_session_id": provider_session_id,
+                "trace": trace,
+                "obs": obs,
+            }
+            if workspace_isolation_v2_enabled() and runtime is None:
+                result = runner.run(definition=definition, **run_kwargs)
+            else:
+                result = runner.run(**run_kwargs)
 
             if (
                 result.status == "failed"
@@ -288,13 +300,17 @@ def handle_autonomous_conversation(
                     workspace_path=str(workspace),
                     user_message=anchored_text,
                 )
-                result = runner.run(
-                    workspace=workspace,
-                    prompt=prompt,
-                    provider_session_id=None,
-                    trace=trace,
-                    obs=obs,
-                )
+                run_kwargs = {
+                    "workspace": workspace,
+                    "prompt": prompt,
+                    "provider_session_id": None,
+                    "trace": trace,
+                    "obs": obs,
+                }
+                if workspace_isolation_v2_enabled() and runtime is None:
+                    result = runner.run(definition=definition, **run_kwargs)
+                else:
+                    result = runner.run(**run_kwargs)
                 is_new = True
 
             if result.provider_session_id and result.status == "succeeded":
@@ -339,12 +355,34 @@ def handle_autonomous_conversation(
 
             obs.upsert_trace(trace, state="completed", latency_ms=result.duration_ms, project_slug=slug)
             parsed = extract_final_response(result.text)
+            action_receipts: list[dict[str, Any]] = []
+            if parsed.action_requests:
+                context = trusted_context_from_meta(
+                    agent_id=agent_id,
+                    project_slug=slug,
+                    meta=meta,
+                    trace_id=trace.trace_id,
+                    explicit_authorization=True,
+                )
+                receipts = execute_trusted_actions(context=context, requests=parsed.action_requests)
+                action_receipts = [r.to_dict() for r in receipts]
+                obs.emit(
+                    trace,
+                    "security.action_requests.executed",
+                    count=len(action_receipts),
+                    statuses=[r.get("status") for r in action_receipts],
+                )
+            reply_text = parsed.text
+            if action_receipts and not parsed.valid:
+                summary = format_action_receipts_summary(action_receipts)
+                reply_text = summary or reply_text
             return {
                 "status": "ok",
                 "action": "autonomous.reply",
-                "text": parsed.text,
+                "text": reply_text,
                 "final_response_mode": parsed.mode,
                 "final_response_valid": parsed.valid,
+                "action_receipts": action_receipts,
                 "trace_id": trace.trace_id,
                 "session_id": session["session_id"],
                 "provider_session_id": result.provider_session_id,

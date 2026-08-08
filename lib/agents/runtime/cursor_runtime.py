@@ -46,6 +46,7 @@ class CursorAgentRuntime:
         self.trust = trust
         self.agent_id = agent_id
         self.project = project
+        self.isolated_env: Optional[dict[str, str]] = None
 
     def _agent_bin(self) -> str:
         for name in ("agent", "cursor-agent"):
@@ -55,6 +56,8 @@ class CursorAgentRuntime:
         raise RuntimeError("cursor agent CLI not found")
 
     def _env(self) -> dict[str, str]:
+        if self.isolated_env is not None:
+            return dict(self.isolated_env)
         from agents.security.env import build_agent_env
 
         _load_lumen_dotenv()

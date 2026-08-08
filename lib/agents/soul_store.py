@@ -115,11 +115,16 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
         "network": "deny",
         "sandbox": "enabled",
         "secrets": "isolated",
+        "runner": "local_isolated",
+        "host_visibility": "denied",
+        "workspace_isolation_v2": True,
     }
     try:
         from agents.definitions import ensure_definitions_loaded, get_definition
+        from agents.security.flags import workspace_isolation_v2_enabled
 
         ensure_definitions_loaded()
+        isolation = workspace_isolation_v2_enabled()
         definition = get_definition(agent)
         if definition is not None:
             caps = definition.capabilities
@@ -130,7 +135,14 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
                 "sandbox": "enabled",
                 "secrets": caps.secret_profile,
                 "actions": list(caps.actions),
+                "runner": "local_isolated" if isolation else "host",
+                "host_visibility": "denied" if isolation else "limited",
+                "workspace_isolation_v2": isolation,
             }
+        else:
+            security["workspace_isolation_v2"] = isolation
+            security["runner"] = "local_isolated" if isolation else "host"
+            security["host_visibility"] = "denied" if isolation else "limited"
     except Exception:
         pass
     return {

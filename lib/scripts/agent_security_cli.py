@@ -20,7 +20,11 @@ def _emit(payload: dict[str, Any], *, code: int = 0) -> int:
 def cmd_security_check(args: argparse.Namespace) -> int:
     from agents.security.preflight import run_security_check
 
-    result = run_security_check(agent_id=args.agent, project=args.project or "")
+    result = run_security_check(
+        agent_id=args.agent,
+        project=args.project or "",
+        live=bool(getattr(args, "live", False)),
+    )
     return _emit(result, code=0 if result.get("status") == "pass" else 1)
 
 
@@ -45,6 +49,16 @@ def cmd_action(args: argparse.Namespace) -> int:
         arguments["basis"] = args.basis
     if args.project:
         arguments["project"] = args.project
+    # Host/admin CLI path. Conversational agents must use ACTION_REQUEST + TrustedActionContext.
+    if not args.actor:
+        return _emit(
+            {
+                "status": "denied",
+                "error_code": "HOST_ACTOR_REQUIRED",
+                "error": "lumen agents action requires --actor (host/admin). Conversational agents use ACTION_REQUEST.",
+            },
+            code=1,
+        )
     request = ActionRequest(
         agent_id=args.agent,
         action=args.action,
@@ -70,6 +84,11 @@ def main(argv: list[str] | None = None) -> int:
     check = sub.add_parser("security-check", help="Run agent security preflight")
     check.add_argument("--agent", default="dylan")
     check.add_argument("--project", default="")
+    check.add_argument(
+        "--live",
+        action="store_true",
+        help="Optional live probes (requires LUMEN_SECURITY_E2E=1); not needed for CI",
+    )
     check.set_defaults(func=cmd_security_check)
 
     action = sub.add_parser("action", help="Execute a brokered agent action")

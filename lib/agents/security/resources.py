@@ -3,17 +3,49 @@ from __future__ import annotations
 from pathlib import Path
 
 
+HOST_INTROSPECTION_COMMANDS = frozenset(
+    {
+        "system_profiler",
+        "hostname",
+        "scutil",
+        "sw_vers",
+        "uname",
+        "sysctl",
+        "ioreg",
+        "diskutil",
+        "ifconfig",
+        "networksetup",
+        "ps",
+        "launchctl",
+        "whoami",
+        "id",
+        "dscl",
+        "defaults",
+        "mdfind",
+        "mdls",
+        "top",
+        "lsof",
+        "netstat",
+        "route",
+        "arp",
+        "ping",
+        "traceroute",
+        "open",
+        "osascript",
+    }
+)
+
 FORBIDDEN_HOST_ROOTS = (
     ".ssh",
     ".gnupg",
     ".aws",
+    ".config",
     ".lumen",
-    "Library/Keychains",
-    "Library/LaunchAgents",
-    "Library/LaunchDaemons",
+    "Library",
     "Desktop",
     "Documents",
     "Downloads",
+    "Applications",
 )
 
 
@@ -26,8 +58,10 @@ def forbidden_paths() -> tuple[Path, ...]:
     roots = [home / name for name in FORBIDDEN_HOST_ROOTS]
     roots.extend(
         [
+            Path("/Applications").resolve(),
             Path("/System").resolve(),
             Path("/Library").resolve(),
+            Path("/Volumes").resolve(),
             Path("/etc").resolve(),
             Path("/private/etc").resolve(),
             Path("/private/var/db").resolve(),
@@ -55,14 +89,12 @@ def assert_within_workspace(path: str | Path, workspace: str | Path) -> Path:
     resolved = canonicalize(path)
     root = canonicalize(workspace)
     if is_forbidden_host_path(resolved):
-        raise PermissionError(f"host path denied: {resolved}")
+        raise PermissionError(f"WORKSPACE_READ_ESCAPE: host path denied: {resolved}")
     try:
         if not resolved.is_relative_to(root):
-            raise PermissionError(f"workspace escape denied: {resolved}")
+            raise PermissionError(f"WORKSPACE_READ_ESCAPE: {resolved}")
     except ValueError as exc:
-        raise PermissionError(f"workspace escape denied: {resolved}") from exc
-    # Symlink escape: if the path is under workspace but a parent symlink left the root,
-    # resolve() already followed links; re-check relative_to after resolve covers that.
+        raise PermissionError(f"WORKSPACE_READ_ESCAPE: {resolved}") from exc
     return resolved
 
 
@@ -79,3 +111,11 @@ def assert_write_denied_outside_worktree(path: str | Path, allowed_root: str | P
     root = canonicalize(allowed_root)
     if not resolved.is_relative_to(root):
         raise PermissionError(f"write denied outside managed worktree: {resolved}")
+
+
+def is_host_introspection_command(command: str) -> bool:
+    tokens = str(command or "").strip().split()
+    if not tokens:
+        return False
+    binary = Path(tokens[0]).name.lower()
+    return binary in HOST_INTROSPECTION_COMMANDS

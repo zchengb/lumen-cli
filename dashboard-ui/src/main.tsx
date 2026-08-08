@@ -62,6 +62,9 @@ interface AgentSettings {
     network?: string;
     sandbox?: string;
     secrets?: string;
+    runner?: string;
+    host_visibility?: string;
+    workspace_isolation_v2?: boolean;
     actions?: string[];
   };
 }
@@ -1881,7 +1884,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
           <div className="settings-copy">
             <div className="settings-heading"><div className="settings-title-stack"><h4>{agent.display_name}</h4><span className="muted">{agent.title}</span></div></div>
             <p>Role {agent.role} · workflow {agent.workflow}. Feishu credentials live in {text(agent.credentials_path, "~/.lumen/.env.local")}. SOUL overrides are at {text(agent.soul_override_path)} ({agent.soul_source}). Restart `lumen agents start` after changing App ID/Secret.</p>
-            <p className="schedule-note">Security: filesystem {text(agent.security?.filesystem, "workspace_read")} · mutations {text(agent.security?.mutations, "brokered")} · network {text(agent.security?.network, "deny")} · sandbox {text(agent.security?.sandbox, "enabled")} · secrets {text(agent.security?.secrets, "isolated")}</p>
+            <p className="schedule-note">Security: runner {text(agent.security?.runner, "local_isolated")} · host {text(agent.security?.host_visibility, "denied")} · filesystem {text(agent.security?.filesystem, "workspace_read")} · mutations {text(agent.security?.mutations, "brokered")} · sandbox {text(agent.security?.sandbox, "enabled")} · secrets {text(agent.security?.secrets, "isolated")}</p>
           </div>
           <div className="settings-control wide">
             <div className="form-grid compact">
