@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ROOT / "lib"
@@ -112,10 +113,11 @@ Resolved FIND-1.
     def test_security_doctor_v2_static(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["LUMEN_HOME"] = tmp
-            result = run_security_check(
-                agent_id="dylan",
-                config={"access": {"mutation_allowed_user_ids": ["ou_owner"]}},
-            )
+            with mock.patch("agents.security.preflight._cursor_available", return_value=True):
+                result = run_security_check(
+                    agent_id="dylan",
+                    config={"access": {"mutation_allowed_user_ids": ["ou_owner"]}},
+                )
             self.assertEqual(result["status"], "pass")
             self.assertEqual(result["runner"], "local_isolated")
             self.assertEqual(result["host_visibility"], "denied")

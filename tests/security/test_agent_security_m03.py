@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 LIB = ROOT / "lib"
@@ -118,7 +119,8 @@ class AgentSecurityTests(unittest.TestCase):
     def test_security_check_passes_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["LUMEN_AGENTS_HOME"] = tmp
-            result = run_security_check(agent_id="dylan", project="mbpass", config={"access": {}})
+            with mock.patch("agents.security.preflight._cursor_available", return_value=True):
+                result = run_security_check(agent_id="dylan", project="mbpass", config={"access": {}})
             self.assertEqual(result["status"], "pass")
             self.assertTrue(result["sandbox"])
             self.assertEqual(result["workspace_escape"], "blocked")
