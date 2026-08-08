@@ -471,10 +471,23 @@ def classify_authorization_intent(text: str) -> str:
         "cancel delivery",
         "生成测试",
         "test case",
+        "testcase",
         "update schedule",
         "修复",
         "开始交付",
         "取消交付",
+        "retry",
+        "re-run",
+        "rerun",
+        "re run",
+        "requeue",
+        "re-queue",
+        "re queue",
+        "generate again",
+        "重新生成",
+        "再生成",
+        "重跑",
+        "再跑",
     )
     if any(tok in lower for tok in confirm):
         return "confirm_previous"

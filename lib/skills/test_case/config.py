@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any, Optional
 
-from feishu.config import load_agents_config
+from feishu.config import load_agents_config, read_lumen_env_var
 
 
 REQUIRED_FIELDS = (
@@ -38,7 +38,7 @@ def load_test_case_config(
     app_token = str(test_case.get("base_app_token") or "").strip()
     token_env = str(test_case.get("base_app_token_env") or "").strip()
     if not app_token and token_env:
-        app_token = os.environ.get(token_env, "").strip()
+        app_token = os.environ.get(token_env, "").strip() or read_lumen_env_var(token_env).strip()
     table_name = str(test_case.get("table_name") or "Test Cases").strip() or "Test Cases"
     return {
         "project": slug,

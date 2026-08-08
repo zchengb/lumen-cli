@@ -55,7 +55,47 @@ def test_job_list_receipt_becomes_status_reply() -> None:
     assert "Action results:" not in format_action_receipts_summary(receipts)
 
 
+def test_denied_mutation_surfaces_instead_of_planning_lie() -> None:
+    from agents.security.access_policy import classify_authorization_intent
+
+    assert classify_authorization_intent("please re-run it") == "mutate_explicit"
+    assert classify_authorization_intent("how's MBPAS-1491 going?") == "read"
+    receipts = [
+        {
+            "action": "agent.job.list",
+            "status": "succeeded",
+            "result": {
+                "jobs": [
+                    {
+                        "job_id": "job_mark_94ccf628fb20",
+                        "status": "completed",
+                        "target_agent": "mark",
+                        "capability": "test_case.generate",
+                        "input": {"issue_key": "MBPAS-1491"},
+                    }
+                ]
+            },
+        },
+        {
+            "action": "agent.job.create",
+            "status": "denied",
+            "error": "mutation denied for zone=RESTRICTED intent=read",
+            "error_code": "AUTHORIZATION_DENIED",
+            "result": {},
+        },
+    ]
+    text = prefer_action_summary(
+        "I've re-queued a fresh test_case.generate for Mark.",
+        receipts,
+    )
+    assert "job_mark_94ccf628fb20" in text
+    assert "Action blocked" in text
+    assert "agent.job.create" in text
+    assert "I've re-queued" not in text or "Action blocked" in text
+
+
 if __name__ == "__main__":
     test_planning_reply_detects_status_placeholder()
     test_job_list_receipt_becomes_status_reply()
+    test_denied_mutation_surfaces_instead_of_planning_lie()
     print("ok")

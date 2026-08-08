@@ -29,6 +29,9 @@ def cmd_security_check(args: argparse.Namespace) -> int:
 
 
 def cmd_action(args: argparse.Namespace) -> int:
+    from feishu.config import ensure_lumen_env_loaded
+
+    ensure_lumen_env_loaded()
     from agents.security.actions import ActionRequest
     from agents.security.broker import CapabilityBroker
 

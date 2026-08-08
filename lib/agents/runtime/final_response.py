@@ -301,12 +301,25 @@ def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
 
 def prefer_action_summary(reply_text: str, receipts: list[dict[str, Any]]) -> str:
     summary = format_action_receipts_summary(receipts)
-    if not summary:
-        return reply_text
+    denials = [r for r in receipts if str(r.get("status") or "") == "denied"]
+    denial_lines: list[str] = []
+    for receipt in denials:
+        action = str(receipt.get("action") or "action").strip()
+        err = str(receipt.get("error") or receipt.get("error_code") or "denied").strip()
+        denial_lines.append(f"- **{action}** was not executed: {err}")
+    denial_text = ""
+    if denial_lines:
+        denial_text = "**Action blocked**\n" + "\n".join(denial_lines)
     has_status_read = any(
         str(r.get("action") or "").strip() in _STATUS_READ_ACTIONS and r.get("status") == "succeeded"
         for r in receipts
     )
+    if denial_text and summary and has_status_read:
+        return f"{summary}\n\n{denial_text}"
+    if denial_text and (not reply_text or is_planning_reply(reply_text)):
+        return denial_text
+    if denial_text and reply_text and denial_text not in reply_text:
+        return f"{reply_text}\n\n{denial_text}"
     if has_status_read and (not reply_text or is_planning_reply(reply_text)):
         return summary
     if not reply_text:
