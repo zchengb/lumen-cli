@@ -74,6 +74,24 @@ class FakeBitable:
         return record
 
 
+class FakeSheets:
+    def __init__(self) -> None:
+        self.rows: list[list[Any]] = []
+        self.appended: list[list[Any]] = []
+
+    def resolve_sheet(self, spreadsheet_token: str, sheet_name: str = "Sheet1") -> dict[str, Any]:
+        return {"sheetId": "sht1", "title": sheet_name}
+
+    def get_values(self, spreadsheet_token: str, range_a1: str) -> list[list[Any]]:
+        return list(self.rows)
+
+    def append_values(self, spreadsheet_token: str, *, sheet_id: str, values: list[list[Any]], start_col: str = "A", end_col: str = "J") -> dict[str, Any]:
+        for row in values:
+            self.rows.append(list(row))
+            self.appended.append(list(row))
+        return {"updatedRows": len(values)}
+
+
 class TestCaseSkillTests(unittest.TestCase):
     def test_generator_covers_ac_types(self) -> None:
         story = StoryContext(
@@ -129,6 +147,41 @@ class TestCaseSkillTests(unittest.TestCase):
         self.assertGreaterEqual(result["skipped_existing"], 1)
         self.assertIn("MBPAS-1601", result["view_name"])
         self.assertTrue(result["summary"])
+
+    def test_skill_writes_spreadsheet_rows(self) -> None:
+        fake = FakeSheets()
+
+        def reader(key: str) -> StoryContext:
+            return StoryContext(
+                key=key,
+                type="Story",
+                summary="Login flow",
+                description="",
+                acceptance_criteria=["User can log in"],
+            )
+
+        result = generate_test_cases_for_issue(
+            project="mbpass",
+            issue_key="MBPAS-1601",
+            config={
+                "projects": {
+                    "mbpass": {
+                        "test_case": {
+                            "destination": "sheet",
+                            "spreadsheet_token": "OG4Js7cIlh7d0QtHOEnc1kDfnvf",
+                            "sheet_name": "Sheet1",
+                            "language": "zh-Hant",
+                        }
+                    }
+                }
+            },
+            sheets_client=fake,
+            story_reader=reader,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertGreaterEqual(result["created"], 3)
+        self.assertTrue(any(row and row[0] == "Story Key" for row in fake.rows))
+        self.assertIn("/sheets/OG4Js7cIlh7d0QtHOEnc1kDfnvf", result["sheet_url"])
 
     def test_broker_mark_action_allowed(self) -> None:
         ensure_definitions_loaded()

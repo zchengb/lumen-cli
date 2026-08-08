@@ -1770,8 +1770,8 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   });
   const [testCaseDraft, setTestCaseDraft] = useState<TestCaseSettings>({
     language: agentsPayload.test_case?.language || "zh-Hant",
-    table_name: agentsPayload.test_case?.table_name || "Test Cases",
-    base_app_token_env: agentsPayload.test_case?.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+    table_name: agentsPayload.test_case?.table_name || "Sheet1",
+    base_app_token_env: agentsPayload.test_case?.base_app_token_env || "FEISHU_MBPASS_QA_SHEET_TOKEN",
     base_app_token_configured: Boolean(agentsPayload.test_case?.base_app_token_configured),
     base_app_token_masked: agentsPayload.test_case?.base_app_token_masked || "",
   });
@@ -1834,8 +1834,8 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     });
     setTestCaseDraft({
       language: payload.test_case?.language || "zh-Hant",
-      table_name: payload.test_case?.table_name || "Test Cases",
-      base_app_token_env: payload.test_case?.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+      table_name: payload.test_case?.table_name || "Sheet1",
+      base_app_token_env: payload.test_case?.base_app_token_env || "FEISHU_MBPASS_QA_SHEET_TOKEN",
       base_app_token_configured: Boolean(payload.test_case?.base_app_token_configured),
       base_app_token_masked: payload.test_case?.base_app_token_masked || "",
     });
@@ -1891,18 +1891,18 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const publishPolicyChanged = scanPublishMode !== String(workspace.publish?.scan || "pr") || deliveryPublishMode !== String(workspace.publish?.delivery || "pr") || patchPublishMode !== String(workspace.publish?.patch || "pr");
   const agentsChanged = agentsEnabled !== agentsBaseline.enabled || JSON.stringify(agentDrafts) !== agentsBaseline.agents || JSON.stringify(accessDraft) !== agentsBaseline.access || JSON.stringify({
     language: testCaseDraft.language || "zh-Hant",
-    table_name: testCaseDraft.table_name || "Test Cases",
-    base_app_token_env: testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+    table_name: testCaseDraft.table_name || "Sheet1",
+    base_app_token_env: testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_SHEET_TOKEN",
   }) !== (() => {
     try {
       const baseline = JSON.parse(agentsBaseline.testCase || "{}") as TestCaseSettings;
       return JSON.stringify({
         language: baseline.language || "zh-Hant",
-        table_name: baseline.table_name || "Test Cases",
-        base_app_token_env: baseline.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+        table_name: baseline.table_name || "Sheet1",
+        base_app_token_env: baseline.base_app_token_env || "FEISHU_MBPASS_QA_SHEET_TOKEN",
       });
     } catch {
-      return JSON.stringify({ language: "zh-Hant", table_name: "Test Cases", base_app_token_env: "FEISHU_MBPASS_QA_APP_TOKEN" });
+      return JSON.stringify({ language: "zh-Hant", table_name: "Sheet1", base_app_token_env: "FEISHU_MBPASS_QA_SHEET_TOKEN" });
     }
   })() || Boolean(testCaseToken.trim());
   const accessMappings = (
@@ -1938,9 +1938,10 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
               enabled: agentsEnabled,
               access: accessDraft,
               test_case: {
+                destination: "sheet",
                 language: testCaseDraft.language || "zh-Hant",
-                table_name: testCaseDraft.table_name || "Test Cases",
-                base_app_token_env: testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+                table_name: testCaseDraft.table_name || "Sheet1",
+                base_app_token_env: testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_SHEET_TOKEN",
                 ...(testCaseToken.trim() ? { base_app_token: testCaseToken.trim() } : {}),
               },
               agents: agentDrafts.map((agent) => {
@@ -2111,7 +2112,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
       <div className="settings-section">
         <div className="settings-copy">
           <div className="settings-heading"><div className="settings-title-stack"><h4>Generation language</h4></div></div>
-          <p>Controls the language Mark writes into the Feishu Bitable Test Cases sheet for this project. Traditional Chinese is the default for mbpass.</p>
+          <p>Controls the language Mark writes into the Feishu Spreadsheet for this project. Traditional Chinese is the default for mbpass.</p>
         </div>
         <div className="settings-control wide">
           <div className="form-grid compact">
@@ -2128,9 +2129,9 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
                 <option value="en">English</option>
               </select>
             </Field>
-            <Field label="Bitable table name">
+            <Field label="Spreadsheet tab name">
               <input
-                value={testCaseDraft.table_name || "Test Cases"}
+                value={testCaseDraft.table_name || "Sheet1"}
                 onChange={(event) => {
                   setTestCaseDraft((current) => ({ ...current, table_name: event.target.value }));
                   markDirty();
@@ -2138,14 +2139,14 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
               />
             </Field>
             <Field
-              label="Bitable base token"
+              label="Spreadsheet token / URL"
               help={testCaseDraft.base_app_token_configured
-                ? `Configured (${testCaseDraft.base_app_token_masked || "set"}). Leave blank to keep. Env: ${testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN"}`
-                : `Stored in ~/.lumen/.env.local as ${testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN"}`}
+                ? `Configured (${testCaseDraft.base_app_token_masked || "set"}). Leave blank to keep. Env: ${testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_SHEET_TOKEN"}`
+                : `Stored in ~/.lumen/.env.local as ${testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_SHEET_TOKEN"}`}
             >
               <input
                 value={testCaseToken}
-                placeholder={testCaseDraft.base_app_token_configured ? "Leave blank to keep current token" : "bas… / G6dI…"}
+                placeholder={testCaseDraft.base_app_token_configured ? "Leave blank to keep current token" : "https://…/sheets/TOKEN or TOKEN"}
                 onChange={(event) => {
                   setTestCaseToken(event.target.value);
                   markDirty();
@@ -2154,7 +2155,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
               />
             </Field>
           </div>
-          <p className="schedule-note">After changing language, ask Milchick/Mark to re-generate the story so new rows use the selected language.</p>
+          <p className="schedule-note">After changing language or sheet, ask Milchick/Mark to re-generate the story so new rows use the selected sheet.</p>
         </div>
       </div>
     </Panel>

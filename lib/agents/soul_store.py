@@ -197,21 +197,37 @@ def test_case_settings_view(project_slug: str = "", config: dict[str, Any] | Non
     slug = str(project_slug or "").strip().lower()
     loaded = load_test_case_config(slug, config=data) if slug else {
         "language": "zh-Hant",
-        "table_name": "Test Cases",
+        "table_name": "Sheet1",
+        "destination": "sheet",
         "base_app_token": "",
+        "spreadsheet_token": "",
         "view_strategy": "story",
     }
-    token = str(loaded.get("base_app_token") or "").strip()
+    destination = str(loaded.get("destination") or "bitable")
+    token = str(
+        (loaded.get("spreadsheet_token") if destination == "sheet" else loaded.get("base_app_token")) or ""
+    ).strip()
     raw = loaded.get("raw") if isinstance(loaded.get("raw"), dict) else {}
-    token_env = str(raw.get("base_app_token_env") or "").strip()
+    if destination == "sheet":
+        token_env = str(raw.get("spreadsheet_token_env") or raw.get("base_app_token_env") or "").strip()
+        default_env = "FEISHU_MBPASS_QA_SHEET_TOKEN"
+        table_name = str(loaded.get("sheet_name") or loaded.get("table_name") or "Sheet1")
+    else:
+        token_env = str(raw.get("base_app_token_env") or "").strip()
+        default_env = "FEISHU_MBPASS_QA_APP_TOKEN"
+        table_name = str(loaded.get("table_name") or "Test Cases")
     return {
         "project": slug,
+        "destination": destination,
         "language": normalize_test_case_language(str(loaded.get("language") or "zh-Hant")),
-        "table_name": str(loaded.get("table_name") or "Test Cases"),
+        "table_name": table_name,
         "view_strategy": str(loaded.get("view_strategy") or "story"),
-        "base_app_token_env": token_env or "FEISHU_MBPASS_QA_APP_TOKEN",
+        "base_app_token_env": token_env or default_env,
         "base_app_token_configured": bool(token),
         "base_app_token_masked": mask_credential(token) if token else "",
+        "spreadsheet_url": (
+            f"https://inspiregroup.feishu.cn/sheets/{token}" if destination == "sheet" and token else ""
+        ),
     }
 
 
@@ -315,17 +331,36 @@ def apply_agent_settings(payload: dict[str, Any]) -> dict[str, Any]:
         test_case = _ensure_dict(project_cfg, "test_case")
         if "language" in tc_in:
             test_case["language"] = normalize_test_case_language(str(tc_in.get("language") or "zh-Hant"))
+        if "destination" in tc_in and str(tc_in.get("destination") or "").strip():
+            dest = str(tc_in.get("destination") or "").strip().lower()
+            test_case["destination"] = "sheet" if dest in {"sheet", "sheets", "spreadsheet"} else "bitable"
         if "table_name" in tc_in and str(tc_in.get("table_name") or "").strip():
-            test_case["table_name"] = str(tc_in.get("table_name")).strip()
+            name = str(tc_in.get("table_name")).strip()
+            test_case["table_name"] = name
+            if str(test_case.get("destination") or "") == "sheet":
+                test_case["sheet_name"] = name
         if "view_strategy" in tc_in and str(tc_in.get("view_strategy") or "").strip():
             test_case["view_strategy"] = str(tc_in.get("view_strategy")).strip()
-        if "base_app_token_env" in tc_in and str(tc_in.get("base_app_token_env") or "").strip():
-            test_case["base_app_token_env"] = str(tc_in.get("base_app_token_env")).strip()
-        token = str(tc_in.get("base_app_token") or "").strip()
-        if token:
-            env_name = str(test_case.get("base_app_token_env") or "FEISHU_MBPASS_QA_APP_TOKEN").strip()
-            upsert_lumen_env_var(env_name, token)
-            test_case["base_app_token_env"] = env_name
+        destination = str(test_case.get("destination") or "bitable")
+        if destination == "sheet":
+            if "base_app_token_env" in tc_in and str(tc_in.get("base_app_token_env") or "").strip():
+                test_case["spreadsheet_token_env"] = str(tc_in.get("base_app_token_env")).strip()
+            token = str(tc_in.get("base_app_token") or tc_in.get("spreadsheet_token") or tc_in.get("spreadsheet_url") or "").strip()
+            if token:
+                from feishu.sheets import parse_spreadsheet_token
+
+                env_name = str(test_case.get("spreadsheet_token_env") or "FEISHU_MBPASS_QA_SHEET_TOKEN").strip()
+                upsert_lumen_env_var(env_name, parse_spreadsheet_token(token))
+                test_case["spreadsheet_token_env"] = env_name
+                test_case.pop("base_app_token", None)
+        else:
+            if "base_app_token_env" in tc_in and str(tc_in.get("base_app_token_env") or "").strip():
+                test_case["base_app_token_env"] = str(tc_in.get("base_app_token_env")).strip()
+            token = str(tc_in.get("base_app_token") or "").strip()
+            if token:
+                env_name = str(test_case.get("base_app_token_env") or "FEISHU_MBPASS_QA_APP_TOKEN").strip()
+                upsert_lumen_env_var(env_name, token)
+                test_case["base_app_token_env"] = env_name
     profiles = _ensure_dict(config, "profiles")
     agents = payload.get("agents")
     if not isinstance(agents, list):
