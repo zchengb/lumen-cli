@@ -219,21 +219,14 @@ def agents_settings_payload() -> dict[str, Any]:
                 user_ids=all_users,
                 chat_ids=all_chats,
                 store=store,
-                agent_id="dylan",
             )
+            recent_user_set = set(recent_ids.get("user_ids", []))
+            recent_chat_set = set(recent_ids.get("chat_ids", []))
             recent = {
                 "user_ids": recent_ids.get("user_ids", []),
                 "chat_ids": recent_ids.get("chat_ids", []),
-                "users": [
-                    item
-                    for item in enriched.get("users", [])
-                    if item.get("id") in set(recent_ids.get("user_ids", []))
-                ],
-                "chats": [
-                    item
-                    for item in enriched.get("chats", [])
-                    if item.get("id") in set(recent_ids.get("chat_ids", []))
-                ],
+                "users": [item for item in enriched.get("users", []) if item.get("id") in recent_user_set],
+                "chats": [item for item in enriched.get("chats", []) if item.get("id") in recent_chat_set],
                 "names": enriched.get("names") or {},
             }
         finally:

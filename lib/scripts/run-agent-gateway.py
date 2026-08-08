@@ -13,7 +13,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from feishu.channel import FeishuChannel
-from feishu.client_registry import configured_agents
+from feishu.client_registry import configured_agents, GATEWAY_AGENTS
 from feishu.config import agents_enabled, agents_home, load_agents_config
 
 
@@ -56,7 +56,7 @@ def write_status(payload: dict) -> None:
 def cmd_status() -> int:
     path = pid_path()
     config = load_agents_config()
-    clients = configured_agents(["dylan", "mark", "milchick"])
+    clients = configured_agents(list(GATEWAY_AGENTS))
     running = False
     pid = None
     if path.is_file():
@@ -116,10 +116,10 @@ def cmd_start() -> int:
             file=sys.stderr,
         )
         return 1
-    clients = configured_agents(["dylan", "mark", "milchick"])
+    clients = configured_agents(list(GATEWAY_AGENTS))
     if not clients:
         print(
-            "No agent credentials found. Set FEISHU_*_APP_ID/SECRET for dylan, mark, and/or milchick.",
+            "No agent credentials found. Set FEISHU_*_APP_ID/SECRET for dylan, mark, irving, and/or milchick.",
             file=sys.stderr,
         )
         return 1
@@ -199,8 +199,8 @@ def cmd_logs(argv: list[str] | None = None) -> int:
     parser.add_argument("--limit", type=int, default=200)
     args = parser.parse_args(argv or [])
     agent = str(args.agent or "dylan").strip().lower()
-    if agent not in {"dylan", "mark", "milchick"}:
-        print(f"Supported agents: dylan, mark, milchick (got {args.agent})", file=sys.stderr)
+    if agent not in set(GATEWAY_AGENTS):
+        print(f"Supported agents: {', '.join(GATEWAY_AGENTS)} (got {args.agent})", file=sys.stderr)
         return 1
     from agents.dylan.diagnostics import follow_jsonl_logs, read_jsonl_logs
 

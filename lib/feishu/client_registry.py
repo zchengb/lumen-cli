@@ -23,6 +23,8 @@ APP_SECRET_ENV = {
     "milchick": "FEISHU_MILCHICK_APP_SECRET",
 }
 
+GATEWAY_AGENTS = ("dylan", "mark", "irving", "milchick")
+
 
 def load_client_config(agent_id: str) -> Optional[FeishuClientConfig]:
     key = str(agent_id or "").strip().lower()
@@ -42,7 +44,7 @@ def load_client_config(agent_id: str) -> Optional[FeishuClientConfig]:
 
 
 def configured_agents(only: Optional[list[str]] = None) -> list[FeishuClientConfig]:
-    wanted = only or ["dylan"]
+    wanted = list(only) if only is not None else list(GATEWAY_AGENTS)
     clients: list[FeishuClientConfig] = []
     for agent_id in wanted:
         config = load_client_config(agent_id)

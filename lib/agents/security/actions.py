@@ -107,6 +107,11 @@ MILCHICK_ACTIONS = (
     "host.runtime.summary",
 )
 
+IRVING_ACTIONS = (
+    "risk.read",
+    "risk.mark_remediated",
+)
+
 MUTATION_ACTIONS = frozenset(
     {
         "risk.resolve",

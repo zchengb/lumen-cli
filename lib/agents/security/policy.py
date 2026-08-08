@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from agents.security.actions import DYLAN_ACTIONS, MARK_ACTIONS, MILCHICK_ACTIONS
+from agents.security.actions import DYLAN_ACTIONS, IRVING_ACTIONS, MARK_ACTIONS, MILCHICK_ACTIONS
 from feishu.config import load_agents_config
 
 
@@ -10,6 +10,7 @@ ROLE_ACTIONS: dict[str, tuple[str, ...]] = {
     "dylan": DYLAN_ACTIONS,
     "mark": MARK_ACTIONS,
     "milchick": MILCHICK_ACTIONS,
+    "irving": IRVING_ACTIONS,
 }
 
 

@@ -593,12 +593,13 @@ class GlobalAgentStore:
                 if not value:
                     continue
                 if kind == "user_id":
-                    if not value.startswith("ou_") or value in seen_users:
+                    if not value.startswith("ou_") or len(value) < 20 or value in seen_users:
                         continue
                     seen_users.add(value)
                     users.append(value)
                 elif kind == "chat_id":
-                    if not value.startswith("oc_") or value in seen_chats:
+                    # Real Feishu open_chat_id is oc_ + long hex. Skip project aliases like oc_mbpass.
+                    if not value.startswith("oc_") or len(value) < 20 or value in seen_chats:
                         continue
                     seen_chats.add(value)
                     chats.append(value)

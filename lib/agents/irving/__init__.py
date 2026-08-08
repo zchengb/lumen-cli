@@ -1,3 +1,5 @@
 from __future__ import annotations
 
-"""Irving remediation agent package (SOUL + future runtime)."""
+from agents.irving.definition import IRVING_DEFINITION
+
+__all__ = ["IRVING_DEFINITION"]

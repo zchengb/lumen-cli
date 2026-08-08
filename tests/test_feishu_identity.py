@@ -14,11 +14,21 @@ if str(LIB) not in sys.path:
     sys.path.insert(0, str(LIB))
 
 from feishu.handlers import extract_message_meta, remember_message_identities
-from feishu.identity import enrich_feishu_identities
+from feishu.identity import enrich_feishu_identities, is_feishu_open_chat_id, is_feishu_open_user_id
 from risk.store import GlobalAgentStore
+
+ALICE = "ou_4f1d9b4d016ca1a31a17f4efa6473ffd"
+BOB = "ou_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+CHAT = "oc_5434c33a98e60c3872c966f22b75fd84"
 
 
 class FeishuIdentityTests(unittest.TestCase):
+    def test_open_id_shape(self) -> None:
+        self.assertTrue(is_feishu_open_user_id(ALICE))
+        self.assertFalse(is_feishu_open_user_id("ou_alice"))
+        self.assertTrue(is_feishu_open_chat_id(CHAT))
+        self.assertFalse(is_feishu_open_chat_id("oc_mbpass"))
+
     def test_remember_mentions_and_enrich(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             os.environ["LUMEN_AGENTS_HOME"] = tmp
@@ -27,34 +37,33 @@ class FeishuIdentityTests(unittest.TestCase):
                 event = {
                     "header": {"app_id": "cli_x"},
                     "event": {
-                        "sender": {"sender_id": {"open_id": "ou_alice"}},
+                        "sender": {"sender_id": {"open_id": ALICE}},
                         "message": {
                             "message_id": "om_1",
-                            "chat_id": "oc_team",
+                            "chat_id": CHAT,
                             "chat_type": "group",
                             "mentions": [
-                                {"id": {"open_id": "ou_alice"}, "name": "Alice"},
-                                {"id": {"open_id": "ou_bob"}, "name": "Bob"},
+                                {"id": {"open_id": ALICE}, "name": "Alice"},
+                                {"id": {"open_id": BOB}, "name": "Bob"},
                             ],
                         },
                     },
                 }
                 meta = extract_message_meta(event)
-                self.assertEqual(meta["user_id"], "ou_alice")
+                self.assertEqual(meta["user_id"], ALICE)
                 self.assertEqual(meta["user_name"], "Alice")
                 remember_message_identities(event, meta)
-                self.assertEqual(store.get_feishu_display_name("ou_alice"), "Alice")
-                self.assertEqual(store.get_feishu_display_name("ou_bob"), "Bob")
-                with mock.patch("feishu.identity.FeishuMessenger") as messenger_cls:
-                    messenger_cls.side_effect = RuntimeError("no network")
+                self.assertEqual(store.get_feishu_display_name(ALICE), "Alice")
+                self.assertEqual(store.get_feishu_display_name(BOB), "Bob")
+                with mock.patch("feishu.identity._messenger_for", return_value=None):
                     enriched = enrich_feishu_identities(
-                        user_ids=["ou_alice", "ou_missing"],
-                        chat_ids=["oc_team"],
+                        user_ids=[ALICE, "ou_missingmissingmissingmissing"],
+                        chat_ids=[CHAT, "oc_mbpass"],
                         store=store,
                     )
-                self.assertEqual(enriched["names"]["ou_alice"], "Alice")
+                self.assertEqual(enriched["names"][ALICE], "Alice")
                 self.assertEqual(enriched["users"][0]["name"], "Alice")
-                self.assertEqual(enriched["users"][1]["name"], "")
+                self.assertEqual(len(enriched["users"]), 1)
             finally:
                 store.close()
 

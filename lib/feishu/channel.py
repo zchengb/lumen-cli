@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from feishu.client_registry import FeishuClientConfig, configured_agents, load_client_config
+from feishu.client_registry import FeishuClientConfig, GATEWAY_AGENTS, configured_agents, load_client_config
 from feishu.config import agents_home
 from feishu.dedup import MessageDeduper
 from feishu.handlers import handle_message_event
@@ -83,7 +83,7 @@ class FeishuChannel:
         on_event: Optional[Callable[[dict[str, Any], FeishuClientConfig], None]] = None,
     ) -> None:
         _setup_logging()
-        self.clients = clients if clients is not None else configured_agents(["dylan", "mark", "milchick"])
+        self.clients = clients if clients is not None else configured_agents(list(GATEWAY_AGENTS))
         self.on_event = on_event or handle_message_event
         self.deduper = MessageDeduper(agents_home() / "dedup.sqlite3")
 
@@ -108,7 +108,7 @@ class FeishuChannel:
         if not self.clients:
             raise RuntimeError(
                 "No Feishu agent credentials configured. Set FEISHU_*_APP_ID/SECRET "
-                "for dylan, mark, and/or milchick."
+                "for dylan, mark, irving, and/or milchick."
             )
         try:
             import lark_oapi as lark

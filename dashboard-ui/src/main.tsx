@@ -89,6 +89,7 @@ interface AgentsAccessSettings {
 interface FeishuIdentityItem {
   id?: string;
   name?: string;
+  kind?: string;
 }
 
 interface AgentsSettingsPayload {
@@ -1736,10 +1737,31 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
-  const feishuLabel = (id: string) => {
-    const name = String(recentFeishu.names?.[id] || "").trim();
-    return name ? `${name} · ${id}` : id;
+  const feishuName = (id: string) => {
+    const fromMap = String(recentFeishu.names?.[id] || "").trim();
+    if (fromMap) return fromMap;
+    const user = (recentFeishu.users || []).find((item) => item.id === id);
+    if (user?.name) return String(user.name).trim();
+    const chat = (recentFeishu.chats || []).find((item) => item.id === id);
+    return String(chat?.name || "").trim();
   };
+  const shortFeishuId = (id: string) => {
+    const value = String(id || "").trim();
+    if (value.length <= 14) return value;
+    return `${value.slice(0, 10)}…${value.slice(-4)}`;
+  };
+  const feishuLabel = (id: string) => {
+    const name = feishuName(id);
+    return name ? `${name} · ${shortFeishuId(id)}` : shortFeishuId(id);
+  };
+  const recentPeople = (recentFeishu.users?.length
+    ? recentFeishu.users
+    : recentFeishu.user_ids.map((id) => ({ id, name: feishuName(id) }))
+  ).filter((item) => item.id);
+  const recentChats = (recentFeishu.chats?.length
+    ? recentFeishu.chats
+    : recentFeishu.chat_ids.map((id) => ({ id, name: feishuName(id) }))
+  ).filter((item) => item.id);
   const syncAgents = (payload: AgentsSettingsPayload) => {
     const nextAgents = Array.isArray(payload.agents)
       ? payload.agents.map((agent) => ({ ...agent, app_secret: "" }))
@@ -1883,16 +1905,15 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     </Panel>
     <Panel title="Agent Roles" action={<span className="muted">Global Feishu agents</span>}>
       <div className="settings-section"><div className="settings-copy"><div className="settings-heading"><div className="settings-title-stack"><h4>Agent Gateway</h4></div></div><p>Enable Feishu conversational agents. Config lives in {text(agentsPayload.config_path, "~/.lumen/agents/config.json")}. Restart `lumen agents start` after saving. Mutations fail closed until mutation users are configured.</p></div><div className="settings-toggle"><ScheduleToggle enabled={agentsEnabled} onChange={(enabled) => { setAgentsEnabled(enabled); markDirty(); }} /></div></div>
-      <div className="settings-section divider">
+      <div className="settings-section divider access-control-section">
         <div className="settings-copy">
           <div className="settings-heading"><div className="settings-title-stack"><h4>Access Control</h4></div></div>
-          <p>Configure who may talk to agents and who may mutate (resolve findings, update scan schedule, start delivery). Save writes to {text(agentsPayload.config_path, "~/.lumen/agents/config.json")}.</p>
-          <p className="schedule-note">Feishu user IDs look like <code>ou_…</code> (open_id). Chat IDs look like <code>oc_…</code>. Easiest: message Dylan/Mark once, then click a recent person below. Names resolve from Feishu contact when the app has permission; otherwise the raw ID still shows.</p>
+          <p>Who may talk to agents, and who may mutate (resolve findings, update schedules, start delivery).</p>
           {Boolean(accessDraft.legacy_warning ?? agentsPayload.access?.legacy_warning) && (
             <p className="schedule-note">Legacy allow mode is unsafe for local agents. Prefer per-agent Access &amp; Exposure with default_policy=deny.</p>
           )}
         </div>
-        <div className="settings-control wide">
+        <div className="settings-control wide access-control-panel">
           <div className="form-grid compact">
             <Field label="Allowed chat IDs" help="Empty = all chats may message agents."><input value={(accessDraft.allowed_chat_ids || []).join(", ")} placeholder="oc_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, allowed_chat_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
             <Field label="Allowed user IDs" help="Empty = all users may ask read-only questions."><input value={(accessDraft.allowed_user_ids || []).join(", ")} placeholder="ou_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, allowed_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
@@ -1900,44 +1921,86 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
             <Field label="Admin user IDs" help="Admins can also mutate."><input value={(accessDraft.admin_user_ids || []).join(", ")} placeholder="ou_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, admin_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
           </div>
           {accessMappings.length > 0 && (
-            <div className="schedule-note" style={{ marginTop: 12 }}>
-              <div>Person / chat mapping:</div>
-              <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
-                {accessMappings.map(([label, ids]) => (
-                  <div key={label}>
-                    <strong>{label}:</strong>{" "}
-                    {ids.map((id) => feishuLabel(id)).join(", ")}
+            <div className="access-mapping-list">
+              {accessMappings.map(([label, ids]) => (
+                <div className="access-mapping-row" key={label}>
+                  <span>{label}</span>
+                  <div className="access-mapping-values">
+                    {ids.map((id) => (
+                      <em key={`${label}-${id}`}>
+                        <strong>{feishuName(id) || "Unknown"}</strong>
+                        <code title={id}>{shortFeishuId(id)}</code>
+                      </em>
+                    ))}
                   </div>
-                ))}
-              </div>
+                </div>
+              ))}
             </div>
           )}
-          {(recentFeishu.user_ids.length > 0 || recentFeishu.chat_ids.length > 0) && (
-            <div className="schedule-note" style={{ marginTop: 12 }}>
-              <div>Recent Feishu people / chats from agent traffic — click to add:</div>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
-                {recentFeishu.user_ids.map((id) => (
-                  <button type="button" className="button ghost" key={`user-${id}`} onClick={() => addAccessId("mutation_allowed_user_ids", id)} title={`Add ${feishuLabel(id)} to Mutation user IDs`}>
-                    {feishuLabel(id)}
-                  </button>
-                ))}
-                {recentFeishu.chat_ids.map((id) => (
-                  <button type="button" className="button ghost" key={`chat-${id}`} onClick={() => addAccessId("allowed_chat_ids", id)} title={`Add ${feishuLabel(id)} to Allowed chat IDs`}>
-                    {feishuLabel(id)}
-                  </button>
-                ))}
-              </div>
-              {recentFeishu.user_ids[0] && (
-                <div style={{ marginTop: 8 }}>
-                  <button type="button" className="button ghost" onClick={() => { addAccessId("mutation_allowed_user_ids", recentFeishu.user_ids[0]); addAccessId("admin_user_ids", recentFeishu.user_ids[0]); addAccessId("allowed_user_ids", recentFeishu.user_ids[0]); }}>
-                    Use latest user as owner ({feishuLabel(recentFeishu.user_ids[0])})
-                  </button>
+          {(recentPeople.length > 0 || recentChats.length > 0) && (
+            <div className="access-identity-panel">
+              {recentPeople.length > 0 && (
+                <div className="access-identity-group">
+                  <div className="access-identity-heading">
+                    <span>Recent people</span>
+                    <small>Click to add as mutation user</small>
+                  </div>
+                  <div className="access-identity-chips">
+                    {recentPeople.map((person) => (
+                      <button
+                        type="button"
+                        className="access-chip"
+                        key={`user-${person.id}`}
+                        onClick={() => addAccessId("mutation_allowed_user_ids", String(person.id))}
+                        title={`Add ${feishuLabel(String(person.id))} to Mutation user IDs`}
+                      >
+                        <strong>{person.name || feishuName(String(person.id)) || "Unknown"}</strong>
+                        <code>{shortFeishuId(String(person.id))}</code>
+                      </button>
+                    ))}
+                  </div>
                 </div>
+              )}
+              {recentChats.length > 0 && (
+                <div className="access-identity-group">
+                  <div className="access-identity-heading">
+                    <span>Recent chats</span>
+                    <small>Click to allow the chat</small>
+                  </div>
+                  <div className="access-identity-chips">
+                    {recentChats.map((chat) => (
+                      <button
+                        type="button"
+                        className="access-chip chat"
+                        key={`chat-${chat.id}`}
+                        onClick={() => addAccessId("allowed_chat_ids", String(chat.id))}
+                        title={`Add ${feishuLabel(String(chat.id))} to Allowed chat IDs`}
+                      >
+                        <strong>{chat.name || feishuName(String(chat.id)) || "Chat"}</strong>
+                        <code>{shortFeishuId(String(chat.id))}</code>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {recentPeople[0]?.id && (
+                <button
+                  type="button"
+                  className="button ghost access-owner-button"
+                  onClick={() => {
+                    const id = String(recentPeople[0].id);
+                    addAccessId("mutation_allowed_user_ids", id);
+                    addAccessId("admin_user_ids", id);
+                    addAccessId("allowed_user_ids", id);
+                  }}
+                >
+                  Use {feishuName(String(recentPeople[0].id)) || "latest user"} as owner
+                </button>
               )}
             </div>
           )}
-          {recentFeishu.user_ids.length === 0 && (
-            <p className="schedule-note" style={{ marginTop: 12 }}>No recent Feishu user IDs yet. Send any message to Dylan or Mark, refresh Settings, then click the person here.</p>
+          {recentPeople.length === 0 && (
+            <p className="schedule-note access-empty-note">No recent Feishu people yet. Message Dylan or Mark once, then refresh Settings.</p>
           )}
         </div>
       </div>

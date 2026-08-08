@@ -49,10 +49,12 @@ def ensure_definitions_loaded() -> None:
     from agents.dylan.definition import DYLAN_DEFINITION
     from agents.mark.definition import MARK_DEFINITION
     from agents.milchick.definition import MILCHICK_DEFINITION
+    from agents.irving.definition import IRVING_DEFINITION
 
     register_definition(DYLAN_DEFINITION)
     register_definition(MARK_DEFINITION)
     register_definition(MILCHICK_DEFINITION)
+    register_definition(IRVING_DEFINITION)
 
 
 def list_definitions() -> list[AgentDefinition]:

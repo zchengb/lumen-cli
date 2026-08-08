@@ -1983,6 +1983,14 @@ def main() -> int:
     parser.add_argument("--version", default="")
     args = parser.parse_args()
 
+    os.environ.setdefault("LUMEN_HOME", str(Path(args.lumen_home).expanduser().resolve()))
+    try:
+        from feishu.config import ensure_lumen_env_loaded
+
+        ensure_lumen_env_loaded()
+    except Exception:
+        pass
+
     workspace = Path(args.workspace).expanduser().resolve()
     server = DashboardServer(("127.0.0.1", args.port), workspace, args.project, args.lumen_bin, args.lumen_home)
     url = f"http://127.0.0.1:{server.server_port}/"

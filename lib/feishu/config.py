@@ -105,3 +105,19 @@ def agents_enabled(config: Optional[dict[str, Any]] = None) -> bool:
     if env in {"0", "false", "no"}:
         return False
     return bool(data.get("enabled"))
+
+
+def ensure_lumen_env_loaded() -> None:
+    path = lumen_env_local_path()
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        raw = line.strip()
+        if not raw or raw.startswith("#") or "=" not in raw:
+            continue
+        key, value = raw.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip("'").strip('"')
+        if not key or key in os.environ:
+            continue
+        os.environ[key] = value
