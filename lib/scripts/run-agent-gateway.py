@@ -107,7 +107,10 @@ def cmd_stop() -> int:
     return 0
 
 
-def cmd_start() -> int:
+def cmd_start(*, foreground: bool = False) -> int:
+    import subprocess
+    import time
+
     config = load_agents_config()
     if not agents_enabled(config):
         print(
@@ -132,6 +135,39 @@ def cmd_start() -> int:
             return 1
         except Exception:
             path.unlink(missing_ok=True)
+
+    if not foreground:
+        log_path = agents_home() / "gateway.stdout.log"
+        agents_home().mkdir(parents=True, exist_ok=True)
+        log_fh = open(log_path, "a", encoding="utf-8")
+        proc = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "start", "--foreground"],
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            cwd=str(agents_home()),
+            env=os.environ.copy(),
+        )
+        log_fh.close()
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            if path.is_file():
+                try:
+                    child = int(path.read_text(encoding="utf-8").strip())
+                    os.kill(child, 0)
+                    print(f"Started agent gateway pid {child}")
+                    return 0
+                except Exception:
+                    pass
+            if proc.poll() is not None:
+                break
+            time.sleep(0.2)
+        print(
+            f"Agent gateway failed to start. See {log_path}",
+            file=sys.stderr,
+        )
+        return 1
 
     path.write_text(str(os.getpid()), encoding="utf-8")
     write_status({
@@ -223,7 +259,12 @@ def main(argv: list[str] | None = None) -> int:
     bootstrap_env()
     parser = argparse.ArgumentParser(description="Lumen Feishu Agent Gateway")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("start", help="Start Dylan Feishu gateway (foreground)")
+    start_parser = sub.add_parser("start", help="Start Feishu agent gateway (daemon)")
+    start_parser.add_argument(
+        "--foreground",
+        action="store_true",
+        help="Run in the current process (used by the daemon child)",
+    )
     sub.add_parser("status", help="Show gateway status")
     sub.add_parser("stop", help="Stop gateway via pid file")
     logs_parser = sub.add_parser("logs", help="Tail Dylan structured JSONL logs")
@@ -235,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     logs_parser.add_argument("--limit", type=int, default=200)
     args = parser.parse_args(argv)
     if args.command == "start":
-        return cmd_start()
+        return cmd_start(foreground=bool(getattr(args, "foreground", False)))
     if args.command == "status":
         return cmd_status()
     if args.command == "stop":
