@@ -14,7 +14,7 @@ from agents.project_resolver import known_project_slugs, load_chat_project_map, 
 from agents.runtime.reply_anchor import remember_outbound
 from feishu.cards import ack_card, progress_card, scan_summary_card
 from feishu.config import load_agents_config
-from feishu.messenger import FeishuMessenger, extract_message_id
+from feishu.messenger import FeishuMessenger, extract_message_id, should_reply_in_thread
 from workflows.scan_adapter import ScanAdapter
 
 
@@ -158,7 +158,7 @@ def _run_autonomous_worker(
                 return result
             reply_text = str(result.get("text") or "暂无数据。")
             obs.emit(trace, "reply.started")
-            reply_in_thread = bool(str(meta.get("thread_id") or "").strip())
+            reply_in_thread = should_reply_in_thread(meta)
             if message_id:
                 sent = None
                 for attempt in range(4):
@@ -200,7 +200,7 @@ def _run_autonomous_worker(
                 messenger.safe_reply_text(
                     message_id,
                     f"I couldn't finish this turn.\nTrace ID: {trace.trace_id}",
-                    reply_in_thread=bool(str(meta.get("thread_id") or "").strip()),
+                    reply_in_thread=should_reply_in_thread(meta),
                 )
             raise
         finally:
@@ -254,7 +254,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                     f"Your Feishu open_id for this bot is `{user_id or '-'}`. "
                     "Admins are shared across bots via Feishu union_id once identities are linked."
                 )
-            messenger.safe_reply_text(message_id, reply, reply_in_thread=bool(str(meta.get("thread_id") or "").strip()))
+            messenger.safe_reply_text(message_id, reply, reply_in_thread=should_reply_in_thread(meta))
         return {"status": "denied", "detail": detail, "trust_zone": decision.trust_zone}
     meta = dict(meta)
     meta["_trust_zone"] = str(decision.trust_zone or "")
@@ -265,6 +265,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
 
     messenger = FeishuMessenger(agent)
     message_id = str(meta.get("message_id") or "").strip()
+    in_thread = should_reply_in_thread(meta)
     known = known_project_slugs()
 
     mapped = resolve_project(chat_id=chat_id, mapping=load_chat_project_map())
@@ -296,7 +297,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                     else:
                         reply = "没有正在运行的 Scan。"
                     if message_id:
-                        messenger.safe_reply_text(message_id, reply)
+                        messenger.safe_reply_text(message_id, reply, reply_in_thread=in_thread)
                     return {"status": "ok", "action": action_name, "trace_id": result.get("trace_id")}
                 from agents.parser import ParsedAction
 
@@ -314,6 +315,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                     source_message_id=message_id,
                     language="zh-Hans",
                     config=flags.typing,
+                    reply_in_thread=in_thread,
                 )
                 thinking.schedule_start()
 
@@ -332,7 +334,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                     thinking._cancel_timers()
                     thinking.completed = True
                     if message_id and result.get("status") != "delegate":
-                        messenger.safe_reply_text(message_id, str(result.get("text") or "暂无数据。"))
+                        messenger.safe_reply_text(message_id, str(result.get("text") or "暂无数据。"), reply_in_thread=in_thread)
                 elif result.get("status") == "delegate":
                     thinking._cancel_timers()
                     thinking.completed = True
@@ -350,14 +352,14 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                     else:
                         reply = "没有正在运行的 Scan。"
                     if message_id:
-                        messenger.safe_reply_text(message_id, reply)
+                        messenger.safe_reply_text(message_id, reply, reply_in_thread=in_thread)
                     return {"status": "ok", "action": action_name}
                 from agents.parser import ParsedAction
 
                 action = ParsedAction(name="scan.run", confidence=0.9, source="conversation_v2", params=params)
             else:
                 if thinking is None and message_id:
-                    messenger.safe_reply_text(message_id, str(result.get("text") or "暂无数据。"))
+                    messenger.safe_reply_text(message_id, str(result.get("text") or "暂无数据。"), reply_in_thread=in_thread)
                 return result
         else:
             return {"status": "ignored", "detail": f"conversation disabled for {agent}"}
@@ -374,7 +376,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
             )
             if project is None:
                 if message_id:
-                    messenger.safe_reply_text(message_id, "无法解析项目。请写明 slug，例如：mbpass 最近最大的风险是什么？")
+                    messenger.safe_reply_text(message_id, "无法解析项目。请写明 slug，例如：mbpass 最近最大的风险是什么？", reply_in_thread=in_thread)
                 return {"status": "error", "detail": "project not resolved"}
             workspace = str(project.get("workspace") or "")
             common = _load_workspace_common(workspace)
@@ -390,7 +392,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                 params={**action.params, "project": str(project.get("slug") or "")},
             )
             if message_id:
-                messenger.safe_reply_text(message_id, str(result.get("text") or "暂无风险数据。"))
+                messenger.safe_reply_text(message_id, str(result.get("text") or "暂无风险数据。"), reply_in_thread=in_thread)
             try:
                 from risk.store import GlobalAgentStore
 
@@ -408,6 +410,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                     "我是 Dylan（Engineering Risk Analyst）。\n"
                     "可以：扫描 mbpass 最近七天\n"
                     "或问：最近最大的风险是什么？风险在上升还是下降？哪些问题反复出现？",
+                    reply_in_thread=in_thread,
                 )
             return {"status": "help", "action": action.name}
 
@@ -419,7 +422,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
                 f"项目: {recent.get('project', '-')}"
             )
             if message_id:
-                messenger.safe_reply_text(message_id, detail)
+                messenger.safe_reply_text(message_id, detail, reply_in_thread=in_thread)
             return {"status": "ok", "action": action.name, "recent": recent}
 
         if action.name == "scan.cancel":
@@ -430,7 +433,7 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
             else:
                 reply = "没有正在运行的 Scan。"
             if message_id:
-                messenger.safe_reply_text(message_id, reply)
+                messenger.safe_reply_text(message_id, reply, reply_in_thread=in_thread)
             return {"status": "ok", "action": action.name}
 
     if agent != "dylan":
@@ -444,20 +447,20 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
     )
     if project is None:
         if message_id:
-            messenger.safe_reply_text(message_id, "无法解析项目。请写明 slug，例如：扫描 mbpass")
+            messenger.safe_reply_text(message_id, "无法解析项目。请写明 slug，例如：扫描 mbpass", reply_in_thread=in_thread)
         return {"status": "error", "detail": "project not resolved"}
 
     slug = str(project.get("slug") or "")
     workspace = str(project.get("workspace") or "")
     if message_id:
         try:
-            messenger.reply_card(message_id, ack_card(action.name, slug))
+            messenger.reply_card(message_id, ack_card(action.name, slug), reply_in_thread=in_thread)
         except Exception:
-            messenger.safe_reply_text(message_id, f"已收到，开始扫描 {slug}")
+            messenger.safe_reply_text(message_id, f"已收到，开始扫描 {slug}", reply_in_thread=in_thread)
 
     if workspace and scan_lock_exists(workspace):
         if message_id:
-            messenger.safe_reply_text(message_id, f"{slug} 已有 Scan 在运行，请稍后再试。")
+            messenger.safe_reply_text(message_id, f"{slug} 已有 Scan 在运行，请稍后再试。", reply_in_thread=in_thread)
         return {"status": "blocked", "detail": "scan lock exists"}
 
     trigger = TriggerContext(
@@ -489,18 +492,20 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
         if run.get("status") == "completed":
             scan = run.get("scan") if isinstance(run.get("scan"), dict) else {}
             try:
-                messenger.reply_card(message_id, scan_summary_card(str(run.get("run_id")), scan))
+                messenger.reply_card(message_id, scan_summary_card(str(run.get("run_id")), scan), reply_in_thread=in_thread)
             except Exception:
-                messenger.safe_reply_text(message_id, f"Scan 完成: {run.get('run_id')}")
+                messenger.safe_reply_text(message_id, f"Scan 完成: {run.get('run_id')}", reply_in_thread=in_thread)
         else:
             try:
                 messenger.reply_card(
                     message_id,
                     progress_card(str(run.get("run_id")), str(run.get("status")), str(run.get("detail") or "")),
+                    reply_in_thread=in_thread,
                 )
             except Exception:
                 messenger.safe_reply_text(
                     message_id,
                     f"Scan {run.get('status')}: {run.get('detail') or run.get('run_id')}",
+                    reply_in_thread=in_thread,
                 )
     return {"status": "ok", "action": action.name, "run": run}

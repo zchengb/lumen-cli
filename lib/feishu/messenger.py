@@ -37,6 +37,14 @@ _TRANSIENT_MARKERS = (
 )
 
 
+def should_reply_in_thread(meta: dict[str, Any] | None = None) -> bool:
+    data = meta if isinstance(meta, dict) else {}
+    if str(data.get("thread_id") or "").strip():
+        return True
+    chat_type = str(data.get("chat_type") or "").strip().lower()
+    return chat_type not in {"p2p", "private", "dm"}
+
+
 def extract_message_id(response: dict[str, Any] | None) -> str:
     if not isinstance(response, dict):
         return ""

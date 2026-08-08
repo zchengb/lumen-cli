@@ -141,6 +141,13 @@ class AgentBridgeScanTests(unittest.TestCase):
                 self.assertEqual(meta_no_thread["thread_id"], "")
                 self.assertEqual(meta_no_thread["root_id"], "om_root")
 
+    def test_should_reply_in_thread_for_group_mentions(self) -> None:
+        from feishu.messenger import should_reply_in_thread
+
+        self.assertTrue(should_reply_in_thread({"chat_type": "group", "thread_id": ""}))
+        self.assertFalse(should_reply_in_thread({"chat_type": "p2p", "thread_id": ""}))
+        self.assertTrue(should_reply_in_thread({"chat_type": "p2p", "thread_id": "omt_1"}))
+
 
 if __name__ == "__main__":
     unittest.main()

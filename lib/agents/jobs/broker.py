@@ -211,7 +211,8 @@ class AgentJobBroker:
             FeishuMessenger(child.target_agent).safe_reply_text(
                 child.source_message_id,
                 text,
-                reply_in_thread=bool(child.thread_id),
+                reply_in_thread=bool(child.thread_id)
+                or str(child.chat_id or "").startswith("oc_"),
             )
         except Exception:
             pass

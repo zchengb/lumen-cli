@@ -17,11 +17,13 @@ class ThinkingSession:
         source_message_id: str,
         language: str,
         config: TypingConfig,
+        reply_in_thread: bool = False,
     ) -> None:
         self.messenger = messenger
         self.source_message_id = source_message_id
         self.language = language
         self.config = config
+        self.reply_in_thread = bool(reply_in_thread)
         self.placeholder_message_id = ""
         self.started_at = time.time()
         self.last_update_at = 0.0
@@ -47,7 +49,11 @@ class ThinkingSession:
                 return
             self._started_placeholder = True
         try:
-            response = self.messenger.reply_text(self.source_message_id, t(self.language, "thinking_initial"))
+            response = self.messenger.reply_text(
+                self.source_message_id,
+                t(self.language, "thinking_initial"),
+                reply_in_thread=self.reply_in_thread,
+            )
             self.placeholder_message_id = extract_message_id(response)
             self.last_update_at = time.time()
             self.update_count = 1
@@ -90,14 +96,14 @@ class ThinkingSession:
             if updated is not None:
                 return {"mode": "updated", "placeholder_message_id": self.placeholder_message_id}
             try:
-                self.messenger.reply_text(self.source_message_id, text)
+                self.messenger.reply_text(self.source_message_id, text, reply_in_thread=self.reply_in_thread)
                 self.messenger.safe_update_text(self.placeholder_message_id, t(self.language, "completed_see_below"))
                 return {"mode": "reply_fallback", "placeholder_message_id": self.placeholder_message_id}
             except Exception:
                 return {"mode": "failed"}
         if self.source_message_id:
             try:
-                response = self.messenger.reply_text(self.source_message_id, text)
+                response = self.messenger.reply_text(self.source_message_id, text, reply_in_thread=self.reply_in_thread)
                 return {"mode": "direct_reply", "message_id": extract_message_id(response)}
             except Exception:
                 return {"mode": "failed"}
