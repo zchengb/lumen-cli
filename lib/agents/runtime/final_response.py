@@ -140,9 +140,153 @@ def extract_final_response(raw: str) -> FinalResponseParse:
     )
 
 
+_STATUS_READ_ACTIONS = frozenset(
+    {
+        "agent.job.list",
+        "agent.job.show",
+        "agent.health",
+        "agent.list",
+        "project.status",
+        "workflow.status",
+        "schedule.status",
+    }
+)
+
+
+def is_planning_reply(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return True
+    lowered = raw.lower()
+    starters = (
+        "i'll ",
+        "i will ",
+        "let me ",
+        "i'm going to ",
+        "i am going to ",
+        "checking ",
+        "pulling ",
+        "looking ",
+        "searching ",
+        "investigating ",
+    )
+    if len(raw) > 360:
+        return False
+    return any(lowered.startswith(s) for s in starters)
+
+
+def _nested_outcome(job: dict[str, Any]) -> str:
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    inner = result.get("result") if isinstance(result.get("result"), dict) else result
+    if not isinstance(inner, dict):
+        return ""
+    if str(inner.get("status") or "").lower() == "failed":
+        code = str(inner.get("code") or "").strip()
+        message = str(inner.get("message") or "").strip()
+        if code and message:
+            return f"{code} — {message}"
+        return code or message
+    message = str(inner.get("message") or inner.get("summary") or "").strip()
+    return message
+
+
+def _issue_key(job: dict[str, Any]) -> str:
+    for blob in (job.get("input"), job.get("result")):
+        if not isinstance(blob, dict):
+            continue
+        key = str(blob.get("issue_key") or "").strip()
+        if key:
+            return key
+        resource = blob.get("resource") if isinstance(blob.get("resource"), dict) else {}
+        key = str(resource.get("issue_key") or "").strip()
+        if key:
+            return key
+        nested = blob.get("result") if isinstance(blob.get("result"), dict) else {}
+        key = str(nested.get("issue_key") or "").strip()
+        if key:
+            return key
+    return ""
+
+
+def _format_one_job(job: dict[str, Any]) -> str:
+    job_id = str(job.get("job_id") or "").strip() or "job"
+    status = str(job.get("status") or "unknown").strip()
+    capability = str(job.get("capability") or "").strip()
+    owner = str(job.get("target_agent") or job.get("delegated_by") or "").strip()
+    issue = _issue_key(job)
+    outcome = _nested_outcome(job)
+    head = f"- **{job_id}**"
+    bits = [status]
+    if owner:
+        bits.append(f"owner={owner}")
+    if capability:
+        bits.append(capability)
+    if issue:
+        bits.append(issue)
+    line = f"{head}: {', '.join(bits)}"
+    if outcome:
+        line = f"{line}\n  {outcome}"
+    return line
+
+
+def _format_jobs_payload(result: dict[str, Any]) -> str:
+    jobs: list[dict[str, Any]] = []
+    if isinstance(result.get("jobs"), list):
+        jobs = [j for j in result["jobs"] if isinstance(j, dict)]
+    elif isinstance(result.get("job"), dict):
+        jobs = [result["job"]]
+    elif result.get("job_id"):
+        jobs = [result]
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else None
+    if summary and isinstance(summary.get("children"), list):
+        children = [c for c in summary["children"] if isinstance(c, dict)]
+        if children:
+            jobs = children
+        overall = str(summary.get("overall_state") or "").strip()
+        parent = str(summary.get("parent_job_id") or result.get("job_id") or "").strip()
+        lines = []
+        if parent or overall:
+            lines.append(f"**Job status**{f' (`{parent}`)' if parent else ''}: {overall or 'unknown'}")
+        for child in children or jobs:
+            lines.append(_format_one_job(child))
+        next_dep = str(summary.get("next_dependency") or "").strip()
+        if next_dep:
+            lines.append(f"- **Next:** {next_dep}")
+        return "\n".join(lines).strip()
+    if not jobs:
+        return ""
+    lines = ["**Job status**"]
+    lines.extend(_format_one_job(job) for job in jobs[:12])
+    return "\n".join(lines).strip()
+
+
 def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
     if not receipts:
         return ""
+    for receipt in receipts:
+        action = str(receipt.get("action") or "").strip()
+        if action not in _STATUS_READ_ACTIONS:
+            continue
+        if receipt.get("status") != "succeeded":
+            continue
+        result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+        if action in {"agent.job.list", "agent.job.show"}:
+            detail = _format_jobs_payload(result)
+            if detail:
+                return detail
+        if action in {"agent.health", "agent.list"}:
+            agents = result.get("agents") if isinstance(result.get("agents"), list) else []
+            if agents:
+                names = [
+                    str(a.get("id") or a.get("display_name") or "").strip()
+                    for a in agents
+                    if isinstance(a, dict)
+                ]
+                names = [n for n in names if n]
+                return "**Agents:** " + ", ".join(names[:12])
+        note = str(result.get("note") or result.get("status") or "").strip()
+        if note:
+            return f"**{action}:** {note}"
     lines = []
     for receipt in receipts:
         action = receipt.get("action") or "action"
@@ -153,3 +297,18 @@ def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
             err = receipt.get("error") or receipt.get("error_code") or status
             lines.append(f"- {action}: {status} ({err})")
     return "Action results:\n" + "\n".join(lines)
+
+
+def prefer_action_summary(reply_text: str, receipts: list[dict[str, Any]]) -> str:
+    summary = format_action_receipts_summary(receipts)
+    if not summary:
+        return reply_text
+    has_status_read = any(
+        str(r.get("action") or "").strip() in _STATUS_READ_ACTIONS and r.get("status") == "succeeded"
+        for r in receipts
+    )
+    if has_status_read and (not reply_text or is_planning_reply(reply_text)):
+        return summary
+    if not reply_text:
+        return summary
+    return reply_text

@@ -10,7 +10,7 @@ from agents.dylan.schemas import ConversationFlags
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
 from agents.runner import default_runner
 from agents.runtime.cursor_runtime import CursorAgentRuntime
-from agents.runtime.final_response import extract_final_response, format_action_receipts_summary
+from agents.runtime.final_response import extract_final_response, prefer_action_summary
 from agents.runtime.observability import Observability, TraceContext, new_trace_id
 from agents.runtime.reply_anchor import format_anchored_user_message, resolve_reply_anchor
 from agents.runtime.session_store import SessionStore, conversation_scope_id, session_contract_current
@@ -426,9 +426,7 @@ def handle_autonomous_conversation(
                             if nested.get("summary"):
                                 reply_text = f"{result_payload['handoff_text']}\n\n{nested['summary']}"
                         break
-            if action_receipts and not reply_text:
-                summary = format_action_receipts_summary(action_receipts)
-                reply_text = summary or reply_text
+                reply_text = prefer_action_summary(reply_text, action_receipts)
             return {
                 "status": "ok",
                 "action": "autonomous.reply",
