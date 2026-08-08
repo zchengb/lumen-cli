@@ -37,7 +37,12 @@ class FeishuIdentityTests(unittest.TestCase):
                 event = {
                     "header": {"app_id": "cli_x"},
                     "event": {
-                        "sender": {"sender_id": {"open_id": ALICE}},
+                        "sender": {
+                            "sender_id": {
+                                "open_id": ALICE,
+                                "union_id": "on_4bf919cda0978cc8aad2abaf6535af87",
+                            }
+                        },
                         "message": {
                             "message_id": "om_1",
                             "chat_id": CHAT,
@@ -52,8 +57,11 @@ class FeishuIdentityTests(unittest.TestCase):
                 meta = extract_message_meta(event)
                 self.assertEqual(meta["user_id"], ALICE)
                 self.assertEqual(meta["user_name"], "Alice")
-                remember_message_identities(event, meta)
+                self.assertEqual(meta["union_id"], "on_4bf919cda0978cc8aad2abaf6535af87")
+                with mock.patch("feishu.identity._messenger_for", return_value=None):
+                    remember_message_identities(event, meta)
                 self.assertEqual(store.get_feishu_display_name(ALICE), "Alice")
+                self.assertEqual(store.get_feishu_union_id(ALICE), "on_4bf919cda0978cc8aad2abaf6535af87")
                 self.assertEqual(store.get_feishu_display_name(BOB), "Bob")
                 with mock.patch("feishu.identity._messenger_for", return_value=None):
                     enriched = enrich_feishu_identities(
@@ -64,6 +72,16 @@ class FeishuIdentityTests(unittest.TestCase):
                 self.assertEqual(enriched["names"][ALICE], "Alice")
                 self.assertEqual(enriched["users"][0]["name"], "Alice")
                 self.assertEqual(len(enriched["users"]), 1)
+                milchick = "ou_12309d90c1d05b757ef1d002b59fc91b"
+                store.upsert_feishu_identity(
+                    identity_id=milchick,
+                    identity_type="user",
+                    display_name="Alice",
+                    union_id="on_4bf919cda0978cc8aad2abaf6535af87",
+                )
+                linked = store.expand_feishu_open_ids([ALICE])
+                self.assertIn(ALICE, linked)
+                self.assertIn(milchick, linked)
             finally:
                 store.close()
 

@@ -605,22 +605,34 @@ class GlobalAgentStore:
                     chats.append(value)
         return {"user_ids": users[:cap], "chat_ids": chats[:cap]}
 
-    def upsert_feishu_identity(self, *, identity_id: str, identity_type: str, display_name: str) -> None:
+    def upsert_feishu_identity(
+        self,
+        *,
+        identity_id: str,
+        identity_type: str,
+        display_name: str,
+        union_id: str = "",
+    ) -> None:
         iid = str(identity_id or "").strip()
         name = str(display_name or "").strip()
         kind = str(identity_type or "").strip().lower() or "user"
+        union = str(union_id or "").strip()
         if not iid or not name:
             return
         self.conn.execute(
             """
-            INSERT INTO feishu_identity(identity_id, identity_type, display_name, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO feishu_identity(identity_id, identity_type, display_name, union_id, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(identity_id) DO UPDATE SET
                 identity_type = excluded.identity_type,
                 display_name = excluded.display_name,
+                union_id = CASE
+                    WHEN excluded.union_id != '' THEN excluded.union_id
+                    ELSE feishu_identity.union_id
+                END,
                 updated_at = excluded.updated_at
             """,
-            (iid, kind, name, utc_now()),
+            (iid, kind, name, union, utc_now()),
         )
         self.conn.commit()
 
@@ -638,6 +650,50 @@ class GlobalAgentStore:
         if row is None:
             return ""
         return str(row["display_name"] if isinstance(row, sqlite3.Row) else row[0] or "").strip()
+
+    def get_feishu_union_id(self, identity_id: str) -> str:
+        iid = str(identity_id or "").strip()
+        if not iid:
+            return ""
+        try:
+            row = self.conn.execute(
+                "SELECT union_id FROM feishu_identity WHERE identity_id = ?",
+                (iid,),
+            ).fetchone()
+        except Exception:
+            return ""
+        if row is None:
+            return ""
+        return str(row["union_id"] if isinstance(row, sqlite3.Row) else row[0] or "").strip()
+
+    def expand_feishu_open_ids(self, identity_ids: list[str]) -> list[str]:
+        out: list[str] = []
+        seen: set[str] = set()
+        unions: set[str] = set()
+        for identity_id in identity_ids:
+            iid = str(identity_id or "").strip()
+            if not iid or iid in seen:
+                continue
+            seen.add(iid)
+            out.append(iid)
+            union = self.get_feishu_union_id(iid)
+            if union:
+                unions.add(union)
+        for union in unions:
+            try:
+                rows = self.conn.execute(
+                    "SELECT identity_id FROM feishu_identity WHERE union_id = ?",
+                    (union,),
+                ).fetchall()
+            except Exception:
+                continue
+            for row in rows:
+                iid = str(row["identity_id"] if isinstance(row, sqlite3.Row) else row[0] or "").strip()
+                if not iid or iid in seen:
+                    continue
+                seen.add(iid)
+                out.append(iid)
+        return out
 
     def list_feishu_identities(self, identity_ids: list[str]) -> dict[str, str]:
         out: dict[str, str] = {}

@@ -150,6 +150,48 @@ class AccessZoneTests(unittest.TestCase):
         self.assertEqual(decision.trust_zone, "PRIVATE")
         self.assertIn("lumen.system.health", decision.effective_capabilities)
 
+    def test_cross_app_open_id_linked_by_union(self) -> None:
+        import os
+        import tempfile
+
+        from risk.store import GlobalAgentStore
+
+        dylan_ou = "ou_4f1d9b4d016ca1a31a17f4efa6473ffd"
+        milchick_ou = "ou_12309d90c1d05b757ef1d002b59fc91b"
+        union = "on_4bf919cda0978cc8aad2abaf6535af87"
+        cfg = _config()
+        cfg["access"]["owners"] = [dylan_ou]
+        cfg["access"]["admins"] = [dylan_ou]
+        cfg["access"]["agents"]["milchick"]["allowed_user_ids"] = [dylan_ou]
+        cfg["access"]["agents"]["milchick"]["mutation_allowed_user_ids"] = [dylan_ou]
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["LUMEN_AGENTS_HOME"] = tmp
+            store = GlobalAgentStore()
+            try:
+                store.upsert_feishu_identity(
+                    identity_id=dylan_ou,
+                    identity_type="user",
+                    display_name="Zheng",
+                    union_id=union,
+                )
+                store.upsert_feishu_identity(
+                    identity_id=milchick_ou,
+                    identity_type="user",
+                    display_name="Zheng",
+                    union_id=union,
+                )
+                denied = authorize_agent_interaction(
+                    agent_id="milchick",
+                    meta={"user_id": milchick_ou, "chat_id": "oc_m", "chat_type": "p2p", "message_id": "om1"},
+                    config=cfg,
+                    store=store,
+                )
+                self.assertTrue(denied.allowed)
+                self.assertEqual(denied.trust_zone, "PRIVATE")
+                self.assertTrue(denied.mutation_allowed)
+            finally:
+                store.close()
+
     def test_milchick_group_denied(self) -> None:
         decision = authorize_agent_interaction(
             agent_id="milchick",

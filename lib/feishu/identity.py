@@ -35,25 +35,91 @@ def _resolve_one(
     identity_type: str,
 ) -> str:
     cached = store.get_feishu_display_name(identity_id)
-    if cached:
+    if cached and (identity_type != "user" or store.get_feishu_union_id(identity_id)):
         return cached
     for agent_id in GATEWAY_AGENTS:
         messenger = _messenger_for(agent_id)
         if messenger is None:
             continue
         if identity_type == "user":
-            name = messenger.safe_get_user_name(identity_id)
+            profile = messenger.safe_get_user_profile(identity_id)
+            name = str(profile.get("name") or "").strip()
+            union_id = str(profile.get("union_id") or "").strip()
+            if name or union_id:
+                store.upsert_feishu_identity(
+                    identity_id=identity_id,
+                    identity_type=identity_type,
+                    display_name=name or cached or identity_id,
+                    union_id=union_id,
+                )
+                return name or cached
         else:
             name = messenger.safe_get_chat_name(identity_id)
-        if name:
-            store.upsert_feishu_identity(
-                identity_id=identity_id,
-                identity_type=identity_type,
-                display_name=name,
-            )
-            return name
-    return ""
+            if name:
+                store.upsert_feishu_identity(
+                    identity_id=identity_id,
+                    identity_type=identity_type,
+                    display_name=name,
+                )
+                return name
+    return cached
 
+
+def remember_user_identity(
+    *,
+    store: Any,
+    open_id: str,
+    display_name: str = "",
+    union_id: str = "",
+    agent_id: str = "",
+) -> None:
+    uid = str(open_id or "").strip()
+    if not uid or not is_feishu_open_user_id(uid):
+        return
+    name = str(display_name or "").strip() or store.get_feishu_display_name(uid)
+    union = str(union_id or "").strip() or store.get_feishu_union_id(uid)
+    if name and union:
+        store.upsert_feishu_identity(
+            identity_id=uid,
+            identity_type="user",
+            display_name=name,
+            union_id=union,
+        )
+        return
+    agents = [str(agent_id or "").strip().lower()] if agent_id else []
+    agents.extend(a for a in GATEWAY_AGENTS if a not in agents)
+    for aid in agents:
+        messenger = _messenger_for(aid)
+        if messenger is None:
+            continue
+        profile = messenger.safe_get_user_profile(uid)
+        resolved_name = str(profile.get("name") or "").strip()
+        resolved_union = str(profile.get("union_id") or "").strip()
+        if resolved_name or resolved_union:
+            store.upsert_feishu_identity(
+                identity_id=uid,
+                identity_type="user",
+                display_name=resolved_name or name or uid,
+                union_id=resolved_union or union,
+            )
+            return
+    if name:
+        store.upsert_feishu_identity(
+            identity_id=uid,
+            identity_type="user",
+            display_name=name,
+            union_id=union,
+        )
+
+
+def link_access_identities(*, store: Any, identity_ids: list[str]) -> None:
+    for identity_id in identity_ids:
+        uid = str(identity_id or "").strip()
+        if not uid or not is_feishu_open_user_id(uid):
+            continue
+        if store.get_feishu_union_id(uid) and store.get_feishu_display_name(uid):
+            continue
+        remember_user_identity(store=store, open_id=uid)
 
 def enrich_feishu_identities(
     *,

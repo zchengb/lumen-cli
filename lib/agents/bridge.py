@@ -249,7 +249,11 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
             elif detail == "AGENT_ACCESS_UNCONFIGURED":
                 reply = "This agent isn't configured for access yet (default deny)."
             else:
-                reply = "You're not authorized to talk to this agent here."
+                reply = (
+                    "You're not authorized to talk to this agent here. "
+                    f"Your Feishu open_id for this bot is `{user_id or '-'}`. "
+                    "Admins are shared across bots via Feishu union_id once identities are linked."
+                )
             messenger.safe_reply_text(message_id, reply, reply_in_thread=bool(str(meta.get("thread_id") or "").strip()))
         return {"status": "denied", "detail": detail, "trust_zone": decision.trust_zone}
     meta = dict(meta)

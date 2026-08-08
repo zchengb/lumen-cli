@@ -213,25 +213,35 @@ class FeishuMessenger:
             None,
         )
 
-    def get_user_name(self, open_id: str) -> str:
+    def get_user_profile(self, open_id: str) -> dict[str, str]:
         user_id = str(open_id or "").strip()
         if not user_id:
-            return ""
+            return {"open_id": "", "name": "", "union_id": ""}
         token = self.tenant_token()
         url = f"https://open.feishu.cn/open-apis/contact/v3/users/{user_id}?user_id_type=open_id"
         body = self._request("GET", url, token, None)
         if int(body.get("code") or 0) != 0:
-            return ""
+            return {"open_id": user_id, "name": "", "union_id": ""}
         data = body.get("data") if isinstance(body.get("data"), dict) else {}
         user = data.get("user") if isinstance(data.get("user"), dict) else {}
-        return str(user.get("name") or user.get("en_name") or user.get("nickname") or "").strip()
+        return {
+            "open_id": str(user.get("open_id") or user_id).strip(),
+            "name": str(user.get("name") or user.get("en_name") or user.get("nickname") or "").strip(),
+            "union_id": str(user.get("union_id") or "").strip(),
+        }
+
+    def get_user_name(self, open_id: str) -> str:
+        return self.get_user_profile(open_id).get("name") or ""
+
+    def safe_get_user_profile(self, open_id: str) -> dict[str, str]:
+        try:
+            return self.get_user_profile(open_id)
+        except Exception as exc:
+            _LOG.warning("get_user_profile failed open_id=%s err=%s", open_id, exc)
+            return {"open_id": str(open_id or "").strip(), "name": "", "union_id": ""}
 
     def safe_get_user_name(self, open_id: str) -> str:
-        try:
-            return self.get_user_name(open_id)
-        except Exception as exc:
-            _LOG.warning("get_user_name failed open_id=%s err=%s", open_id, exc)
-            return ""
+        return self.safe_get_user_profile(open_id).get("name") or ""
 
     def get_chat_name(self, chat_id: str) -> str:
         cid = str(chat_id or "").strip()

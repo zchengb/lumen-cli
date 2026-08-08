@@ -387,10 +387,14 @@ CREATE TABLE IF NOT EXISTS feishu_identity (
     identity_id TEXT PRIMARY KEY,
     identity_type TEXT NOT NULL,
     display_name TEXT NOT NULL DEFAULT '',
+    union_id TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
 );
 """
 
+_FEISHU_IDENTITY_COLUMNS = {
+    "union_id": "TEXT NOT NULL DEFAULT ''",
+}
 _FINDING_V2_COLUMNS = {
     "occurrence_count": "INTEGER NOT NULL DEFAULT 0",
     "consecutive_seen_count": "INTEGER NOT NULL DEFAULT 0",
@@ -500,6 +504,10 @@ def migrate_global(conn: sqlite3.Connection) -> None:
         str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
     }:
         _add_missing_columns(conn, "conversation_context", _CONTEXT_V2_COLUMNS)
+    if "feishu_identity" in {
+        str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }:
+        _add_missing_columns(conn, "feishu_identity", _FEISHU_IDENTITY_COLUMNS)
     _set_schema_version(conn, SCHEMA_VERSION)
     conn.commit()
 

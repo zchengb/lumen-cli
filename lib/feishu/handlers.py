@@ -48,6 +48,7 @@ def extract_message_meta(event: dict[str, Any]) -> dict[str, str]:
         "root_id": str(message.get("root_id") or "").strip(),
         "chat_type": str(message.get("chat_type") or "").strip(),
         "user_id": str(sender_id.get("open_id") or sender_id.get("user_id") or "").strip(),
+        "union_id": str(sender_id.get("union_id") or "").strip(),
         "app_id": str(header.get("app_id") or "").strip(),
         "user_name": "",
     }
@@ -64,17 +65,28 @@ def extract_message_meta(event: dict[str, Any]) -> dict[str, str]:
     return meta
 
 
-def remember_message_identities(event: dict[str, Any], meta: dict[str, str]) -> None:
+def remember_message_identities(
+    event: dict[str, Any],
+    meta: dict[str, str],
+    *,
+    agent_id: str = "",
+) -> None:
     try:
+        from feishu.identity import remember_user_identity
         from risk.store import GlobalAgentStore
     except Exception:
         return
     store = GlobalAgentStore()
     try:
         user_id = str(meta.get("user_id") or "").strip()
-        user_name = str(meta.get("user_name") or "").strip()
-        if user_id and user_name:
-            store.upsert_feishu_identity(identity_id=user_id, identity_type="user", display_name=user_name)
+        if user_id:
+            remember_user_identity(
+                store=store,
+                open_id=user_id,
+                display_name=str(meta.get("user_name") or "").strip(),
+                union_id=str(meta.get("union_id") or "").strip(),
+                agent_id=agent_id,
+            )
         body = event.get("event") if isinstance(event.get("event"), dict) else event
         message = body.get("message") if isinstance(body, dict) else {}
         mentions = message.get("mentions") if isinstance(message, dict) and isinstance(message.get("mentions"), list) else []
@@ -84,13 +96,19 @@ def remember_message_identities(event: dict[str, Any], meta: dict[str, str]) -> 
             mention_id = item.get("id") if isinstance(item.get("id"), dict) else {}
             open_id = str(mention_id.get("open_id") or "").strip()
             name = str(item.get("name") or "").strip()
-            if open_id and name:
-                store.upsert_feishu_identity(identity_id=open_id, identity_type="user", display_name=name)
+            union_id = str(mention_id.get("union_id") or "").strip()
+            if open_id:
+                remember_user_identity(
+                    store=store,
+                    open_id=open_id,
+                    display_name=name,
+                    union_id=union_id,
+                    agent_id=agent_id,
+                )
     except Exception:
         pass
     finally:
         store.close()
-
 
 def _mention_targets_agent(mentions: object, agent_id: str) -> bool:
     needle = str(agent_id or "").strip().lower()
@@ -166,7 +184,7 @@ def handle_message_event(event: dict[str, Any], client: FeishuClientConfig) -> N
     meta = extract_message_meta(event)
     if not meta.get("app_id"):
         meta["app_id"] = client.app_id
-    remember_message_identities(event, meta)
+    remember_message_identities(event, meta, agent_id=client.agent_id)
     log.info(
         "handle text=%r meta=%s",
         text[:120],

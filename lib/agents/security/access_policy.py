@@ -77,13 +77,44 @@ def _as_set(values: Any) -> frozenset[str]:
     return frozenset(str(x).strip() for x in values if str(x).strip())
 
 
+def _expand_user_ids(store: Any, values: frozenset[str]) -> frozenset[str]:
+    if store is None or not values:
+        return values
+    try:
+        return frozenset(store.expand_feishu_open_ids(sorted(values)))
+    except Exception:
+        return values
+
+
+def _user_in(store: Any, user_id: str, allowed: frozenset[str]) -> bool:
+    user = str(user_id or "").strip()
+    if not user:
+        return False
+    if user in allowed:
+        return True
+    expanded_allowed = _expand_user_ids(store, allowed)
+    if user in expanded_allowed:
+        return True
+    expanded_user = _expand_user_ids(store, frozenset({user}))
+    return bool(expanded_user & (allowed | expanded_allowed))
+
+
 def is_dm_chat(chat_type: str, *, thread_id: str = "") -> bool:
     return str(chat_type or "").strip().lower() in {"p2p", "private", "dm"}
 
 
-def interaction_context_from_meta(*, agent_id: str, meta: dict[str, str], policy: AgentAccessPolicy) -> InteractionContext:
+def interaction_context_from_meta(
+    *,
+    agent_id: str,
+    meta: dict[str, str],
+    policy: AgentAccessPolicy,
+    store: Any = None,
+) -> InteractionContext:
     user_id = str(meta.get("user_id") or "").strip()
     chat_type = str(meta.get("chat_type") or "").strip()
+    owners = _expand_user_ids(store, policy.owners)
+    admins = _expand_user_ids(store, policy.admins)
+    allowed = _expand_user_ids(store, policy.allowed_user_ids)
     return InteractionContext(
         agent_id=str(agent_id or "").strip().lower(),
         user_id=user_id,
@@ -92,11 +123,13 @@ def interaction_context_from_meta(*, agent_id: str, meta: dict[str, str], policy
         thread_id=str(meta.get("thread_id") or "").strip(),
         message_id=str(meta.get("message_id") or "").strip(),
         is_dm=is_dm_chat(chat_type),
-        is_owner=user_id in policy.owners
-        or (user_id in policy.allowed_user_ids and policy.exposure_mode == "owner_private"),
-        is_admin=user_id in policy.admins,
+        is_owner=_user_in(store, user_id, owners)
+        or (
+            _user_in(store, user_id, allowed)
+            and policy.exposure_mode == "owner_private"
+        ),
+        is_admin=_user_in(store, user_id, admins),
     )
-
 
 def load_agent_access_policy(agent_id: str, config: Optional[dict[str, Any]] = None) -> AgentAccessPolicy:
     data = config if isinstance(config, dict) else load_agents_config()
@@ -164,7 +197,12 @@ def load_agent_access_policy(agent_id: str, config: Optional[dict[str, Any]] = N
     )
 
 
-def resolve_trust_zone(context: InteractionContext, policy: AgentAccessPolicy) -> TrustZone:
+def resolve_trust_zone(
+    context: InteractionContext,
+    policy: AgentAccessPolicy,
+    *,
+    store: Any = None,
+) -> TrustZone:
     if policy.dm_only and not context.is_dm:
         return "DENY"
     user = context.user_id
@@ -173,13 +211,15 @@ def resolve_trust_zone(context: InteractionContext, policy: AgentAccessPolicy) -
     if policy.source == "missing" and policy.default_policy != "legacy_allow":
         return "DENY"
     allowed_users = policy.allowed_user_ids | policy.owners | policy.admins
-    if allowed_users and user not in allowed_users:
+    if allowed_users and not _user_in(store, user, allowed_users):
         return "DENY"
     if not allowed_users and policy.default_policy != "legacy_allow" and policy.source != "legacy":
         return "DENY"
 
-    if context.is_dm and (user in policy.owners or user in policy.admins or user in policy.allowed_user_ids):
-        if policy.exposure_mode in {"owner_private", "admin_private"} or user in policy.owners | policy.admins:
+    if context.is_dm and _user_in(store, user, policy.owners | policy.admins | policy.allowed_user_ids):
+        if policy.exposure_mode in {"owner_private", "admin_private"} or _user_in(
+            store, user, policy.owners | policy.admins
+        ):
             return "PRIVATE"
         return "RESTRICTED"
 
@@ -191,12 +231,15 @@ def resolve_trust_zone(context: InteractionContext, policy: AgentAccessPolicy) -
         return "DENY"
 
     if context.is_dm:
-        return "PRIVATE" if user in policy.owners | policy.admins | policy.allowed_user_ids else "DENY"
+        return (
+            "PRIVATE"
+            if _user_in(store, user, policy.owners | policy.admins | policy.allowed_user_ids)
+            else "DENY"
+        )
 
     if policy.source == "legacy" and not policy.allowed_chat_ids:
         return "RESTRICTED"
     return "DENY"
-
 
 def _role_actions(agent_id: str) -> frozenset[str]:
     try:
@@ -239,108 +282,147 @@ def authorize_agent_interaction(
     agent_id: str,
     meta: dict[str, str],
     config: Optional[dict[str, Any]] = None,
+    store: Any = None,
 ) -> AccessDecision:
     from agents.security.audit import emit_security_event
 
     data = config if isinstance(config, dict) else load_agents_config()
     policy = load_agent_access_policy(agent_id, data)
-    context = interaction_context_from_meta(agent_id=agent_id, meta=meta, policy=policy)
-    zone = resolve_trust_zone(context, policy)
-    context = InteractionContext(
-        agent_id=context.agent_id,
-        user_id=context.user_id,
-        chat_id=context.chat_id,
-        chat_type=context.chat_type,
-        thread_id=context.thread_id,
-        message_id=context.message_id,
-        is_dm=context.is_dm,
-        trust_zone=zone,
-        is_owner=context.user_id in policy.owners,
-        is_admin=context.user_id in policy.admins,
-    )
-    if zone == "DENY":
-        reason = "DM_ONLY" if policy.dm_only and not context.is_dm else "ACCESS_DENIED"
-        if policy.source == "missing":
-            reason = "AGENT_ACCESS_UNCONFIGURED"
+    own_store = False
+    identity_store = store
+    if identity_store is None:
+        try:
+            from feishu.identity import link_access_identities, remember_user_identity
+            from risk.store import GlobalAgentStore
+
+            identity_store = GlobalAgentStore()
+            own_store = True
+            remember_user_identity(
+                store=identity_store,
+                open_id=str(meta.get("user_id") or "").strip(),
+                display_name=str(meta.get("user_name") or "").strip(),
+                union_id=str(meta.get("union_id") or "").strip(),
+                agent_id=agent_id,
+            )
+            link_access_identities(
+                store=identity_store,
+                identity_ids=sorted(
+                    policy.allowed_user_ids | policy.owners | policy.admins | policy.mutation_allowed_user_ids
+                ),
+            )
+        except Exception:
+            identity_store = None
+            own_store = False
+    try:
+        context = interaction_context_from_meta(
+            agent_id=agent_id, meta=meta, policy=policy, store=identity_store
+        )
+        zone = resolve_trust_zone(context, policy, store=identity_store)
+        context = InteractionContext(
+            agent_id=context.agent_id,
+            user_id=context.user_id,
+            chat_id=context.chat_id,
+            chat_type=context.chat_type,
+            thread_id=context.thread_id,
+            message_id=context.message_id,
+            is_dm=context.is_dm,
+            trust_zone=zone,
+            is_owner=_user_in(identity_store, context.user_id, policy.owners),
+            is_admin=_user_in(identity_store, context.user_id, policy.admins),
+        )
+        if zone == "DENY":
+            reason = "DM_ONLY" if policy.dm_only and not context.is_dm else "ACCESS_DENIED"
+            if policy.source == "missing":
+                reason = "AGENT_ACCESS_UNCONFIGURED"
+            decision = AccessDecision(
+                allowed=False,
+                reason_code=reason,
+                trust_zone=None,
+                host_read_allowed=False,
+                mutation_allowed=False,
+                effective_capabilities=frozenset(),
+                exposure_mode=policy.exposure_mode,
+                context=context,
+                policy=policy,
+            )
+            emit_security_event(
+                "agent.access.denied",
+                agent_id=context.agent_id,
+                user_id=context.user_id,
+                chat_id=context.chat_id,
+                chat_type=context.chat_type,
+                exposure_mode=policy.exposure_mode,
+                reason_code=reason,
+                policy_version=POLICY_VERSION,
+            )
+            return decision
+
+        mutation_users = policy.mutation_allowed_user_ids | policy.admins | (
+            policy.owners if policy.exposure_mode in {"owner_private", "admin_private"} else frozenset()
+        )
+        mutation_user = _user_in(identity_store, context.user_id, mutation_users)
+        mutation_allowed = mutation_user and zone in {"PRIVATE", "RESTRICTED"}
+        host_read_allowed = (
+            zone == "PRIVATE"
+            and policy.host_read_mode in {"selected", "system_only"}
+            and bool(policy.host_read_capabilities)
+            and (
+                context.is_owner
+                or context.is_admin
+                or _user_in(identity_store, context.user_id, policy.allowed_user_ids)
+            )
+        )
+        caps = _zone_capabilities(
+            agent_id=context.agent_id,
+            zone=zone,
+            policy=policy,
+            mutation_user=mutation_allowed,
+        )
+        if not host_read_allowed:
+            caps = frozenset(c for c in caps if not c.startswith("host.") and not c.startswith("lumen."))
+            if zone == "PRIVATE" and policy.exposure_mode == "admin_private":
+                caps = frozenset(set(caps) | {c for c in policy.host_read_capabilities if c.startswith("lumen.")})
+                host_read_allowed = bool(policy.host_read_capabilities)
+
         decision = AccessDecision(
-            allowed=False,
-            reason_code=reason,
-            trust_zone=None,
-            host_read_allowed=False,
-            mutation_allowed=False,
-            effective_capabilities=frozenset(),
+            allowed=True,
+            reason_code="ALLOWED",
+            trust_zone=zone,
+            host_read_allowed=host_read_allowed,
+            mutation_allowed=mutation_allowed,
+            effective_capabilities=caps,
             exposure_mode=policy.exposure_mode,
             context=context,
             policy=policy,
         )
         emit_security_event(
-            "agent.access.denied",
+            "agent.access.allowed",
             agent_id=context.agent_id,
             user_id=context.user_id,
             chat_id=context.chat_id,
             chat_type=context.chat_type,
+            trust_zone=zone,
             exposure_mode=policy.exposure_mode,
-            reason_code=reason,
+            host_read_allowed=host_read_allowed,
+            mutation_allowed=mutation_allowed,
+            policy_version=POLICY_VERSION,
+        )
+        emit_security_event(
+            "agent.access.zone_resolved",
+            agent_id=context.agent_id,
+            user_id=context.user_id,
+            chat_id=context.chat_id,
+            trust_zone=zone,
+            exposure_mode=policy.exposure_mode,
             policy_version=POLICY_VERSION,
         )
         return decision
-
-    mutation_users = policy.mutation_allowed_user_ids | policy.admins | (
-        policy.owners if policy.exposure_mode in {"owner_private", "admin_private"} else frozenset()
-    )
-    mutation_user = context.user_id in mutation_users
-    mutation_allowed = mutation_user and zone in {"PRIVATE", "RESTRICTED"}
-    host_read_allowed = (
-        zone == "PRIVATE"
-        and policy.host_read_mode in {"selected", "system_only"}
-        and bool(policy.host_read_capabilities)
-        and (context.is_owner or context.is_admin or context.user_id in policy.allowed_user_ids)
-    )
-    caps = _zone_capabilities(
-        agent_id=context.agent_id,
-        zone=zone,
-        policy=policy,
-        mutation_user=mutation_allowed,
-    )
-    if not host_read_allowed:
-        caps = frozenset(c for c in caps if not c.startswith("host.") and not c.startswith("lumen."))
-        if zone == "PRIVATE" and policy.exposure_mode == "admin_private":
-            caps = frozenset(set(caps) | {c for c in policy.host_read_capabilities if c.startswith("lumen.")})
-            host_read_allowed = bool(policy.host_read_capabilities)
-
-    decision = AccessDecision(
-        allowed=True,
-        reason_code="ALLOWED",
-        trust_zone=zone,
-        host_read_allowed=host_read_allowed,
-        mutation_allowed=mutation_allowed,
-        effective_capabilities=caps,
-        exposure_mode=policy.exposure_mode,
-        context=context,
-        policy=policy,
-    )
-    emit_security_event(
-        "agent.access.allowed",
-        agent_id=context.agent_id,
-        user_id=context.user_id,
-        chat_id=context.chat_id,
-        chat_type=context.chat_type,
-        trust_zone=zone,
-        exposure_mode=policy.exposure_mode,
-        host_read_allowed=host_read_allowed,
-        mutation_allowed=mutation_allowed,
-        policy_version=POLICY_VERSION,
-    )
-    emit_security_event(
-        "agent.access.zone_resolved",
-        agent_id=context.agent_id,
-        user_id=context.user_id,
-        chat_id=context.chat_id,
-        trust_zone=zone,
-        exposure_mode=policy.exposure_mode,
-        policy_version=POLICY_VERSION,
-    )
-    return decision
+    finally:
+        if own_store and identity_store is not None:
+            try:
+                identity_store.close()
+            except Exception:
+                pass
 
 
 def security_context_prompt(decision: AccessDecision) -> str:
