@@ -92,6 +92,16 @@ interface FeishuIdentityItem {
   kind?: string;
 }
 
+interface TestCaseSettings {
+  project?: string;
+  language?: string;
+  table_name?: string;
+  view_strategy?: string;
+  base_app_token_env?: string;
+  base_app_token_configured?: boolean;
+  base_app_token_masked?: string;
+}
+
 interface AgentsSettingsPayload {
   enabled?: boolean;
   home?: string;
@@ -105,6 +115,7 @@ interface AgentsSettingsPayload {
     names?: Record<string, string>;
   };
   agents?: AgentSettings[];
+  test_case?: TestCaseSettings;
 }
 
 interface DashboardData extends RecordValue {
@@ -1755,7 +1766,16 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     enabled: Boolean(agentsPayload.enabled),
     agents: Array.isArray(agentsPayload.agents) ? JSON.stringify(agentsPayload.agents) : "[]",
     access: JSON.stringify(agentsPayload.access || {}),
+    testCase: JSON.stringify(agentsPayload.test_case || {}),
   });
+  const [testCaseDraft, setTestCaseDraft] = useState<TestCaseSettings>({
+    language: agentsPayload.test_case?.language || "zh-Hant",
+    table_name: agentsPayload.test_case?.table_name || "Test Cases",
+    base_app_token_env: agentsPayload.test_case?.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+    base_app_token_configured: Boolean(agentsPayload.test_case?.base_app_token_configured),
+    base_app_token_masked: agentsPayload.test_case?.base_app_token_masked || "",
+  });
+  const [testCaseToken, setTestCaseToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
@@ -1806,7 +1826,20 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
       chats: payload.recent_feishu?.chats || [],
       names: payload.recent_feishu?.names || {},
     });
-    setAgentsBaseline({ enabled: Boolean(payload.enabled), agents: JSON.stringify(nextAgents), access: JSON.stringify(nextAccess) });
+    setAgentsBaseline({
+      enabled: Boolean(payload.enabled),
+      agents: JSON.stringify(nextAgents),
+      access: JSON.stringify(nextAccess),
+      testCase: JSON.stringify(payload.test_case || {}),
+    });
+    setTestCaseDraft({
+      language: payload.test_case?.language || "zh-Hant",
+      table_name: payload.test_case?.table_name || "Test Cases",
+      base_app_token_env: payload.test_case?.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+      base_app_token_configured: Boolean(payload.test_case?.base_app_token_configured),
+      base_app_token_masked: payload.test_case?.base_app_token_masked || "",
+    });
+    setTestCaseToken("");
   };
   const addAccessId = (
     field: "allowed_chat_ids" | "allowed_user_ids" | "mutation_allowed_user_ids" | "admin_user_ids",
@@ -1856,7 +1889,22 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const deliveryScheduleChanged = deliveryEnabled !== Boolean(schedules.delivery?.enabled) || (deliveryEnabled && (deliveryInterval !== String(Math.round((schedules.delivery?.interval_seconds || 300) / 60)) || !sameValues(eligibleStatuses, configuredDeliveryStatuses) || inDevStatus !== String(schedules.delivery?.in_dev_status || "") || devDoneStatus !== String(schedules.delivery?.dev_done_status || "") || blockedStatus !== String(schedules.delivery?.blocked_status || "Block")));
   const patchScheduleChanged = patchEnabled !== Boolean(schedules.patch?.enabled) || (patchEnabled && (patchInterval !== String(Math.round((schedules.patch?.interval_seconds || 300) / 60)) || !sameValues(patchStatuses, configuredPatchStatuses) || patchStartStatus !== String(schedules.patch?.in_progress_status || "In Progress") || patchDoneStatus !== String(schedules.patch?.done_status || "Done") || patchBlockedStatus !== String(schedules.patch?.blocked_status || "Block")));
   const publishPolicyChanged = scanPublishMode !== String(workspace.publish?.scan || "pr") || deliveryPublishMode !== String(workspace.publish?.delivery || "pr") || patchPublishMode !== String(workspace.publish?.patch || "pr");
-  const agentsChanged = agentsEnabled !== agentsBaseline.enabled || JSON.stringify(agentDrafts) !== agentsBaseline.agents || JSON.stringify(accessDraft) !== agentsBaseline.access;
+  const agentsChanged = agentsEnabled !== agentsBaseline.enabled || JSON.stringify(agentDrafts) !== agentsBaseline.agents || JSON.stringify(accessDraft) !== agentsBaseline.access || JSON.stringify({
+    language: testCaseDraft.language || "zh-Hant",
+    table_name: testCaseDraft.table_name || "Test Cases",
+    base_app_token_env: testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+  }) !== (() => {
+    try {
+      const baseline = JSON.parse(agentsBaseline.testCase || "{}") as TestCaseSettings;
+      return JSON.stringify({
+        language: baseline.language || "zh-Hant",
+        table_name: baseline.table_name || "Test Cases",
+        base_app_token_env: baseline.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+      });
+    } catch {
+      return JSON.stringify({ language: "zh-Hant", table_name: "Test Cases", base_app_token_env: "FEISHU_MBPASS_QA_APP_TOKEN" });
+    }
+  })() || Boolean(testCaseToken.trim());
   const accessMappings = (
     [
       ["Chats", accessDraft.allowed_chat_ids || []],
@@ -1889,6 +1937,12 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
             json: {
               enabled: agentsEnabled,
               access: accessDraft,
+              test_case: {
+                language: testCaseDraft.language || "zh-Hant",
+                table_name: testCaseDraft.table_name || "Test Cases",
+                base_app_token_env: testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN",
+                ...(testCaseToken.trim() ? { base_app_token: testCaseToken.trim() } : {}),
+              },
               agents: agentDrafts.map((agent) => {
                 const body: Record<string, unknown> = {
                   id: agent.id,
@@ -2052,6 +2106,57 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
         </div>
       ))}
       {agentDrafts.length === 0 && <div className="settings-section divider"><Empty label="No agent roles available yet." /></div>}
+    </Panel>
+    <Panel title="Test Cases" action={<span className="muted">Mark · {project || "project"}</span>}>
+      <div className="settings-section">
+        <div className="settings-copy">
+          <div className="settings-heading"><div className="settings-title-stack"><h4>Generation language</h4></div></div>
+          <p>Controls the language Mark writes into the Feishu Bitable Test Cases sheet for this project. Traditional Chinese is the default for mbpass.</p>
+        </div>
+        <div className="settings-control wide">
+          <div className="form-grid compact">
+            <Field label="Output language">
+              <select
+                value={testCaseDraft.language || "zh-Hant"}
+                onChange={(event) => {
+                  setTestCaseDraft((current) => ({ ...current, language: event.target.value }));
+                  markDirty();
+                }}
+              >
+                <option value="zh-Hant">Traditional Chinese (zh-Hant)</option>
+                <option value="zh-Hans">Simplified Chinese (zh-Hans)</option>
+                <option value="en">English</option>
+              </select>
+            </Field>
+            <Field label="Bitable table name">
+              <input
+                value={testCaseDraft.table_name || "Test Cases"}
+                onChange={(event) => {
+                  setTestCaseDraft((current) => ({ ...current, table_name: event.target.value }));
+                  markDirty();
+                }}
+              />
+            </Field>
+            <Field
+              label="Bitable base token"
+              help={testCaseDraft.base_app_token_configured
+                ? `Configured (${testCaseDraft.base_app_token_masked || "set"}). Leave blank to keep. Env: ${testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN"}`
+                : `Stored in ~/.lumen/.env.local as ${testCaseDraft.base_app_token_env || "FEISHU_MBPASS_QA_APP_TOKEN"}`}
+            >
+              <input
+                value={testCaseToken}
+                placeholder={testCaseDraft.base_app_token_configured ? "Leave blank to keep current token" : "bas… / G6dI…"}
+                onChange={(event) => {
+                  setTestCaseToken(event.target.value);
+                  markDirty();
+                }}
+                autoComplete="off"
+              />
+            </Field>
+          </div>
+          <p className="schedule-note">After changing language, ask Milchick/Mark to re-generate the story so new rows use the selected language.</p>
+        </div>
+      </div>
     </Panel>
     <Panel title="Execution Models"><div className="settings-section"><div className="settings-copy"><h4>Cursor model</h4><p>Choose a preset or enter a custom Cursor model ID. Custom values must be supported by Cursor; Lumen does not validate model availability.</p></div><div className="settings-control wide"><div className="form-grid compact"><ModelField label="Auto Scan model" value={scanModel} onChange={setScanModel} markDirty={markDirty} /><ModelField label="Auto Delivery model" value={deliveryModel} onChange={setDeliveryModel} markDirty={markDirty} /><ModelField label="Auto Patch model" value={patchModel} onChange={setPatchModel} markDirty={markDirty} /></div></div></div></Panel>
     <Panel title="Publish Policy"><div className="settings-section"><div className="settings-copy"><h4>Automation outcome</h4><p>Direct push uses the repository credentials already configured for Git; PR and Merge use GitHub CLI. Auto Scan keeps a PR review gate and does not support direct push.</p></div><div className="settings-control wide"><div className="form-grid compact"><Field label="Auto Scan"><select value={scanPublishMode} onChange={(event) => { setScanPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option></select></Field><Field label="Auto Delivery"><select value={deliveryPublishMode} onChange={(event) => { setDeliveryPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="merge">Merge after pull request</option><option value="direct">Push directly to main branch</option></select></Field><Field label="Auto Patch"><select value={patchPublishMode} onChange={(event) => { setPatchPublishMode(event.target.value); markDirty(); }}><option value="pr">Open pull request</option><option value="direct">Push directly to main branch</option></select></Field></div></div></div></Panel>

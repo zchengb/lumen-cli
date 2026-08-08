@@ -190,7 +190,32 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
     }
 
 
-def agents_settings_payload(*, network: bool = False) -> dict[str, Any]:
+def test_case_settings_view(project_slug: str = "", config: dict[str, Any] | None = None) -> dict[str, Any]:
+    from skills.test_case.config import load_test_case_config, normalize_test_case_language
+
+    data = config if isinstance(config, dict) else load_agents_config()
+    slug = str(project_slug or "").strip().lower()
+    loaded = load_test_case_config(slug, config=data) if slug else {
+        "language": "zh-Hant",
+        "table_name": "Test Cases",
+        "base_app_token": "",
+        "view_strategy": "story",
+    }
+    token = str(loaded.get("base_app_token") or "").strip()
+    raw = loaded.get("raw") if isinstance(loaded.get("raw"), dict) else {}
+    token_env = str(raw.get("base_app_token_env") or "").strip()
+    return {
+        "project": slug,
+        "language": normalize_test_case_language(str(loaded.get("language") or "zh-Hant")),
+        "table_name": str(loaded.get("table_name") or "Test Cases"),
+        "view_strategy": str(loaded.get("view_strategy") or "story"),
+        "base_app_token_env": token_env or "FEISHU_MBPASS_QA_APP_TOKEN",
+        "base_app_token_configured": bool(token),
+        "base_app_token_masked": mask_credential(token) if token else "",
+    }
+
+
+def agents_settings_payload(*, network: bool = False, project: str = "") -> dict[str, Any]:
     config = load_agents_config()
     access = config.get("access") if isinstance(config.get("access"), dict) else {}
     recent = {"user_ids": [], "chat_ids": [], "users": [], "chats": [], "names": {}}
@@ -259,11 +284,15 @@ def agents_settings_payload(*, network: bool = False) -> dict[str, Any]:
         },
         "recent_feishu": recent,
         "agents": [agent_settings_view(agent_id, config) for agent_id in AGENT_META],
+        "test_case": test_case_settings_view(project, config),
     }
 
 
 def apply_agent_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    from skills.test_case.config import normalize_test_case_language
+
     config = load_agents_config()
+    project_slug = str(payload.get("project") or "").strip().lower()
     if "enabled" in payload:
         config["enabled"] = bool(payload.get("enabled"))
     if "access" in payload and isinstance(payload.get("access"), dict):
@@ -279,6 +308,24 @@ def apply_agent_settings(payload: dict[str, Any]) -> dict[str, Any]:
                 else:
                     values = []
                 access[key] = values
+    if "test_case" in payload and isinstance(payload.get("test_case"), dict) and project_slug:
+        tc_in = payload["test_case"]
+        projects = _ensure_dict(config, "projects")
+        project_cfg = _ensure_dict(projects, project_slug)
+        test_case = _ensure_dict(project_cfg, "test_case")
+        if "language" in tc_in:
+            test_case["language"] = normalize_test_case_language(str(tc_in.get("language") or "zh-Hant"))
+        if "table_name" in tc_in and str(tc_in.get("table_name") or "").strip():
+            test_case["table_name"] = str(tc_in.get("table_name")).strip()
+        if "view_strategy" in tc_in and str(tc_in.get("view_strategy") or "").strip():
+            test_case["view_strategy"] = str(tc_in.get("view_strategy")).strip()
+        if "base_app_token_env" in tc_in and str(tc_in.get("base_app_token_env") or "").strip():
+            test_case["base_app_token_env"] = str(tc_in.get("base_app_token_env")).strip()
+        token = str(tc_in.get("base_app_token") or "").strip()
+        if token:
+            env_name = str(test_case.get("base_app_token_env") or "FEISHU_MBPASS_QA_APP_TOKEN").strip()
+            upsert_lumen_env_var(env_name, token)
+            test_case["base_app_token_env"] = env_name
     profiles = _ensure_dict(config, "profiles")
     agents = payload.get("agents")
     if not isinstance(agents, list):
@@ -352,4 +399,4 @@ def apply_agent_settings(payload: dict[str, Any]) -> dict[str, Any]:
             if secret:
                 upsert_lumen_env_var(app_secret_env, secret)
     save_agents_config(config)
-    return agents_settings_payload()
+    return agents_settings_payload(project=project_slug)

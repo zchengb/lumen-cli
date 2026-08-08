@@ -8,7 +8,7 @@ from skills.test_case.config import REQUIRED_FIELDS, load_test_case_config
 from skills.test_case.dedupe import partition_new_cases
 from skills.test_case.generator import generate_test_cases
 from skills.test_case.jira_read import read_jira_issue
-from skills.test_case.workspace_context import load_workspace_context
+from skills.test_case.workspace_context import enrich_story_from_workspace, load_workspace_context
 
 
 def _ensure_table(client: FeishuBitable, app_token: str, table_name: str) -> str:
@@ -102,12 +102,18 @@ def generate_test_cases_for_issue(
     try:
         story = reader(issue_key)
     except Exception as exc:
-        return {
-            "status": "failed",
-            "code": "JIRA_READ_FAILED",
-            "message": str(exc)[:500],
-            "trace_id": trace_id,
-        }
+        from skills.test_case.workspace_context import load_workspace_story
+
+        local = load_workspace_story(workspace=workspace, issue_key=issue_key)
+        if local is None:
+            return {
+                "status": "failed",
+                "code": "JIRA_READ_FAILED",
+                "message": str(exc)[:500],
+                "trace_id": trace_id,
+            }
+        story = local
+        story.warnings = list(story.warnings or []) + [f"jira unavailable; used workspace story ({str(exc)[:160]})"]
     if str(story.type or "").lower() not in {"story", "bug", ""}:
         return {
             "status": "failed",
@@ -115,8 +121,20 @@ def generate_test_cases_for_issue(
             "message": f"Only Story/Bug supported in M1.0, got {story.type}",
             "trace_id": trace_id,
         }
+    story = enrich_story_from_workspace(story, workspace=workspace)
+    if not story.summary and not story.acceptance_criteria:
+        return {
+            "status": "failed",
+            "code": "STORY_CONTEXT_EMPTY",
+            "message": f"No usable story title/AC from Jira or workspace for {issue_key}",
+            "trace_id": trace_id,
+        }
     workspace_ctx = load_workspace_context(workspace=workspace, issue_key=story.key)
-    generated = generate_test_cases(story, workspace_context=workspace_ctx)
+    generated = generate_test_cases(
+        story,
+        workspace_context=workspace_ctx,
+        language=str(cfg.get("language") or "zh-Hant"),
+    )
     bitable = client or FeishuBitable(agent_id="mark")
     try:
         table_id = _ensure_table(bitable, app_token, cfg["table_name"])

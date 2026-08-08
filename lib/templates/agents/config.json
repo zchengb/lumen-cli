@@ -175,7 +175,8 @@
         "mbpass": {
           "base_app_token_env": "FEISHU_MBPASS_QA_APP_TOKEN",
           "table_name": "Test Cases",
-          "view_strategy": "story"
+          "view_strategy": "story",
+          "language": "zh-Hant"
         }
       }
     },
@@ -332,7 +333,8 @@
       "test_case": {
         "base_app_token_env": "FEISHU_MBPASS_QA_APP_TOKEN",
         "table_name": "Test Cases",
-        "view_strategy": "story"
+        "view_strategy": "story",
+        "language": "zh-Hant"
       }
     }
   },

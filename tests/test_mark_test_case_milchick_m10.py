@@ -91,6 +91,8 @@ class TestCaseSkillTests(unittest.TestCase):
             self.assertTrue(case.title)
             self.assertTrue(case.steps)
             self.assertTrue(case.expected_result)
+        zh = generate_test_cases(story, language="zh-Hant")
+        self.assertTrue(any("正常路徑" in c.title for c in zh))
 
     def test_dedupe_skips_existing_titles(self) -> None:
         generated = [
@@ -104,7 +106,7 @@ class TestCaseSkillTests(unittest.TestCase):
 
     def test_skill_writes_additive_rows(self) -> None:
         fake = FakeBitable()
-        fake.records.append({"fields": {"Story Key": "MBPAS-1601", "Title": "MBPAS-1601 AC1 happy path"}})
+        fake.records.append({"fields": {"Story Key": "MBPAS-1601", "Title": "MBPAS-1601 AC1 正常路徑：User can log in"}})
 
         def reader(key: str) -> StoryContext:
             return StoryContext(
@@ -118,7 +120,7 @@ class TestCaseSkillTests(unittest.TestCase):
         result = generate_test_cases_for_issue(
             project="mbpass",
             issue_key="MBPAS-1601",
-            config={"projects": {"mbpass": {"test_case": {"base_app_token": "bas_test", "table_name": "Test Cases"}}}},
+            config={"projects": {"mbpass": {"test_case": {"base_app_token": "bas_test", "table_name": "Test Cases", "language": "zh-Hant"}}}},
             client=fake,
             story_reader=reader,
         )
