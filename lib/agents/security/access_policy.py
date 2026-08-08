@@ -493,6 +493,16 @@ def classify_authorization_intent(text: str) -> str:
         "再生成",
         "重跑",
         "再跑",
+        "create jira",
+        "jira card",
+        "jira ticket",
+        "edit jira",
+        "update jira",
+        "建卡",
+        "创建jira",
+        "创建 jira",
+        "更新jira",
+        "更新 jira",
     )
     if any(tok in lower for tok in confirm):
         return "confirm_previous"

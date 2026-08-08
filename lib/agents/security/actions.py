@@ -98,6 +98,8 @@ MILCHICK_ACTIONS = (
     "agent.job.create",
     "agent.job.cancel",
     "agent.job.retry",
+    "jira.workitem.create",
+    "jira.workitem.update",
     "project.status",
     "workflow.status",
     "schedule.status",
@@ -125,5 +127,7 @@ MUTATION_ACTIONS = frozenset(
         "agent.job.create",
         "agent.job.cancel",
         "agent.job.retry",
+        "jira.workitem.create",
+        "jira.workitem.update",
     }
 )

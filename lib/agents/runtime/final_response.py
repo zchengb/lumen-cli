@@ -145,6 +145,8 @@ _STATUS_READ_ACTIONS = frozenset(
         "agent.job.list",
         "agent.job.show",
         "agent.job.create",
+        "jira.workitem.create",
+        "jira.workitem.update",
         "agent.health",
         "agent.list",
         "project.status",
@@ -302,6 +304,33 @@ def _latest_capability_jobs(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return latest
 
 
+def _format_jira_receipt(action: str, result: dict[str, Any]) -> str:
+    if not isinstance(result, dict):
+        return ""
+    nested_status = str(result.get("status") or "").strip().lower()
+    key = str(result.get("issue_key") or "").strip()
+    url = str(result.get("url") or "").strip()
+    title = str(result.get("summary") or "").strip()
+    if nested_status == "failed":
+        msg = str(result.get("message") or result.get("code") or "failed").strip()
+        head = f"Jira {'create' if 'create' in action else 'update'} failed"
+        if key:
+            head = f"{head} for {key}"
+        return f"{head}: {msg}"
+    verb = "Created" if "create" in action else "Updated"
+    if key and title and "create" in action:
+        head = f"{verb} {key}: {title}"
+    elif key:
+        head = f"{verb} {key}."
+    elif title:
+        head = f"{verb}: {title}"
+    else:
+        head = f"{verb} Jira work item."
+    if url and url not in head:
+        return f"{head}\n{url}"
+    return head
+
+
 def _format_jobs_payload(result: dict[str, Any]) -> str:
     jobs: list[dict[str, Any]] = []
     if isinstance(result.get("jobs"), list):
@@ -343,6 +372,11 @@ def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
         if receipt.get("status") != "succeeded":
             continue
         result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+        if action in {"jira.workitem.create", "jira.workitem.update"} and not job_detail:
+            detail = _format_jira_receipt(action, result)
+            if detail:
+                job_detail = detail
+            continue
         if action == "agent.job.create" and not job_detail:
             handoff = str(result.get("handoff_text") or "").strip()
             if handoff:

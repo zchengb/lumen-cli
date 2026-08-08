@@ -246,6 +246,10 @@ def default_executors() -> dict[str, Executor]:
     from agents.jobs.broker import execute_job_action
 
     mapping["test_case.generate"] = execute_test_case_action
+    from agents.security.adapters.jira import execute_jira_action
+
+    for action in ("jira.workitem.create", "jira.workitem.update"):
+        mapping[action] = execute_jira_action
     from agents.security.adapters.host_read import execute_host_read_action
 
     for action in (

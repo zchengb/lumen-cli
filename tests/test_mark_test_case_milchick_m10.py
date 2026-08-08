@@ -349,6 +349,7 @@ class MilchickJobTests(unittest.TestCase):
         assert milchick is not None
         self.assertEqual(milchick.role, "orchestrator")
         self.assertIn("agent.job.create", milchick.capabilities.actions)
+        self.assertIn("jira.workitem.create", milchick.capabilities.actions)
         self.assertNotIn("test_case.generate", milchick.capabilities.actions)
 
     def test_job_dependency_and_summary(self) -> None:

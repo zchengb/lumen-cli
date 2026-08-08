@@ -414,6 +414,9 @@ def handle_autonomous_conversation(
             if action_receipts:
                 for receipt in action_receipts:
                     result_payload = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+                    action_name = str(receipt.get("action") or "").strip()
+                    if action_name.startswith("jira.workitem.") and receipt.get("status") == "succeeded":
+                        continue
                     if receipt.get("status") == "succeeded" and result_payload.get("summary"):
                         if not parsed.valid:
                             reply_text = str(result_payload["summary"])
