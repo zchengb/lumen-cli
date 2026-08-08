@@ -208,6 +208,7 @@ def _write_cases_to_sheet(
             sheet_id=sheet_id,
             range_a1=f"{verify_col}2:{verify_col}2000",
             options=list(localize_verify_status_options(language)),
+            colors=["#34C759", "#FF3B30"],
         )
     except Exception:
         pass
@@ -217,6 +218,8 @@ def _write_cases_to_sheet(
             sheet_id=sheet_id,
             column_widths=list(SHEET_COLUMN_WIDTHS),
             freeze_rows=1,
+            bold_header=True,
+            header_end_col=end_col,
         )
     except Exception:
         pass

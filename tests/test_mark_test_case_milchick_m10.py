@@ -82,6 +82,7 @@ class FakeSheets:
         self.ensured_names: list[str] = []
         self.dropdowns: list[dict[str, Any]] = []
         self.formatted: list[dict[str, Any]] = []
+        self.styles: list[dict[str, Any]] = []
 
     def ensure_sheet(self, spreadsheet_token: str, sheet_name: str) -> dict[str, Any]:
         self.ensured_names.append(sheet_name)
@@ -99,14 +100,41 @@ class FakeSheets:
             self.appended.append(list(row))
         return {"updatedRows": len(values)}
 
-    def set_dropdown(self, spreadsheet_token: str, *, sheet_id: str, range_a1: str, options: list[str]) -> dict[str, Any]:
-        self.dropdowns.append({"sheet_id": sheet_id, "range_a1": range_a1, "options": list(options)})
+    def set_dropdown(self, spreadsheet_token: str, *, sheet_id: str, range_a1: str, options: list[str], colors=None) -> dict[str, Any]:
+        self.dropdowns.append({"sheet_id": sheet_id, "range_a1": range_a1, "options": list(options), "colors": list(colors or [])})
         return {}
 
-    def format_sheet(self, spreadsheet_token: str, *, sheet_id: str, column_widths=None, freeze_rows: int = 1) -> dict[str, Any]:
-        self.formatted.append({"sheet_id": sheet_id, "column_widths": list(column_widths or []), "freeze_rows": freeze_rows})
+    def set_range_style(self, spreadsheet_token: str, *, sheet_id: str, range_a1: str, bold: bool | None = None, v_align: int | None = None) -> dict[str, Any]:
+        self.styles.append({"sheet_id": sheet_id, "range_a1": range_a1, "bold": bold, "v_align": v_align})
         return {}
 
+    def format_sheet(
+        self,
+        spreadsheet_token: str,
+        *,
+        sheet_id: str,
+        column_widths=None,
+        freeze_rows: int = 1,
+        bold_header: bool = False,
+        header_end_col: str = "",
+    ) -> dict[str, Any]:
+        self.formatted.append(
+            {
+                "sheet_id": sheet_id,
+                "column_widths": list(column_widths or []),
+                "freeze_rows": freeze_rows,
+                "bold_header": bold_header,
+                "header_end_col": header_end_col,
+            }
+        )
+        if bold_header:
+            self.set_range_style(
+                spreadsheet_token,
+                sheet_id=sheet_id,
+                range_a1=f"A1:{(header_end_col or 'A')}1",
+                bold=True,
+            )
+        return {}
 
 def _mock_design_runner(payload: dict[str, Any]):
     def _runner(_prompt: str) -> str:
@@ -275,6 +303,9 @@ class TestCaseSkillTests(unittest.TestCase):
         self.assertEqual(fake.dropdowns[0]["options"], ["通過", "失敗"])
         self.assertIn("G2:G2000", fake.dropdowns[0]["range_a1"])
         self.assertTrue(fake.formatted)
+        self.assertTrue(fake.formatted[0]["bold_header"])
+        self.assertEqual(fake.formatted[0]["header_end_col"], "H")
+        self.assertTrue(any(s.get("bold") and s.get("range_a1") == "A1:H1" for s in fake.styles))
         self.assertIn("/sheets/OG4Js7cIlh7d0QtHOEnc1kDfnvf?sheet=sht1", result["sheet_url"])
 
     def test_broker_mark_action_allowed(self) -> None:

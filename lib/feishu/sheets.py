@@ -138,6 +138,7 @@ class FeishuSheets:
         sheet_id: str,
         range_a1: str,
         options: list[str],
+        colors: list[str] | None = None,
     ) -> dict[str, Any]:
         token = parse_spreadsheet_token(spreadsheet_token)
         sid = str(sheet_id or "").strip()
@@ -145,6 +146,7 @@ class FeishuSheets:
         if not sid or not values:
             return {}
         target = range_a1 if "!" in range_a1 else f"{sid}!{range_a1}"
+        palette = list(colors) if colors else ["#34C759", "#FF3B30", "#8E8E93"]
         return self._request(
             "POST",
             f"/sheets/v2/spreadsheets/{token}/dataValidation",
@@ -153,9 +155,40 @@ class FeishuSheets:
                 "dataValidationType": "list",
                 "dataValidation": {
                     "conditionValues": values,
-                    "options": {"multipleValues": False, "highlightValidData": True, "colors": ["#34C759", "#FF3B30"][: len(values)]},
+                    "options": {
+                        "multipleValues": False,
+                        "highlightValidData": True,
+                        "colors": palette[: len(values)],
+                    },
                 },
             },
+        )
+
+    def set_range_style(
+        self,
+        spreadsheet_token: str,
+        *,
+        sheet_id: str,
+        range_a1: str,
+        bold: bool | None = None,
+        v_align: int | None = None,
+    ) -> dict[str, Any]:
+        token = parse_spreadsheet_token(spreadsheet_token)
+        sid = str(sheet_id or "").strip()
+        if not sid or not range_a1:
+            return {}
+        target = range_a1 if "!" in range_a1 else f"{sid}!{range_a1}"
+        style: dict[str, Any] = {}
+        if bold is not None:
+            style["font"] = {"bold": bool(bold)}
+        if v_align is not None:
+            style["vAlign"] = int(v_align)
+        if not style:
+            return {}
+        return self._request(
+            "PUT",
+            f"/sheets/v2/spreadsheets/{token}/style",
+            {"appendStyle": {"range": target, "style": style}},
         )
 
     def get_values(self, spreadsheet_token: str, range_a1: str) -> list[list[Any]]:
@@ -198,6 +231,8 @@ class FeishuSheets:
         sheet_id: str,
         column_widths: list[tuple[int, int]] | None = None,
         freeze_rows: int = 1,
+        bold_header: bool = False,
+        header_end_col: str = "",
     ) -> dict[str, Any]:
         token = parse_spreadsheet_token(spreadsheet_token)
         sid = str(sheet_id or "").strip()
@@ -231,10 +266,19 @@ class FeishuSheets:
                     }
                 }
             )
-        if not requests:
-            return {}
-        return self._request(
-            "POST",
-            f"/sheets/v2/spreadsheets/{token}/sheets_batch_update",
-            {"requests": requests},
-        )
+        result: dict[str, Any] = {}
+        if requests:
+            result = self._request(
+                "POST",
+                f"/sheets/v2/spreadsheets/{token}/sheets_batch_update",
+                {"requests": requests},
+            )
+        if bold_header:
+            end = str(header_end_col or "").strip() or "A"
+            self.set_range_style(
+                spreadsheet_token,
+                sheet_id=sid,
+                range_a1=f"A1:{end}1",
+                bold=True,
+            )
+        return result if isinstance(result, dict) else {}
