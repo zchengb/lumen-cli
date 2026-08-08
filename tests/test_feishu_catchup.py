@@ -32,7 +32,7 @@ class CatchupTests(unittest.TestCase):
         catchup = StartupCatchup(
             started_at=started,
             on_flush=lambda event, _client: flushed.append(event["event"]["message"]["message_id"]),
-            mark_seen=seen.append,
+            mark_seen=lambda _agent, message_id: seen.append(message_id),
             catchup_seconds=5.0,
             debounce_seconds=0.2,
         )
@@ -92,7 +92,7 @@ class CatchupTests(unittest.TestCase):
         catchup = StartupCatchup(
             started_at=started,
             on_flush=lambda event, _client: flushed.append("x"),
-            mark_seen=seen.append,
+            mark_seen=lambda _agent, message_id: seen.append(message_id),
             catchup_seconds=5.0,
             debounce_seconds=0.1,
         )

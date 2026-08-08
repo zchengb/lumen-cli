@@ -38,7 +38,7 @@ class StartupCatchup:
         *,
         started_at: float | None = None,
         on_flush: Callable[[dict[str, Any], Any], None],
-        mark_seen: Callable[[str], None] | None = None,
+        mark_seen: Callable[[str, str], None] | None = None,
         catchup_seconds: float = CATCHUP_SECONDS,
         debounce_seconds: float = CATCHUP_DEBOUNCE_SECONDS,
     ) -> None:
@@ -67,27 +67,29 @@ class StartupCatchup:
         now: float | None = None,
     ) -> str:
         stamp = time.time() if now is None else float(now)
+        agent = str(agent_id or "").strip().lower()
         if not self.in_catchup(stamp):
             if is_outdated_message(create_time=create_time, started_at=self.started_at, now=stamp):
-                self._see(message_id)
+                self._see(agent, message_id)
                 return "outdated"
             return "pass"
-        key = (str(agent_id or "").strip().lower(), str(chat_id or message_id or "").strip())
+        key = (agent, str(chat_id or message_id or "").strip())
         with self._lock:
             prev = self._buffers.get(key)
             incoming_ts = float(create_time or 0.0)
             if prev is not None and incoming_ts < float(prev.get("create_time") or 0.0):
-                self._see(message_id)
+                self._see(agent, message_id)
                 return "catchup_drop"
             if prev is not None:
                 prev_id = str(prev.get("message_id") or "").strip()
                 if prev_id and prev_id != message_id:
-                    self._see(prev_id)
+                    self._see(agent, prev_id)
             self._buffers[key] = {
                 "event": event,
                 "client": client,
                 "message_id": message_id,
                 "create_time": incoming_ts,
+                "agent_id": agent,
             }
             old = self._timers.pop(key, None)
             if old is not None:
@@ -98,12 +100,12 @@ class StartupCatchup:
             timer.start()
         return "catchup_buffer"
 
-    def _see(self, message_id: str) -> None:
+    def _see(self, agent_id: str, message_id: str) -> None:
         mid = str(message_id or "").strip()
         if not mid or self.mark_seen is None:
             return
         try:
-            self.mark_seen(mid)
+            self.mark_seen(str(agent_id or "").strip().lower(), mid)
         except Exception:
             pass
 

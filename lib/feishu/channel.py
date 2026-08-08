@@ -92,7 +92,7 @@ class FeishuChannel:
         self.catchup = StartupCatchup(
             started_at=self.started_at,
             on_flush=self._dispatch_event,
-            mark_seen=lambda message_id: self.deduper.claim(message_id),
+            mark_seen=lambda agent_id, message_id: self.deduper.claim(f"{agent_id}:{message_id}"),
         )
 
     def process_event(self, event: dict[str, Any], client: FeishuClientConfig) -> None:
@@ -132,14 +132,35 @@ class FeishuChannel:
             return
         self._dispatch_event(event, client)
 
+    def _dedupe_key(self, client: FeishuClientConfig, message_id: str) -> str:
+        mid = str(message_id or "").strip()
+        if not mid:
+            return ""
+        return f"{str(client.agent_id or '').strip().lower()}:{mid}"
+
     def _dispatch_event(self, event: dict[str, Any], client: FeishuClientConfig) -> None:
+        from feishu.handlers import should_handle
+
+        if not should_handle(event, client):
+            event_body = event.get("event") if isinstance(event.get("event"), dict) else event
+            message = event_body.get("message") if isinstance(event_body, dict) else {}
+            _LOG.info(
+                "ignore message agent=%s chat_type=%s mentions=%s parent_id=%s thread_id=%s",
+                client.agent_id,
+                (message.get("chat_type") if isinstance(message, dict) else None),
+                (message.get("mentions") if isinstance(message, dict) else None),
+                (message.get("parent_id") if isinstance(message, dict) else None),
+                (message.get("thread_id") if isinstance(message, dict) else None),
+            )
+            return
         message_id = ""
         event_body = event.get("event") if isinstance(event.get("event"), dict) else event
         message = event_body.get("message") if isinstance(event_body, dict) else {}
         if isinstance(message, dict):
             message_id = str(message.get("message_id") or "").strip()
-        if message_id and not self.deduper.claim(message_id):
-            _LOG.info("skip duplicate message_id=%s", message_id)
+        dedupe_key = self._dedupe_key(client, message_id)
+        if dedupe_key and not self.deduper.claim(dedupe_key):
+            _LOG.info("skip duplicate agent=%s message_id=%s", client.agent_id, message_id or "-")
             return
         _LOG.info(
             "dispatch agent=%s message_id=%s chat_type=%s",
