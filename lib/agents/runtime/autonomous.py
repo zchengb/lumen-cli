@@ -184,6 +184,32 @@ def handle_autonomous_conversation(
     elif root_id and anchored_text != text:
         obs.emit(trace, "reply.anchor.resolved", parent_id=root_id)
 
+    if agent_id == "milchick":
+        from agents.milchick.jira_shortcut import try_milchick_jira_create
+
+        shortcut_context = trusted_context_from_meta(
+            agent_id=agent_id,
+            project_slug=slug,
+            meta=meta,
+            trace_id=trace.trace_id,
+            user_text=text,
+            access_decision=access,
+        )
+        shortcut = try_milchick_jira_create(
+            user_text=text,
+            anchored_text=anchored_text,
+            context=shortcut_context,
+            workspace=workspace,
+        )
+        if shortcut:
+            obs.emit(trace, "agent.jira.shortcut", status=shortcut.get("status"))
+            obs.upsert_trace(trace, state="completed" if shortcut.get("status") == "ok" else "failed", project_slug=slug)
+            shortcut["trace_id"] = trace.trace_id
+            shortcut["agent_id"] = agent_id
+            shortcut["project_slug"] = slug
+            shortcut["session_id"] = ""
+            return shortcut
+
     lock = store.lock_for(scope)
     with lock:
         try:
@@ -308,12 +334,23 @@ def handle_autonomous_conversation(
                 result = runner.run(**run_kwargs)
 
             if (
-                result.status == "failed"
-                and provider_session_id
-                and any(tok in (result.error or "").lower() for tok in _RESUME_RETRY_TOKENS)
+                provider_session_id
+                and (
+                    (
+                        result.status == "failed"
+                        and any(tok in (result.error or "").lower() for tok in _RESUME_RETRY_TOKENS)
+                    )
+                    or (result.status == "succeeded" and not str(result.text or "").strip())
+                )
             ):
-                obs.emit(trace, "agent.session.invalidated", provider_session_id=provider_session_id)
+                obs.emit(
+                    trace,
+                    "agent.session.invalidated",
+                    provider_session_id=provider_session_id,
+                    reason="resume_retry",
+                )
                 store.invalidate_provider(session["session_id"])
+                store.close_session(session["session_id"])
                 session = store.create(
                     agent_id=agent_id,
                     chat_id=chat_id,
@@ -329,6 +366,7 @@ def handle_autonomous_conversation(
                     workspace_path=str(workspace),
                     user_message=anchored_text,
                 )
+                prompt = f"{prompt}\n\n{security_block}\n"
                 run_kwargs = {
                     "workspace": workspace,
                     "prompt": prompt,
@@ -341,8 +379,9 @@ def handle_autonomous_conversation(
                 else:
                     result = runner.run(**run_kwargs)
                 is_new = True
+                provider_session_id = None
 
-            if result.provider_session_id and result.status == "succeeded":
+            if result.provider_session_id and result.status == "succeeded" and str(result.text or "").strip():
                 store.update(
                     session["session_id"],
                     provider_session_id=result.provider_session_id,
@@ -361,6 +400,14 @@ def handle_autonomous_conversation(
                         },
                         ensure_ascii=False,
                     ),
+                )
+            elif result.status == "succeeded" and not str(result.text or "").strip() and result.provider_session_id:
+                store.invalidate_provider(session["session_id"])
+                store.update(
+                    session["session_id"],
+                    status="active",
+                    last_trace_id=trace.trace_id,
+                    failure_count=int(session.get("failure_count") or 0) + 1,
                 )
             elif result.status != "succeeded":
                 store.update(

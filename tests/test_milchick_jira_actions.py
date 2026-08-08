@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -113,6 +114,118 @@ class JiraActionTests(unittest.TestCase):
         self.assertIn("Created MBPAS-2001: Preview mismatch", text)
         self.assertIn("https://example.atlassian.net/browse/MBPAS-2001", text)
         self.assertNotIn("I'll create", text)
+
+    def test_jira_shortcut_parses_anchor_and_creates(self) -> None:
+        from agents.milchick.jira_shortcut import summary_and_description, try_milchick_jira_create, wants_jira_create
+        from agents.security.actions import ActionReceipt
+        from agents.security.trusted import TrustedActionContext
+
+        self.assertTrue(wants_jira_create("Please create the jira card for this issue"))
+        anchored = (
+            "[FEISHU REPLY ANCHOR]\nPrior message content:\n-----\n"
+            + json.dumps(
+                {
+                    "title": "回覆：<問題反饋> 直視精選的後台預覽與前台完全不符合",
+                    "elements": [[{"tag": "text", "text": "Backend preview is wrong."}]],
+                },
+                ensure_ascii=False,
+            )
+            + "\n-----\n\n[USER REPLY]\nPlease create the jira card for this issue\n"
+        )
+        summary, description = summary_and_description(
+            user_text="Please create the jira card for this issue",
+            anchored_text=anchored,
+        )
+        self.assertIn("直視精選", summary)
+        self.assertIn("Backend preview", description)
+
+        class FakeBroker:
+            def execute(self, request):
+                self.request = request
+                return ActionReceipt(
+                    receipt_id="act-1",
+                    status="succeeded",
+                    action=request.action,
+                    agent_id=request.agent_id,
+                    actor=request.actor_user_id,
+                    resource=request.resource,
+                    trace_id=request.trace_id,
+                    executed_at="now",
+                    result={
+                        "status": "completed",
+                        "issue_key": "MBPAS-2100",
+                        "summary": request.arguments.get("summary"),
+                        "url": "https://example.atlassian.net/browse/MBPAS-2100",
+                    },
+                )
+
+        broker = FakeBroker()
+
+        def fake_designer(prompt: str) -> str:
+            self.assertIn("Investigate the workspace", prompt)
+            return json.dumps(
+                {
+                    "summary": "Featured vertical preview mismatches APP crop",
+                    "issue_type": "Bug",
+                    "priority": "Medium",
+                    "labels": ["feishu-feedback"],
+                    "problem": "Admin featured preview does not match APP crop rules.",
+                    "expected": "Preview reflects APP crop (24px sides, 228px text band).",
+                    "actual": "Preview shows full image only.",
+                    "steps_to_reproduce": ["Open admin featured editor", "Click preview"],
+                    "acceptance_criteria": ["Preview matches APP crop guide"],
+                    "workspace_findings": ["admin featured preview component"],
+                    "suggested_fix": "Align preview overlay with APP crop constants.",
+                },
+                ensure_ascii=False,
+            )
+
+        out = try_milchick_jira_create(
+            user_text="Please create the jira card for this issue",
+            anchored_text=anchored,
+            context=TrustedActionContext(
+                agent_id="milchick",
+                project_slug="mbpass",
+                actor_user_id="ou_1",
+                chat_id="oc_1",
+                thread_id="omt_1",
+                source_message_id="om_1",
+                trace_id="tr_1",
+                authorization_intent="mutate_explicit",
+                explicit_authorization=True,
+            ),
+            broker=broker,
+            workspace=Path("."),
+            designer_runner=fake_designer,
+        )
+        assert out is not None
+        self.assertEqual(out["status"], "ok")
+        self.assertIn("MBPAS-2100", out["text"])
+        self.assertEqual(broker.request.action, "jira.workitem.create")
+        self.assertIn("## Problem", broker.request.arguments["description"])
+        self.assertIn("Workspace findings", broker.request.arguments["description"])
+        self.assertNotEqual(broker.request.arguments["description"], "Backend preview is wrong.")
+        self.assertTrue(out["flags"]["jira_drafted"])
+        self.assertEqual(broker.request.arguments["summary"], "Featured vertical preview mismatches APP crop")
+
+    def test_format_issue_description_keeps_source(self) -> None:
+        from agents.milchick.jira_designer import format_issue_description
+
+        text = format_issue_description(
+            {
+                "problem": "Preview mismatch",
+                "expected": "Match APP",
+                "actual": "Full image",
+                "steps_to_reproduce": ["Open preview"],
+                "acceptance_criteria": ["Overlay matches crop"],
+                "workspace_findings": ["featured-example.png guide"],
+            },
+            source_title="原邮件标题",
+            source_body="raw email body",
+        )
+        self.assertIn("## Problem", text)
+        self.assertIn("## Source feedback", text)
+        self.assertIn("raw email body", text)
 
     def test_broker_denies_dylan(self) -> None:
         receipt = CapabilityBroker(config={"access": {"mutation_allowed_user_ids": ["ou_owner"]}}).execute(

@@ -5,7 +5,7 @@ from typing import Any
 
 from agents.milchick.soul_loader import load_soul
 
-PROTOCOL_VERSION = "1"
+PROTOCOL_VERSION = "2"
 SOUL_VERSION = "1"
 
 
