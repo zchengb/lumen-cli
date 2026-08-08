@@ -180,14 +180,25 @@ def _nested_outcome(job: dict[str, Any]) -> str:
     inner = result.get("result") if isinstance(result.get("result"), dict) else result
     if not isinstance(inner, dict):
         return ""
+    lines: list[str] = []
     if str(inner.get("status") or "").lower() == "failed":
         code = str(inner.get("code") or "").strip()
         message = str(inner.get("message") or "").strip()
         if code and message:
-            return f"{code} — {message}"
-        return code or message
-    message = str(inner.get("message") or inner.get("summary") or "").strip()
-    return message
+            lines.append(f"{code} — {message}")
+        elif code or message:
+            lines.append(code or message)
+    else:
+        message = str(inner.get("message") or inner.get("summary") or "").strip()
+        if message:
+            lines.append(message)
+    sheet_url = str(inner.get("sheet_url") or result.get("sheet_url") or "").strip()
+    view_name = str(inner.get("view_name") or result.get("view_name") or "").strip()
+    message = "\n".join(lines)
+    if sheet_url and sheet_url not in message:
+        label = view_name or "Open Test Cases sheet"
+        lines.append(f"[{label}]({sheet_url})")
+    return "\n  ".join(lines).strip()
 
 
 def _issue_key(job: dict[str, Any]) -> str:

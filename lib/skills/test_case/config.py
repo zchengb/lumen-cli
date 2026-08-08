@@ -54,11 +54,13 @@ def load_test_case_config(
         app_token = os.environ.get(token_env, "").strip() or read_lumen_env_var(token_env).strip()
     table_name = str(test_case.get("table_name") or "Test Cases").strip() or "Test Cases"
     language = normalize_test_case_language(str(test_case.get("language") or "zh-Hant"))
+    base_host = str(test_case.get("feishu_base_host") or "inspiregroup.feishu.cn").strip() or "inspiregroup.feishu.cn"
     return {
         "project": slug,
         "base_app_token": app_token,
         "table_name": table_name,
         "view_strategy": str(test_case.get("view_strategy") or "story"),
         "language": language,
+        "feishu_base_host": base_host,
         "raw": test_case,
     }

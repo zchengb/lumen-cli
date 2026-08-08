@@ -102,8 +102,14 @@ def read_jira_issue(issue_key: str) -> StoryContext:
     raw = parse_twg_json(output)
     if raw is None:
         raise RuntimeError("TWG returned no JSON JIRA payload")
-    item = raw.get("data") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else raw
-    if not isinstance(item, dict):
+    data = raw.get("data") if isinstance(raw, dict) else raw
+    if isinstance(data, list):
+        item = data[0] if data and isinstance(data[0], dict) else {}
+    elif isinstance(data, dict):
+        item = data
+    else:
+        item = {}
+    if not item:
         raise RuntimeError("Unexpected JIRA payload")
     fields = item.get("fields") if isinstance(item.get("fields"), dict) else item
     summary = _text_of(fields.get("summary") or item.get("summary") or item.get("title"))
@@ -113,6 +119,8 @@ def read_jira_issue(issue_key: str) -> StoryContext:
         if isinstance(fields.get("issuetype"), dict)
         else fields.get("issuetype") or item.get("type") or item.get("issueType")
     )
+    if not issue_type and isinstance(item.get("issuetype"), dict):
+        issue_type = _text_of(item.get("issuetype", {}).get("name"))
     comments_raw = fields.get("comment") if isinstance(fields.get("comment"), dict) else {}
     comment_list = comments_raw.get("comments") if isinstance(comments_raw.get("comments"), list) else []
     if not comment_list and isinstance(item.get("comments"), list):

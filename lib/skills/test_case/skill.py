@@ -31,16 +31,38 @@ def _ensure_fields(client: FeishuBitable, app_token: str, table_id: str) -> None
         client.create_field(app_token, table_id, name=name, field_type=field_type)
 
 
-def _ensure_story_view(client: FeishuBitable, app_token: str, table_id: str, *, story_key: str, story_title: str) -> str:
+def _ensure_story_view(client: FeishuBitable, app_token: str, table_id: str, *, story_key: str, story_title: str) -> tuple[str, str]:
     view_name = f"{story_key} · {(story_title or story_key)[:80]}".strip()
     for view in client.list_views(app_token, table_id):
-        if str(view.get("view_name") or view.get("name") or "").strip() == view_name:
-            return view_name
+        name = str(view.get("view_name") or view.get("name") or "").strip()
+        if name == view_name:
+            view_id = str(view.get("view_id") or view.get("id") or "").strip()
+            return view_name, view_id
     try:
-        client.create_view(app_token, table_id, name=view_name)
+        created = client.create_view(app_token, table_id, name=view_name)
+        view_id = str(created.get("view_id") or created.get("id") or "").strip()
+        return view_name, view_id
     except Exception:
-        pass
-    return view_name
+        return view_name, ""
+
+
+def build_sheet_url(
+    *,
+    app_token: str,
+    table_id: str = "",
+    view_id: str = "",
+    host: str = "inspiregroup.feishu.cn",
+) -> str:
+    token = str(app_token or "").strip()
+    if not token:
+        return ""
+    base = f"https://{str(host or 'inspiregroup.feishu.cn').strip()}/base/{token}"
+    query = []
+    if table_id:
+        query.append(f"table={table_id}")
+    if view_id:
+        query.append(f"view={view_id}")
+    return f"{base}?{'&'.join(query)}" if query else base
 
 
 def _existing_titles_for_story(records: list[dict[str, Any]], story_key: str) -> set[str]:
@@ -59,6 +81,8 @@ def _existing_titles_for_story(records: list[dict[str, Any]], story_key: str) ->
 
 def format_summary(result: dict[str, Any]) -> str:
     counts = result.get("test_case_counts") if isinstance(result.get("test_case_counts"), dict) else {}
+    sheet_url = str(result.get("sheet_url") or "").strip()
+    view_name = str(result.get("view_name") or "").strip()
     lines = [
         f"Generated {result.get('generated', 0)} test cases for {result.get('issue_key')}.",
         "",
@@ -68,9 +92,14 @@ def format_summary(result: dict[str, Any]) -> str:
         f"- Added: {result.get('created', 0)}",
         f"- Existing: {result.get('skipped_existing', 0)}",
         "",
-        "Feishu Test Cases view:",
-        str(result.get("view_name") or ""),
+        "Feishu Test Cases sheet:",
     ]
+    if sheet_url and view_name:
+        lines.append(f"[{view_name}]({sheet_url})")
+    elif sheet_url:
+        lines.append(sheet_url)
+    elif view_name:
+        lines.append(view_name)
     warnings = result.get("warnings") if isinstance(result.get("warnings"), list) else []
     if warnings:
         lines.extend(["", "Warnings:"] + [f"- {w}" for w in warnings[:8]])
@@ -145,12 +174,18 @@ def generate_test_cases_for_issue(
         for case in created_cases:
             case.generated_by = "mark"
             bitable.create_record(app_token, table_id, case.to_fields())
-        view_name = _ensure_story_view(
+        view_name, view_id = _ensure_story_view(
             bitable,
             app_token,
             table_id,
             story_key=story.key,
             story_title=story.summary,
+        )
+        sheet_url = build_sheet_url(
+            app_token=app_token,
+            table_id=table_id,
+            view_id=view_id,
+            host=str(cfg.get("feishu_base_host") or "inspiregroup.feishu.cn"),
         )
     except Exception as exc:
         message = str(exc)
@@ -175,6 +210,9 @@ def generate_test_cases_for_issue(
         "skipped_existing": len(skipped_cases),
         "obsolete_marked": 0,
         "view_name": view_name,
+        "table_id": table_id,
+        "view_id": view_id,
+        "sheet_url": sheet_url,
         "test_case_counts": counts,
         "warnings": list(story.warnings),
         "requested_by": requested_by,
