@@ -215,6 +215,10 @@ def _format_one_job(job: dict[str, Any]) -> str:
     owner = str(job.get("target_agent") or job.get("delegated_by") or "").strip()
     issue = _issue_key(job)
     outcome = _nested_outcome(job)
+    if outcome and status == "completed":
+        lower = outcome.lower()
+        if "failed" in lower or outcome.startswith("TEST_CASE_"):
+            status = "completed (inner failed)"
     head = f"- **{job_id}**"
     bits = [status]
     if owner:
@@ -314,14 +318,14 @@ def prefer_action_summary(reply_text: str, receipts: list[dict[str, Any]]) -> st
         str(r.get("action") or "").strip() in _STATUS_READ_ACTIONS and r.get("status") == "succeeded"
         for r in receipts
     )
-    if denial_text and summary and has_status_read:
-        return f"{summary}\n\n{denial_text}"
+    if has_status_read and summary:
+        if denial_text:
+            return f"{summary}\n\n{denial_text}"
+        return summary
     if denial_text and (not reply_text or is_planning_reply(reply_text)):
         return denial_text
     if denial_text and reply_text and denial_text not in reply_text:
         return f"{reply_text}\n\n{denial_text}"
-    if has_status_read and (not reply_text or is_planning_reply(reply_text)):
-        return summary
     if not reply_text:
         return summary
     return reply_text

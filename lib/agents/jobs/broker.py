@@ -177,13 +177,18 @@ class AgentJobBroker:
         )
         receipt = (broker or CapabilityBroker()).execute(request)
         current.result = receipt.to_dict()
-        if receipt.status == "succeeded":
+        nested = receipt.result if isinstance(receipt.result, dict) else {}
+        nested_failed = str(nested.get("status") or "").lower() == "failed"
+        if receipt.status == "succeeded" and not nested_failed:
             current.status = "completed"
             current.error = ""
             self._handoff_reply(current, receipt.to_dict())
         else:
             current.status = "failed"
-            current.error = receipt.error or receipt.error_code or receipt.status
+            if nested_failed:
+                current.error = str(nested.get("code") or nested.get("message") or "action_failed")
+            else:
+                current.error = receipt.error or receipt.error_code or receipt.status
             self._handoff_reply(current, receipt.to_dict(), failed=True)
         self.store.save(current)
         if current.parent_job_id:

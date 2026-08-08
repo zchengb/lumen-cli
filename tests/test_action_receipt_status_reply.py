@@ -84,14 +84,15 @@ def test_denied_mutation_surfaces_instead_of_planning_lie() -> None:
             "result": {},
         },
     ]
-    text = prefer_action_summary(
-        "I've re-queued a fresh test_case.generate for Mark.",
-        receipts,
+    invented = (
+        "**MBPAS-1491** test-case job check:\n\n"
+        "- **Status (last confirmed):** queued — still **no running/completed/failed payload**"
     )
+    text = prefer_action_summary(invented, receipts)
     assert "job_mark_94ccf628fb20" in text
+    assert "queued" not in text.lower()
     assert "Action blocked" in text
     assert "agent.job.create" in text
-    assert "I've re-queued" not in text or "Action blocked" in text
 
 
 if __name__ == "__main__":
