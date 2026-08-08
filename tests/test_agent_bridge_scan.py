@@ -81,6 +81,34 @@ class AgentBridgeScanTests(unittest.TestCase):
         self.assertFalse(should_handle(only_mark, dylan))
         self.assertTrue(should_handle(only_mark, mark))
 
+    def test_should_handle_ignores_bot_senders(self) -> None:
+        milchick = FeishuClientConfig(
+            agent_id="milchick",
+            app_id="cli_mil",
+            app_secret="secret",
+            profile=PROFILES["milchick"],
+        )
+        bot_in_thread = {
+            "event": {
+                "sender": {"sender_type": "bot", "sender_id": {"open_id": "ou_mark_bot"}},
+                "message": {
+                    "chat_type": "group",
+                    "mentions": [],
+                    "parent_id": "om_user_1",
+                    "root_id": "om_user_1",
+                    "content": '{"text":"Generated 27 test cases"}',
+                },
+            }
+        }
+        self.assertFalse(should_handle(bot_in_thread, milchick))
+        app_dm = {
+            "event": {
+                "sender": {"sender_type": "app", "sender_id": {"open_id": "ou_mark_bot"}},
+                "message": {"chat_type": "p2p", "mentions": [], "content": '{"text":"hi"}'},
+            }
+        }
+        self.assertFalse(should_handle(app_dm, milchick))
+
     def test_should_handle_dylan_thread_reply_without_mention(self) -> None:
         import tempfile
         from pathlib import Path

@@ -420,11 +420,12 @@ def handle_autonomous_conversation(
                         break
                     if receipt.get("status") == "succeeded" and result_payload.get("handoff_text") and not parsed.valid:
                         reply_text = str(result_payload["handoff_text"])
-                        child = result_payload.get("child") if isinstance(result_payload.get("child"), dict) else {}
-                        if child.get("result") and isinstance(child.get("result"), dict):
-                            nested = child["result"].get("result") if isinstance(child["result"].get("result"), dict) else {}
-                            if nested.get("summary"):
-                                reply_text = f"{result_payload['handoff_text']}\n\n{nested['summary']}"
+                        if not result_payload.get("result_delivered"):
+                            child = result_payload.get("child") if isinstance(result_payload.get("child"), dict) else {}
+                            if child.get("result") and isinstance(child.get("result"), dict):
+                                nested = child["result"].get("result") if isinstance(child["result"].get("result"), dict) else {}
+                                if nested.get("summary"):
+                                    reply_text = f"{result_payload['handoff_text']}\n\n{nested['summary']}"
                         break
                 reply_text = prefer_action_summary(reply_text, action_receipts)
             return {

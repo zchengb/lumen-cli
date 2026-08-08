@@ -49,6 +49,7 @@ def extract_message_meta(event: dict[str, Any]) -> dict[str, str]:
         "chat_type": str(message.get("chat_type") or "").strip(),
         "user_id": str(sender_id.get("open_id") or sender_id.get("user_id") or "").strip(),
         "union_id": str(sender_id.get("union_id") or "").strip(),
+        "sender_type": str(sender.get("sender_type") or "").strip().lower(),
         "app_id": str(header.get("app_id") or "").strip(),
         "user_name": "",
     }
@@ -139,6 +140,10 @@ def should_handle(event: dict[str, Any], client: FeishuClientConfig) -> bool:
     body = event.get("event") if isinstance(event.get("event"), dict) else event
     message = body.get("message") if isinstance(body, dict) else {}
     if not isinstance(message, dict):
+        return False
+    sender = body.get("sender") if isinstance(body, dict) else {}
+    sender_type = str(sender.get("sender_type") or "").strip().lower() if isinstance(sender, dict) else ""
+    if sender_type in {"bot", "app"}:
         return False
     agent_id = str(client.agent_id or "").strip().lower()
     chat_type = str(message.get("chat_type") or "").strip().lower()

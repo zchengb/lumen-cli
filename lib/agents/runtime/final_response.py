@@ -144,6 +144,7 @@ _STATUS_READ_ACTIONS = frozenset(
     {
         "agent.job.list",
         "agent.job.show",
+        "agent.job.create",
         "agent.health",
         "agent.list",
         "project.status",
@@ -342,6 +343,17 @@ def format_action_receipts_summary(receipts: list[dict[str, Any]]) -> str:
         if receipt.get("status") != "succeeded":
             continue
         result = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+        if action == "agent.job.create" and not job_detail:
+            handoff = str(result.get("handoff_text") or "").strip()
+            if handoff:
+                job_detail = handoff
+                continue
+            child = result.get("child") if isinstance(result.get("child"), dict) else {}
+            if child:
+                detail = _format_one_job(child)
+                if detail:
+                    job_detail = detail
+            continue
         if action in {"agent.job.list", "agent.job.show"} and not job_detail:
             detail = _format_jobs_payload(result)
             if detail:

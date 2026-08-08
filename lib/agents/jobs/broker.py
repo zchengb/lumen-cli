@@ -218,6 +218,29 @@ class AgentJobBroker:
             pass
 
 
+def _job_create_handoff_text(target: str, capability: str, child: AgentJob) -> str:
+    who = (target or "").strip().title() or "the agent"
+    phrases = {
+        "test_case.generate": "test case generation",
+        "scan.run": "code scan",
+    }
+    phrase = phrases.get(capability, (capability or "work").replace(".", " ").replace("_", " "))
+    issue = ""
+    if isinstance(child.input, dict):
+        issue = str(child.input.get("issue_key") or child.input.get("story") or "").strip()
+    subject = f"{phrase} for {issue}" if issue else phrase
+    status = str(child.status or "").strip().lower()
+    if status == "completed":
+        return f"{who} finished {subject}."
+    if status == "failed":
+        return f"{who} failed {subject}."
+    if status in {"queued", "blocked", "pending"}:
+        return f"{subject[:1].upper() + subject[1:]} is queued with {who}."
+    if status in {"running", "in_progress"}:
+        return f"{subject[:1].upper() + subject[1:]} is running with {who}."
+    return f"I’m handing this to {who}."
+
+
 def execute_job_action(request: ActionRequest) -> dict[str, Any]:
     broker = AgentJobBroker()
     action = request.action
@@ -258,7 +281,8 @@ def execute_job_action(request: ActionRequest) -> dict[str, Any]:
             "parent": parent.to_dict(),
             "child": child.to_dict(),
             "summary": summary,
-            "handoff_text": f"I’m handing this to {target.title()}.",
+            "handoff_text": _job_create_handoff_text(target, capability, child),
+            "result_delivered": child.status in {"completed", "failed"},
         }
 
     if action == "agent.job.list":

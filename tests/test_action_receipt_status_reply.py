@@ -193,10 +193,54 @@ def test_job_list_keeps_latest_per_issue_only() -> None:
     assert "/base/old" not in text
 
 
+def test_job_create_completed_overrides_queued_lie() -> None:
+    receipts = [
+        {
+            "action": "agent.job.create",
+            "status": "succeeded",
+            "result": {
+                "child": {
+                    "job_id": "job_mark_1",
+                    "status": "completed",
+                    "target_agent": "mark",
+                    "capability": "test_case.generate",
+                    "input": {"issue_key": "MBPAS-1491"},
+                },
+                "handoff_text": "Mark finished test case generation for MBPAS-1491.",
+                "result_delivered": True,
+            },
+        }
+    ]
+    text = prefer_action_summary("Test case generation for MBPAS-1491 is queued with Mark.", receipts)
+    assert "Mark finished test case generation for MBPAS-1491." in text
+    assert "queued" not in text.lower()
+
+
+def test_job_create_handoff_text_for_completed_child() -> None:
+    from agents.jobs.broker import _job_create_handoff_text
+    from agents.jobs.store import AgentJob
+
+    child = AgentJob(
+        job_id="job_1",
+        type="child",
+        status="completed",
+        target_agent="mark",
+        capability="test_case.generate",
+        input={"issue_key": "MBPAS-1491"},
+    )
+    assert _job_create_handoff_text("mark", "test_case.generate", child) == (
+        "Mark finished test case generation for MBPAS-1491."
+    )
+    child.status = "queued"
+    assert "queued with Mark" in _job_create_handoff_text("mark", "test_case.generate", child)
+
+
 if __name__ == "__main__":
     test_planning_reply_detects_status_placeholder()
     test_job_list_receipt_becomes_status_reply()
     test_job_list_outranks_agent_list_for_status_asks()
     test_denied_mutation_surfaces_instead_of_planning_lie()
     test_job_list_keeps_latest_per_issue_only()
+    test_job_create_completed_overrides_queued_lie()
+    test_job_create_handoff_text_for_completed_child()
     print("ok")
