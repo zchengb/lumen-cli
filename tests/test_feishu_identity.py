@@ -82,6 +82,14 @@ class FeishuIdentityTests(unittest.TestCase):
                 linked = store.expand_feishu_open_ids([ALICE])
                 self.assertIn(ALICE, linked)
                 self.assertIn(milchick, linked)
+                cached = enrich_feishu_identities(
+                    user_ids=[ALICE],
+                    chat_ids=[CHAT],
+                    store=store,
+                    network=False,
+                )
+                self.assertEqual(cached["names"][ALICE], "Alice")
+                self.assertEqual(cached["chats"][0]["name"], "")
             finally:
                 store.close()
 

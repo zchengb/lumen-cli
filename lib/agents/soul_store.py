@@ -219,6 +219,7 @@ def agents_settings_payload() -> dict[str, Any]:
                 user_ids=all_users,
                 chat_ids=all_chats,
                 store=store,
+                network=False,
             )
             recent_user_set = set(recent_ids.get("user_ids", []))
             recent_chat_set = set(recent_ids.get("chat_ids", []))

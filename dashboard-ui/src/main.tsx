@@ -712,14 +712,16 @@ function App() {
   const [observatoryDirty, setObservatoryDirty] = useState(false);
   const [gitConflict, setGitConflict] = useState<RecordValue | null>(null);
   const loadSequence = useRef(0);
+  const dataRef = useRef(false);
   const notify = useCallback<Notify>((message, tone = "info") => setNotice({ message, tone }), []);
 
   const load = async () => {
     const sequence = ++loadSequence.current;
-    setLoading(true);
+    if (!dataRef.current) setLoading(true);
     try {
       const next = await request("/api/state", project);
       if (sequence !== loadSequence.current) return;
+      dataRef.current = true;
       setData(next);
       const conflict = next.interactive?.workspace?.git_sync_conflict;
       setGitConflict(conflict && typeof conflict === "object" && ["repo", "branch", "remote_oid", "local_oid"].every((key) => String(conflict[key] || "").trim()) ? conflict : null);
@@ -729,12 +731,31 @@ function App() {
     } catch (err) {
       if (sequence !== loadSequence.current) return;
       const staticData = window.DASHBOARD_DATA;
-      if (staticData) { setData(staticData); setError("Static report mode: interactive actions are unavailable."); }
+      if (staticData) {
+        dataRef.current = true;
+        setData(staticData);
+        setError("Static report mode: interactive actions are unavailable.");
+      }
       else setError(err instanceof Error ? err.message : "Unable to load Dashboard state");
     } finally { if (sequence === loadSequence.current) setLoading(false); }
   };
 
-  useEffect(() => { void load(); const id = window.setInterval(load, 5_000); return () => window.clearInterval(id); }, [project]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer = 0;
+    let inflight = false;
+    const tick = async () => {
+      if (cancelled || inflight) return;
+      inflight = true;
+      try { await load(); }
+      finally {
+        inflight = false;
+        if (!cancelled) timer = window.setTimeout(() => { void tick(); }, 5_000);
+      }
+    };
+    void tick();
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [project]);
   useEffect(() => { if (!notice) return; const id = window.setTimeout(() => setNotice(null), 3200); return () => window.clearTimeout(id); }, [notice]);
   useEffect(() => { window.localStorage.setItem("lumen-sidebar-collapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
   useEffect(() => { const onPopState = () => setActiveTab((tabItems.find((item) => `/${item.id}` === window.location.pathname)?.id || "scan") as Tab); window.addEventListener("popstate", onPopState); return () => window.removeEventListener("popstate", onPopState); }, []);
@@ -750,6 +771,7 @@ function App() {
     url.searchParams.set("project", slug);
     window.history.replaceState({}, "", `${window.location.pathname}${url.search}`);
     setProject(slug);
+    dataRef.current = false;
     setSettingsDirty(false);
     setObservatoryDirty(false);
   };

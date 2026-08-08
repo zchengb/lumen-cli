@@ -35,7 +35,7 @@ def _resolve_one(
     identity_type: str,
 ) -> str:
     cached = store.get_feishu_display_name(identity_id)
-    if cached and (identity_type != "user" or store.get_feishu_union_id(identity_id)):
+    if cached:
         return cached
     for agent_id in GATEWAY_AGENTS:
         messenger = _messenger_for(agent_id)
@@ -49,10 +49,10 @@ def _resolve_one(
                 store.upsert_feishu_identity(
                     identity_id=identity_id,
                     identity_type=identity_type,
-                    display_name=name or cached or identity_id,
+                    display_name=name or identity_id,
                     union_id=union_id,
                 )
-                return name or cached
+                return name
         else:
             name = messenger.safe_get_chat_name(identity_id)
             if name:
@@ -62,7 +62,7 @@ def _resolve_one(
                     display_name=name,
                 )
                 return name
-    return cached
+    return ""
 
 
 def remember_user_identity(
@@ -127,6 +127,7 @@ def enrich_feishu_identities(
     chat_ids: list[str],
     store: Any,
     agent_id: str = "dylan",
+    network: bool = True,
 ) -> dict[str, Any]:
     ensure_lumen_env_loaded()
     users: list[dict[str, str]] = []
@@ -148,11 +149,9 @@ def enrich_feishu_identities(
         uid = str(user_id or "").strip()
         if not uid or not is_feishu_open_user_id(uid):
             continue
-        name = store.get_feishu_display_name(uid) or _resolve_one(
-            store=store,
-            identity_id=uid,
-            identity_type="user",
-        )
+        name = store.get_feishu_display_name(uid)
+        if not name and network:
+            name = _resolve_one(store=store, identity_id=uid, identity_type="user")
         users.append({"id": uid, "name": name or ""})
         if name:
             names[uid] = name
@@ -167,11 +166,9 @@ def enrich_feishu_identities(
                 chats.append({"id": cid, "name": alias, "kind": "alias"})
                 names[cid] = alias
             continue
-        name = store.get_feishu_display_name(cid) or _resolve_one(
-            store=store,
-            identity_id=cid,
-            identity_type="chat",
-        )
+        name = store.get_feishu_display_name(cid)
+        if not name and network:
+            name = _resolve_one(store=store, identity_id=cid, identity_type="chat")
         if not name and cid in project_names:
             name = project_names[cid]
         chats.append({"id": cid, "name": name or "", "kind": "chat"})
