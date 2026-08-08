@@ -48,9 +48,11 @@ def ensure_definitions_loaded() -> None:
         return
     from agents.dylan.definition import DYLAN_DEFINITION
     from agents.mark.definition import MARK_DEFINITION
+    from agents.milchick.definition import MILCHICK_DEFINITION
 
     register_definition(DYLAN_DEFINITION)
     register_definition(MARK_DEFINITION)
+    register_definition(MILCHICK_DEFINITION)
 
 
 def list_definitions() -> list[AgentDefinition]:

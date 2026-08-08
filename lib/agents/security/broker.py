@@ -11,7 +11,6 @@ from agents.security.actions import (
     utc_now,
 )
 from agents.security.audit import emit_security_event, write_receipt
-from agents.security.authorization import assert_mutation_authorized, is_chat_authorized, is_user_authorized
 from agents.security.errors import AuthorizationDenied, CapabilityDenied, SecurityError
 from agents.security.policy import is_action_allowed_for_agent
 from feishu.config import load_agents_config
@@ -30,6 +29,11 @@ class CapabilityBroker:
         self.executors = executors if executors is not None else default_executors()
 
     def execute(self, request: ActionRequest) -> ActionReceipt:
+        from agents.security.access_policy import (
+            authorize_agent_interaction,
+            mutation_allowed_for_decision,
+        )
+
         started = utc_now()
         receipt_id = new_receipt_id()
         action = str(request.action or "").strip()
@@ -47,46 +51,89 @@ class CapabilityBroker:
                     trace_id=request.trace_id,
                 )
                 raise CapabilityDenied(f"action {action} not allowed for agent {agent_id}")
-            if not is_chat_authorized(request.chat_id, self.config):
+            chat_type = ""
+            if isinstance(request.arguments, dict):
+                chat_type = str(request.arguments.get("chat_type") or "").strip()
+            decision = authorize_agent_interaction(
+                agent_id=agent_id,
+                meta={
+                    "user_id": request.actor_user_id,
+                    "chat_id": request.chat_id,
+                    "chat_type": chat_type,
+                    "thread_id": request.thread_id,
+                    "message_id": request.source_message_id,
+                },
+                config=self.config,
+            )
+            if not decision.allowed:
                 emit_security_event(
-                    "security.unauthorized_user",
-                    reason="chat",
+                    "agent.access.denied",
+                    reason=decision.reason_code,
                     agent_id=agent_id,
                     action=action,
                     chat_id=request.chat_id,
                     actor_user_id=request.actor_user_id,
                     trace_id=request.trace_id,
                 )
-                raise AuthorizationDenied("chat not authorized")
-            if not is_user_authorized(request.actor_user_id, self.config):
-                emit_security_event(
-                    "security.unauthorized_user",
-                    reason="user",
-                    agent_id=agent_id,
-                    action=action,
-                    chat_id=request.chat_id,
-                    actor_user_id=request.actor_user_id,
-                    trace_id=request.trace_id,
-                )
-                raise AuthorizationDenied("user not authorized")
+                raise AuthorizationDenied(decision.reason_code or "access denied")
+            if action.startswith("host.") or action.startswith("lumen."):
+                if action not in decision.effective_capabilities:
+                    emit_security_event(
+                        "agent.access.host_read_denied",
+                        agent_id=agent_id,
+                        action=action,
+                        trust_zone=decision.trust_zone,
+                        actor_user_id=request.actor_user_id,
+                        chat_id=request.chat_id,
+                    )
+                    raise AuthorizationDenied(f"host capability denied in zone {decision.trust_zone}")
             if action in MUTATION_ACTIONS:
-                assert_mutation_authorized(
-                    user_id=request.actor_user_id,
-                    chat_id=request.chat_id,
-                    action=action,
-                    config=self.config,
-                )
-                if not request.explicit_authorization and action in {
-                    "risk.resolve",
-                    "scan.schedule.update",
-                    "delivery.start",
-                    "delivery.cancel",
-                }:
-                    raise AuthorizationDenied("explicit authorization required for this mutation")
+                intent = "mutate_explicit"
+                if isinstance(request.arguments, dict) and request.arguments.get("_authorization_intent"):
+                    intent = str(request.arguments.get("_authorization_intent"))
+                elif request.explicit_authorization:
+                    intent = "mutate_explicit"
+                else:
+                    intent = "none"
+                if not mutation_allowed_for_decision(decision, action=action, intent=intent):
+                    emit_security_event(
+                        "agent.access.mutation_denied",
+                        agent_id=agent_id,
+                        action=action,
+                        trust_zone=decision.trust_zone,
+                        actor_user_id=request.actor_user_id,
+                        chat_id=request.chat_id,
+                        intent=intent,
+                    )
+                    raise AuthorizationDenied(
+                        f"mutation denied for zone={decision.trust_zone or '-'} intent={intent}"
+                    )
+            args = dict(request.arguments or {})
+            args["_access_decision"] = {
+                "allowed": decision.allowed,
+                "trust_zone": decision.trust_zone,
+                "host_read_allowed": decision.host_read_allowed,
+                "mutation_allowed": decision.mutation_allowed,
+                "effective_capabilities": sorted(decision.effective_capabilities),
+                "exposure_mode": decision.exposure_mode,
+            }
+            enriched = ActionRequest(
+                agent_id=request.agent_id,
+                action=request.action,
+                project_slug=request.project_slug,
+                actor_user_id=request.actor_user_id,
+                chat_id=request.chat_id,
+                thread_id=request.thread_id,
+                source_message_id=request.source_message_id,
+                trace_id=request.trace_id,
+                resource=dict(request.resource or {}),
+                arguments=args,
+                explicit_authorization=request.explicit_authorization,
+            )
             executor = self.executors.get(action)
             if executor is None:
                 raise CapabilityDenied(f"no executor registered for {action}")
-            result = executor(request)
+            result = executor(enriched)
             if not isinstance(result, dict):
                 result = {"value": result}
             completed = utc_now()
@@ -195,4 +242,32 @@ def default_executors() -> dict[str, Executor]:
         "technical_plan.read",
     ):
         mapping[action] = execute_delivery_action
+    from agents.security.adapters.test_case import execute_test_case_action
+    from agents.jobs.broker import execute_job_action
+
+    mapping["test_case.generate"] = execute_test_case_action
+    from agents.security.adapters.host_read import execute_host_read_action
+
+    for action in (
+        "host.disk.summary",
+        "host.runtime.summary",
+        "host.applications.summary",
+        "lumen.system.health",
+        "lumen.agent.status",
+        "lumen.runner.status",
+    ):
+        mapping[action] = execute_host_read_action
+    for action in (
+        "agent.list",
+        "agent.health",
+        "agent.job.list",
+        "agent.job.show",
+        "agent.job.create",
+        "agent.job.cancel",
+        "agent.job.retry",
+        "project.status",
+        "workflow.status",
+        "schedule.status",
+    ):
+        mapping[action] = execute_job_action
     return mapping

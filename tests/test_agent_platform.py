@@ -26,17 +26,22 @@ class AgentPlatformTests(unittest.TestCase):
         ids = {d.id for d in list_definitions()}
         self.assertIn("dylan", ids)
         self.assertIn("mark", ids)
+        self.assertIn("milchick", ids)
         dylan = get_definition("dylan")
         mark = get_definition("mark")
-        assert dylan is not None and mark is not None
+        milchick = get_definition("milchick")
+        assert dylan is not None and mark is not None and milchick is not None
         self.assertEqual(dylan.role, "scan")
         self.assertEqual(mark.role, "delivery")
+        self.assertEqual(milchick.role, "orchestrator")
         self.assertFalse(dylan.capabilities.direct_workspace_write)
         self.assertFalse(mark.capabilities.direct_workspace_write)
         self.assertEqual(dylan.capabilities.filesystem_mode, "workspace_read")
         self.assertEqual(mark.capabilities.filesystem_mode, "workspace_read")
         self.assertIn("risk.resolve", dylan.capabilities.actions)
         self.assertIn("delivery.start", mark.capabilities.actions)
+        self.assertIn("test_case.generate", mark.capabilities.actions)
+        self.assertIn("agent.job.create", milchick.capabilities.actions)
 
     def test_unknown_agent_ignored(self) -> None:
         from agents.bridge import handle_agent_message

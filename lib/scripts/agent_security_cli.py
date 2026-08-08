@@ -40,6 +40,8 @@ def cmd_action(args: argparse.Namespace) -> int:
     if args.story:
         resource["story"] = args.story
         arguments["story"] = args.story
+        arguments.setdefault("issue_key", args.story)
+        resource.setdefault("issue_key", args.story)
     if args.cron:
         resource["cron"] = args.cron
         arguments["cron"] = args.cron

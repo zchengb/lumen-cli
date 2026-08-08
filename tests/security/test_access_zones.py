@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+LIB = ROOT / "lib"
+if str(LIB) not in sys.path:
+    sys.path.insert(0, str(LIB))
+
+from agents.security.access_policy import (
+    authorize_agent_interaction,
+    load_agent_access_policy,
+    resolve_trust_zone,
+    interaction_context_from_meta,
+)
+from agents.security.actions import ActionRequest
+from agents.security.broker import CapabilityBroker
+from agents.security.adapters.host_read import execute_host_read_action
+
+
+OWNER = "ou_owner"
+DEV = "ou_dev"
+STRANGER = "ou_stranger"
+DYLAN_DM = "oc_dylan_dm"
+MARK_CHAT = "oc_mbpass_delivery"
+SHARED = "oc_shared"
+
+
+def _config() -> dict:
+    return {
+        "access": {
+            "default_policy": "deny",
+            "owners": [OWNER],
+            "admins": [OWNER],
+            "agents": {
+                "dylan": {
+                    "exposure_mode": "owner_private",
+                    "allowed_user_ids": [OWNER],
+                    "allowed_chat_ids": [],
+                    "dm_only": True,
+                    "host_read": "selected",
+                    "host_read_capabilities": ["host.disk.summary", "host.runtime.summary"],
+                    "mutation_allowed_user_ids": [OWNER],
+                },
+                "mark": {
+                    "exposure_mode": "restricted_team",
+                    "allowed_user_ids": [OWNER, DEV],
+                    "allowed_chat_ids": [MARK_CHAT],
+                    "dm_only": False,
+                    "host_read": "deny",
+                    "mutation_allowed_user_ids": [OWNER],
+                },
+                "milchick": {
+                    "exposure_mode": "admin_private",
+                    "allowed_user_ids": [OWNER],
+                    "allowed_chat_ids": [],
+                    "dm_only": True,
+                    "host_read": "system_only",
+                    "host_read_capabilities": ["lumen.system.health", "lumen.agent.status"],
+                    "mutation_allowed_user_ids": [OWNER],
+                },
+            },
+        }
+    }
+
+
+class AccessZoneTests(unittest.TestCase):
+    def test_unknown_user_denied(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="dylan",
+            meta={"user_id": STRANGER, "chat_id": DYLAN_DM, "chat_type": "p2p", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertFalse(decision.allowed)
+
+    def test_owner_dylan_dm_private(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="dylan",
+            meta={"user_id": OWNER, "chat_id": DYLAN_DM, "chat_type": "p2p", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.trust_zone, "PRIVATE")
+        self.assertTrue(decision.host_read_allowed)
+        self.assertIn("host.disk.summary", decision.effective_capabilities)
+        self.assertTrue(decision.mutation_allowed)
+
+    def test_owner_dylan_group_denied_dm_only(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="dylan",
+            meta={"user_id": OWNER, "chat_id": SHARED, "chat_type": "group", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason_code, "DM_ONLY")
+
+    def test_dylan_shared_host_denied_when_group_allowed(self) -> None:
+        cfg = _config()
+        cfg["access"]["agents"]["dylan"]["dm_only"] = False
+        cfg["access"]["agents"]["dylan"]["allowed_chat_ids"] = [SHARED]
+        decision = authorize_agent_interaction(
+            agent_id="dylan",
+            meta={"user_id": OWNER, "chat_id": SHARED, "chat_type": "group", "message_id": "om1"},
+            config=cfg,
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.trust_zone, "SHARED")
+        self.assertFalse(decision.host_read_allowed)
+        self.assertNotIn("host.disk.summary", decision.effective_capabilities)
+        self.assertFalse(decision.mutation_allowed)
+
+    def test_mark_team_chat_restricted(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="mark",
+            meta={"user_id": DEV, "chat_id": MARK_CHAT, "chat_type": "group", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.trust_zone, "RESTRICTED")
+        self.assertIn("delivery.readiness", decision.effective_capabilities)
+        self.assertNotIn("delivery.start", decision.effective_capabilities)
+
+    def test_mark_other_chat_denied(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="mark",
+            meta={"user_id": DEV, "chat_id": SHARED, "chat_type": "group", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertFalse(decision.allowed)
+
+    def test_mark_mutation_owner_only(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="mark",
+            meta={"user_id": OWNER, "chat_id": MARK_CHAT, "chat_type": "group", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertTrue(decision.mutation_allowed)
+        self.assertIn("delivery.start", decision.effective_capabilities)
+
+    def test_milchick_admin_dm(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="milchick",
+            meta={"user_id": OWNER, "chat_id": "oc_m", "chat_type": "p2p", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertTrue(decision.allowed)
+        self.assertEqual(decision.trust_zone, "PRIVATE")
+        self.assertIn("lumen.system.health", decision.effective_capabilities)
+
+    def test_milchick_group_denied(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="milchick",
+            meta={"user_id": OWNER, "chat_id": SHARED, "chat_type": "group", "message_id": "om1"},
+            config=_config(),
+        )
+        self.assertFalse(decision.allowed)
+
+    def test_unconfigured_agent_denied(self) -> None:
+        decision = authorize_agent_interaction(
+            agent_id="dylan",
+            meta={"user_id": OWNER, "chat_id": DYLAN_DM, "chat_type": "p2p", "message_id": "om1"},
+            config={"access": {"default_policy": "deny", "owners": [OWNER], "agents": {}}},
+        )
+        self.assertFalse(decision.allowed)
+        self.assertEqual(decision.reason_code, "AGENT_ACCESS_UNCONFIGURED")
+
+    def test_host_disk_summary_brokered(self) -> None:
+        result = execute_host_read_action(
+            ActionRequest(
+                agent_id="dylan",
+                action="host.disk.summary",
+                project_slug="mbpass",
+                actor_user_id=OWNER,
+                chat_id=DYLAN_DM,
+                thread_id="",
+                source_message_id="om1",
+                trace_id="tr1",
+                arguments={
+                    "_access_decision": {
+                        "host_read_allowed": True,
+                        "effective_capabilities": ["host.disk.summary"],
+                    }
+                },
+            )
+        )
+        self.assertIn("free_gb", result)
+        self.assertIn("total_gb", result)
+
+    def test_host_summary_denied_in_shared(self) -> None:
+        cfg = _config()
+        cfg["access"]["agents"]["dylan"]["dm_only"] = False
+        cfg["access"]["agents"]["dylan"]["allowed_chat_ids"] = [SHARED]
+        receipt = CapabilityBroker(config=cfg).execute(
+            ActionRequest(
+                agent_id="dylan",
+                action="host.disk.summary",
+                project_slug="mbpass",
+                actor_user_id=OWNER,
+                chat_id=SHARED,
+                thread_id="",
+                source_message_id="om1",
+                trace_id="tr1",
+                arguments={"chat_type": "group"},
+                explicit_authorization=True,
+            )
+        )
+        self.assertEqual(receipt.status, "denied")
+
+
+if __name__ == "__main__":
+    unittest.main()

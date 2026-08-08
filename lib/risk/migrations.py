@@ -382,6 +382,13 @@ CREATE TABLE IF NOT EXISTS project_summary_cache (
     summary_json TEXT,
     updated_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS feishu_identity (
+    identity_id TEXT PRIMARY KEY,
+    identity_type TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL
+);
 """
 
 _FINDING_V2_COLUMNS = {

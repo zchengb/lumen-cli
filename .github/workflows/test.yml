@@ -28,6 +28,8 @@ jobs:
             tests.test_agent_settings \
             tests.security.test_agent_security_m03 \
             tests.security.test_agent_security_m031 \
+            tests.security.test_access_zones \
+            tests.test_mark_test_case_milchick_m10 \
             -v
 
   dashboard-build:

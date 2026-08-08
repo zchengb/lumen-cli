@@ -14,6 +14,7 @@ from agents.runtime.final_response import extract_final_response, format_action_
 from agents.runtime.observability import Observability, TraceContext, new_trace_id
 from agents.runtime.reply_anchor import format_anchored_user_message, resolve_reply_anchor
 from agents.runtime.session_store import SessionStore, conversation_scope_id, session_contract_current
+from agents.security.access_policy import authorize_agent_interaction, security_context_prompt
 from agents.security.flags import workspace_isolation_v2_enabled
 from agents.security.trusted import execute_trusted_actions, trusted_context_from_meta
 from feishu.messenger import FeishuMessenger
@@ -87,6 +88,16 @@ def handle_autonomous_conversation(
     message_id = str(meta.get("message_id") or "")
     stripped = text.strip()
     reset = stripped.lower() in {"/new", "新开话题", "重新开始", "new session"}
+    access = authorize_agent_interaction(agent_id=agent_id, meta=meta, config=agents_config)
+    if not access.allowed:
+        return {
+            "status": "denied",
+            "action": "access.denied",
+            "text": "You're not authorized to talk to this agent here.",
+            "detail": access.reason_code,
+            "trust_zone": access.trust_zone,
+        }
+    security_block = security_context_prompt(access)
 
     mapped = resolve_project(chat_id=chat_id, mapping=load_chat_project_map())
     project_slug = str((mapped or {}).get("slug") or "")
@@ -197,6 +208,21 @@ def handle_autonomous_conversation(
                 )
                 store.close_session(session["session_id"])
                 session = None
+            if session and session.get("checkpoint_json"):
+                try:
+                    prior = json.loads(session["checkpoint_json"])
+                except Exception:
+                    prior = None
+                if isinstance(prior, dict):
+                    prior_zone = str(prior.get("trust_zone") or "")
+                    prior_exposure = str(prior.get("exposure_mode") or "")
+                    if prior_zone and prior_zone != str(access.trust_zone or ""):
+                        obs.emit(trace, "agent.session.trust_zone_mismatch", prior=prior_zone, current=access.trust_zone)
+                        store.close_session(session["session_id"])
+                        session = None
+                    elif prior_exposure and prior_exposure != str(access.exposure_mode or ""):
+                        store.close_session(session["session_id"])
+                        session = None
 
             is_new = session is None
             if is_new:
@@ -215,6 +241,7 @@ def handle_autonomous_conversation(
                     workspace_path=str(workspace),
                     user_message=anchored_text,
                 )
+                prompt = f"{prompt}\n\n{security_block}\n"
                 provider_session_id = None
             else:
                 if str(Path(session["workspace_path"]).resolve()) != str(workspace):
@@ -234,6 +261,7 @@ def handle_autonomous_conversation(
                         workspace_path=str(workspace),
                         user_message=anchored_text,
                     )
+                    prompt = f"{prompt}\n\n{security_block}\n"
                     provider_session_id = None
                     is_new = True
                 else:
@@ -248,6 +276,7 @@ def handle_autonomous_conversation(
                         project_slug=slug,
                         checkpoint=checkpoint,
                     )
+                    prompt = f"{prompt}\n\n{security_block}\n"
                     provider_session_id = session.get("provider_session_id") or None
 
             cursor = runtime or CursorAgentRuntime(
@@ -326,6 +355,9 @@ def handle_autonomous_conversation(
                             "project_slug": slug,
                             "last_user_message_hash": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
                             "last_answer_summary": (result.text or "")[:240],
+                            "trust_zone": access.trust_zone,
+                            "exposure_mode": access.exposure_mode,
+                            "policy_version": access.policy_version,
                         },
                         ensure_ascii=False,
                     ),
@@ -362,7 +394,8 @@ def handle_autonomous_conversation(
                     project_slug=slug,
                     meta=meta,
                     trace_id=trace.trace_id,
-                    explicit_authorization=True,
+                    user_text=text,
+                    access_decision=access,
                 )
                 receipts = execute_trusted_actions(context=context, requests=parsed.action_requests)
                 action_receipts = [r.to_dict() for r in receipts]
@@ -373,7 +406,27 @@ def handle_autonomous_conversation(
                     statuses=[r.get("status") for r in action_receipts],
                 )
             reply_text = parsed.text
-            if action_receipts and not parsed.valid:
+            if access.trust_zone == "SHARED" and any(
+                tok in (reply_text or "").lower()
+                for tok in ("disk space", "hostname", "/applications", "serial number", "free_gb")
+            ):
+                reply_text = "Host-level information isn't available in shared conversations."
+            if action_receipts:
+                for receipt in action_receipts:
+                    result_payload = receipt.get("result") if isinstance(receipt.get("result"), dict) else {}
+                    if receipt.get("status") == "succeeded" and result_payload.get("summary"):
+                        if not parsed.valid:
+                            reply_text = str(result_payload["summary"])
+                        break
+                    if receipt.get("status") == "succeeded" and result_payload.get("handoff_text") and not parsed.valid:
+                        reply_text = str(result_payload["handoff_text"])
+                        child = result_payload.get("child") if isinstance(result_payload.get("child"), dict) else {}
+                        if child.get("result") and isinstance(child.get("result"), dict):
+                            nested = child["result"].get("result") if isinstance(child["result"].get("result"), dict) else {}
+                            if nested.get("summary"):
+                                reply_text = f"{result_payload['handoff_text']}\n\n{nested['summary']}"
+                        break
+            if action_receipts and not reply_text:
                 summary = format_action_receipts_summary(action_receipts)
                 reply_text = summary or reply_text
             return {

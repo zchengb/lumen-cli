@@ -65,15 +65,29 @@ interface AgentSettings {
     runner?: string;
     host_visibility?: string;
     workspace_isolation_v2?: boolean;
+    exposure_mode?: string;
+    dm_only?: boolean;
+    host_read?: string;
+    default_policy?: string;
+    policy_source?: string;
     actions?: string[];
   };
 }
 
 interface AgentsAccessSettings {
+  default_policy?: string;
+  owners?: string[];
+  admins?: string[];
   allowed_chat_ids?: string[];
   allowed_user_ids?: string[];
   mutation_allowed_user_ids?: string[];
   admin_user_ids?: string[];
+  legacy_warning?: boolean;
+}
+
+interface FeishuIdentityItem {
+  id?: string;
+  name?: string;
 }
 
 interface AgentsSettingsPayload {
@@ -81,7 +95,13 @@ interface AgentsSettingsPayload {
   home?: string;
   config_path?: string;
   access?: AgentsAccessSettings;
-  recent_feishu?: { user_ids?: string[]; chat_ids?: string[] };
+  recent_feishu?: {
+    user_ids?: string[];
+    chat_ids?: string[];
+    users?: FeishuIdentityItem[];
+    chats?: FeishuIdentityItem[];
+    names?: Record<string, string>;
+  };
   agents?: AgentSettings[];
 }
 
@@ -1697,10 +1717,15 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     allowed_user_ids: agentsPayload.access?.allowed_user_ids || [],
     mutation_allowed_user_ids: agentsPayload.access?.mutation_allowed_user_ids || [],
     admin_user_ids: agentsPayload.access?.admin_user_ids || [],
+    legacy_warning: Boolean(agentsPayload.access?.legacy_warning),
+    default_policy: agentsPayload.access?.default_policy || "legacy_allow",
   });
   const [recentFeishu, setRecentFeishu] = useState({
     user_ids: agentsPayload.recent_feishu?.user_ids || [],
     chat_ids: agentsPayload.recent_feishu?.chat_ids || [],
+    users: agentsPayload.recent_feishu?.users || [],
+    chats: agentsPayload.recent_feishu?.chats || [],
+    names: agentsPayload.recent_feishu?.names || {},
   });
   const [agentsBaseline, setAgentsBaseline] = useState({
     enabled: Boolean(agentsPayload.enabled),
@@ -1710,6 +1735,10 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const markDirty = () => { setDirty(true); onDirtyChange(true); };
+  const feishuLabel = (id: string) => {
+    const name = String(recentFeishu.names?.[id] || "").trim();
+    return name ? `${name} · ${id}` : id;
+  };
   const syncAgents = (payload: AgentsSettingsPayload) => {
     const nextAgents = Array.isArray(payload.agents)
       ? payload.agents.map((agent) => ({ ...agent, app_secret: "" }))
@@ -1719,6 +1748,8 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
       allowed_user_ids: payload.access?.allowed_user_ids || [],
       mutation_allowed_user_ids: payload.access?.mutation_allowed_user_ids || [],
       admin_user_ids: payload.access?.admin_user_ids || [],
+      legacy_warning: Boolean(payload.access?.legacy_warning),
+      default_policy: payload.access?.default_policy || "legacy_allow",
     };
     setAgentsEnabled(Boolean(payload.enabled));
     setAgentDrafts(nextAgents);
@@ -1726,10 +1757,16 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
     setRecentFeishu({
       user_ids: payload.recent_feishu?.user_ids || [],
       chat_ids: payload.recent_feishu?.chat_ids || [],
+      users: payload.recent_feishu?.users || [],
+      chats: payload.recent_feishu?.chats || [],
+      names: payload.recent_feishu?.names || {},
     });
     setAgentsBaseline({ enabled: Boolean(payload.enabled), agents: JSON.stringify(nextAgents), access: JSON.stringify(nextAccess) });
   };
-  const addAccessId = (field: keyof AgentsAccessSettings, value: string) => {
+  const addAccessId = (
+    field: "allowed_chat_ids" | "allowed_user_ids" | "mutation_allowed_user_ids" | "admin_user_ids",
+    value: string,
+  ) => {
     const id = value.trim();
     if (!id) return;
     setAccessDraft((current) => {
@@ -1775,6 +1812,14 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
   const patchScheduleChanged = patchEnabled !== Boolean(schedules.patch?.enabled) || (patchEnabled && (patchInterval !== String(Math.round((schedules.patch?.interval_seconds || 300) / 60)) || !sameValues(patchStatuses, configuredPatchStatuses) || patchStartStatus !== String(schedules.patch?.in_progress_status || "In Progress") || patchDoneStatus !== String(schedules.patch?.done_status || "Done") || patchBlockedStatus !== String(schedules.patch?.blocked_status || "Block")));
   const publishPolicyChanged = scanPublishMode !== String(workspace.publish?.scan || "pr") || deliveryPublishMode !== String(workspace.publish?.delivery || "pr") || patchPublishMode !== String(workspace.publish?.patch || "pr");
   const agentsChanged = agentsEnabled !== agentsBaseline.enabled || JSON.stringify(agentDrafts) !== agentsBaseline.agents || JSON.stringify(accessDraft) !== agentsBaseline.access;
+  const accessMappings = (
+    [
+      ["Chats", accessDraft.allowed_chat_ids || []],
+      ["Allowed users", accessDraft.allowed_user_ids || []],
+      ["Mutation users", accessDraft.mutation_allowed_user_ids || []],
+      ["Admins", accessDraft.admin_user_ids || []],
+    ] as Array<[string, string[]]>
+  ).filter(([, ids]) => ids.length > 0);
   const saveAll = async () => {
     if (saving) return;
     setSaving(true);
@@ -1841,7 +1886,10 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
         <div className="settings-copy">
           <div className="settings-heading"><div className="settings-title-stack"><h4>Access Control</h4></div></div>
           <p>Configure who may talk to agents and who may mutate (resolve findings, update scan schedule, start delivery). Save writes to {text(agentsPayload.config_path, "~/.lumen/agents/config.json")}.</p>
-          <p className="schedule-note">Feishu user IDs look like <code>ou_…</code> (open_id). Chat IDs look like <code>oc_…</code>. Easiest: message Dylan/Mark once, then click a recent ID below. Or copy open_id from Feishu Open Platform → your app → event/debug logs, or from the sender payload in gateway logs.</p>
+          <p className="schedule-note">Feishu user IDs look like <code>ou_…</code> (open_id). Chat IDs look like <code>oc_…</code>. Easiest: message Dylan/Mark once, then click a recent person below. Names resolve from Feishu contact when the app has permission; otherwise the raw ID still shows.</p>
+          {Boolean(accessDraft.legacy_warning ?? agentsPayload.access?.legacy_warning) && (
+            <p className="schedule-note">Legacy allow mode is unsafe for local agents. Prefer per-agent Access &amp; Exposure with default_policy=deny.</p>
+          )}
         </div>
         <div className="settings-control wide">
           <div className="form-grid compact">
@@ -1850,32 +1898,45 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
             <Field label="Mutation user IDs" help="Required for resolve / schedule update / delivery start. Fail-closed when empty."><input value={(accessDraft.mutation_allowed_user_ids || []).join(", ")} placeholder="ou_… required for mutations" onChange={(event) => { setAccessDraft((current) => ({ ...current, mutation_allowed_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
             <Field label="Admin user IDs" help="Admins can also mutate."><input value={(accessDraft.admin_user_ids || []).join(", ")} placeholder="ou_…" onChange={(event) => { setAccessDraft((current) => ({ ...current, admin_user_ids: event.target.value.split(",").map((v) => v.trim()).filter(Boolean) })); markDirty(); }} /></Field>
           </div>
+          {accessMappings.length > 0 && (
+            <div className="schedule-note" style={{ marginTop: 12 }}>
+              <div>Person / chat mapping:</div>
+              <div style={{ display: "grid", gap: 6, marginTop: 8 }}>
+                {accessMappings.map(([label, ids]) => (
+                  <div key={label}>
+                    <strong>{label}:</strong>{" "}
+                    {ids.map((id) => feishuLabel(id)).join(", ")}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {(recentFeishu.user_ids.length > 0 || recentFeishu.chat_ids.length > 0) && (
             <div className="schedule-note" style={{ marginTop: 12 }}>
-              <div>Recent Feishu IDs from agent traffic — click to add:</div>
+              <div>Recent Feishu people / chats from agent traffic — click to add:</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
                 {recentFeishu.user_ids.map((id) => (
-                  <button type="button" className="button ghost" key={`user-${id}`} onClick={() => addAccessId("mutation_allowed_user_ids", id)} title="Add to Mutation user IDs">
-                    {id}
+                  <button type="button" className="button ghost" key={`user-${id}`} onClick={() => addAccessId("mutation_allowed_user_ids", id)} title={`Add ${feishuLabel(id)} to Mutation user IDs`}>
+                    {feishuLabel(id)}
                   </button>
                 ))}
                 {recentFeishu.chat_ids.map((id) => (
-                  <button type="button" className="button ghost" key={`chat-${id}`} onClick={() => addAccessId("allowed_chat_ids", id)} title="Add to Allowed chat IDs">
-                    {id}
+                  <button type="button" className="button ghost" key={`chat-${id}`} onClick={() => addAccessId("allowed_chat_ids", id)} title={`Add ${feishuLabel(id)} to Allowed chat IDs`}>
+                    {feishuLabel(id)}
                   </button>
                 ))}
               </div>
               {recentFeishu.user_ids[0] && (
                 <div style={{ marginTop: 8 }}>
                   <button type="button" className="button ghost" onClick={() => { addAccessId("mutation_allowed_user_ids", recentFeishu.user_ids[0]); addAccessId("admin_user_ids", recentFeishu.user_ids[0]); addAccessId("allowed_user_ids", recentFeishu.user_ids[0]); }}>
-                    Use latest user as owner ({recentFeishu.user_ids[0]})
+                    Use latest user as owner ({feishuLabel(recentFeishu.user_ids[0])})
                   </button>
                 </div>
               )}
             </div>
           )}
           {recentFeishu.user_ids.length === 0 && (
-            <p className="schedule-note" style={{ marginTop: 12 }}>No recent Feishu user IDs yet. Send any message to Dylan or Mark, refresh Settings, then click the ID here.</p>
+            <p className="schedule-note" style={{ marginTop: 12 }}>No recent Feishu user IDs yet. Send any message to Dylan or Mark, refresh Settings, then click the person here.</p>
           )}
         </div>
       </div>
@@ -1884,7 +1945,7 @@ function SettingsView({ data, project, notify, onDirtyChange, reload }: { data: 
           <div className="settings-copy">
             <div className="settings-heading"><div className="settings-title-stack"><h4>{agent.display_name}</h4><span className="muted">{agent.title}</span></div></div>
             <p>Role {agent.role} · workflow {agent.workflow}. Feishu credentials live in {text(agent.credentials_path, "~/.lumen/.env.local")}. SOUL overrides are at {text(agent.soul_override_path)} ({agent.soul_source}). Restart `lumen agents start` after changing App ID/Secret.</p>
-            <p className="schedule-note">Security: runner {text(agent.security?.runner, "local_isolated")} · host {text(agent.security?.host_visibility, "denied")} · filesystem {text(agent.security?.filesystem, "workspace_read")} · mutations {text(agent.security?.mutations, "brokered")} · sandbox {text(agent.security?.sandbox, "enabled")} · secrets {text(agent.security?.secrets, "isolated")}</p>
+            <p className="schedule-note">Security: exposure {text(agent.security?.exposure_mode, "restricted_team")} · dm_only {String(agent.security?.dm_only ?? false)} · host_read {text(agent.security?.host_read, "deny")} · runner {text(agent.security?.runner, "local_isolated")} · mutations {text(agent.security?.mutations, "brokered")} · sandbox {text(agent.security?.sandbox, "enabled")}</p>
           </div>
           <div className="settings-control wide">
             <div className="form-grid compact">

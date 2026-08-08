@@ -10,7 +10,6 @@ from agents.definitions import ensure_definitions_loaded, get_definition
 from agents.dylan.schemas import ConversationFlags
 from agents.models import TriggerContext
 from agents.parser import parse_dylan_text
-from agents.permissions import is_chat_allowed, is_user_allowed
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
 from agents.runtime.reply_anchor import remember_outbound
 from feishu.cards import ack_card, progress_card, scan_summary_card
@@ -237,10 +236,28 @@ def handle_agent_message(*, agent_id: str, text: str, meta: dict[str, str]) -> d
     config = load_agents_config()
     chat_id = str(meta.get("chat_id") or "").strip()
     user_id = str(meta.get("user_id") or "").strip()
-    if not is_chat_allowed(chat_id, config):
-        return {"status": "denied", "detail": "chat not allowed"}
-    if not is_user_allowed(user_id, config):
-        return {"status": "denied", "detail": "user not allowed"}
+    from agents.security.access_policy import authorize_agent_interaction
+
+    decision = authorize_agent_interaction(agent_id=agent, meta=meta, config=config)
+    if not decision.allowed:
+        messenger = FeishuMessenger(agent)
+        message_id = str(meta.get("message_id") or "").strip()
+        detail = decision.reason_code or "access denied"
+        if message_id:
+            if detail == "DM_ONLY":
+                reply = "I only take private DMs for this role."
+            elif detail == "AGENT_ACCESS_UNCONFIGURED":
+                reply = "This agent isn't configured for access yet (default deny)."
+            else:
+                reply = "You're not authorized to talk to this agent here."
+            messenger.safe_reply_text(message_id, reply, reply_in_thread=bool(str(meta.get("thread_id") or "").strip()))
+        return {"status": "denied", "detail": detail, "trust_zone": decision.trust_zone}
+    meta = dict(meta)
+    meta["_trust_zone"] = str(decision.trust_zone or "")
+    meta["_exposure_mode"] = str(decision.exposure_mode or "")
+    meta["_policy_version"] = str(decision.policy_version or "")
+    meta["_host_read_allowed"] = "1" if decision.host_read_allowed else "0"
+    meta["_mutation_allowed"] = "1" if decision.mutation_allowed else "0"
 
     messenger = FeishuMessenger(agent)
     message_id = str(meta.get("message_id") or "").strip()

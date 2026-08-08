@@ -83,7 +83,7 @@ class FeishuChannel:
         on_event: Optional[Callable[[dict[str, Any], FeishuClientConfig], None]] = None,
     ) -> None:
         _setup_logging()
-        self.clients = clients if clients is not None else configured_agents(["dylan", "mark"])
+        self.clients = clients if clients is not None else configured_agents(["dylan", "mark", "milchick"])
         self.on_event = on_event or handle_message_event
         self.deduper = MessageDeduper(agents_home() / "dedup.sqlite3")
 

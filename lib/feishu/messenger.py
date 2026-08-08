@@ -213,6 +213,45 @@ class FeishuMessenger:
             None,
         )
 
+    def get_user_name(self, open_id: str) -> str:
+        user_id = str(open_id or "").strip()
+        if not user_id:
+            return ""
+        token = self.tenant_token()
+        url = f"https://open.feishu.cn/open-apis/contact/v3/users/{user_id}?user_id_type=open_id"
+        body = self._request("GET", url, token, None)
+        if int(body.get("code") or 0) != 0:
+            return ""
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        user = data.get("user") if isinstance(data.get("user"), dict) else {}
+        return str(user.get("name") or user.get("en_name") or user.get("nickname") or "").strip()
+
+    def safe_get_user_name(self, open_id: str) -> str:
+        try:
+            return self.get_user_name(open_id)
+        except Exception as exc:
+            _LOG.warning("get_user_name failed open_id=%s err=%s", open_id, exc)
+            return ""
+
+    def get_chat_name(self, chat_id: str) -> str:
+        cid = str(chat_id or "").strip()
+        if not cid:
+            return ""
+        token = self.tenant_token()
+        url = f"https://open.feishu.cn/open-apis/im/v1/chats/{cid}"
+        body = self._request("GET", url, token, None)
+        if int(body.get("code") or 0) != 0:
+            return ""
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        return str(data.get("name") or data.get("chat_name") or "").strip()
+
+    def safe_get_chat_name(self, chat_id: str) -> str:
+        try:
+            return self.get_chat_name(chat_id)
+        except Exception as exc:
+            _LOG.warning("get_chat_name failed chat_id=%s err=%s", chat_id, exc)
+            return ""
+
     def safe_get_message(self, message_id: str) -> Optional[dict[str, Any]]:
         try:
             return self.get_message(message_id)

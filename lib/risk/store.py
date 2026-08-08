@@ -603,3 +603,45 @@ class GlobalAgentStore:
                     seen_chats.add(value)
                     chats.append(value)
         return {"user_ids": users[:cap], "chat_ids": chats[:cap]}
+
+    def upsert_feishu_identity(self, *, identity_id: str, identity_type: str, display_name: str) -> None:
+        iid = str(identity_id or "").strip()
+        name = str(display_name or "").strip()
+        kind = str(identity_type or "").strip().lower() or "user"
+        if not iid or not name:
+            return
+        self.conn.execute(
+            """
+            INSERT INTO feishu_identity(identity_id, identity_type, display_name, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(identity_id) DO UPDATE SET
+                identity_type = excluded.identity_type,
+                display_name = excluded.display_name,
+                updated_at = excluded.updated_at
+            """,
+            (iid, kind, name, utc_now()),
+        )
+        self.conn.commit()
+
+    def get_feishu_display_name(self, identity_id: str) -> str:
+        iid = str(identity_id or "").strip()
+        if not iid:
+            return ""
+        try:
+            row = self.conn.execute(
+                "SELECT display_name FROM feishu_identity WHERE identity_id = ?",
+                (iid,),
+            ).fetchone()
+        except Exception:
+            return ""
+        if row is None:
+            return ""
+        return str(row["display_name"] if isinstance(row, sqlite3.Row) else row[0] or "").strip()
+
+    def list_feishu_identities(self, identity_ids: list[str]) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for identity_id in identity_ids:
+            name = self.get_feishu_display_name(identity_id)
+            if name:
+                out[str(identity_id).strip()] = name
+        return out

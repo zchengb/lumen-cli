@@ -1,3 +1,5 @@
 from __future__ import annotations
 
-"""Milchick operations agent package (SOUL + future runtime)."""
+from agents.milchick.definition import MILCHICK_DEFINITION
+
+__all__ = ["MILCHICK_DEFINITION"]

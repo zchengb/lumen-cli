@@ -118,13 +118,19 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
         "runner": "local_isolated",
         "host_visibility": "denied",
         "workspace_isolation_v2": True,
+        "exposure_mode": "owner_private" if agent == "dylan" else ("admin_private" if agent == "milchick" else "restricted_team"),
+        "dm_only": agent in {"dylan", "milchick"},
+        "host_read": "selected" if agent == "dylan" else ("system_only" if agent == "milchick" else "deny"),
+        "default_policy": "legacy_allow",
     }
     try:
         from agents.definitions import ensure_definitions_loaded, get_definition
+        from agents.security.access_policy import load_agent_access_policy
         from agents.security.flags import workspace_isolation_v2_enabled
 
         ensure_definitions_loaded()
         isolation = workspace_isolation_v2_enabled()
+        policy = load_agent_access_policy(agent, data)
         definition = get_definition(agent)
         if definition is not None:
             caps = definition.capabilities
@@ -138,11 +144,24 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
                 "runner": "local_isolated" if isolation else "host",
                 "host_visibility": "denied" if isolation else "limited",
                 "workspace_isolation_v2": isolation,
+                "exposure_mode": policy.exposure_mode,
+                "dm_only": policy.dm_only,
+                "host_read": policy.host_read_mode,
+                "default_policy": policy.default_policy,
+                "allowed_user_ids": sorted(policy.allowed_user_ids),
+                "allowed_chat_ids": sorted(policy.allowed_chat_ids),
+                "mutation_allowed_user_ids": sorted(policy.mutation_allowed_user_ids),
+                "policy_source": policy.source,
             }
         else:
             security["workspace_isolation_v2"] = isolation
             security["runner"] = "local_isolated" if isolation else "host"
             security["host_visibility"] = "denied" if isolation else "limited"
+            security["exposure_mode"] = policy.exposure_mode
+            security["dm_only"] = policy.dm_only
+            security["host_read"] = policy.host_read_mode
+            security["default_policy"] = policy.default_policy
+            security["policy_source"] = policy.source
     except Exception:
         pass
     return {
@@ -174,13 +193,49 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
 def agents_settings_payload() -> dict[str, Any]:
     config = load_agents_config()
     access = config.get("access") if isinstance(config.get("access"), dict) else {}
-    recent = {"user_ids": [], "chat_ids": []}
+    recent = {"user_ids": [], "chat_ids": [], "users": [], "chats": [], "names": {}}
     try:
         from risk.store import GlobalAgentStore
+        from feishu.identity import enrich_feishu_identities
 
         store = GlobalAgentStore()
         try:
-            recent = store.list_recent_feishu_ids(limit=20)
+            recent_ids = store.list_recent_feishu_ids(limit=20)
+            access_user_ids = [
+                str(x).strip()
+                for x in (
+                    list(access.get("allowed_user_ids") or [])
+                    + list(access.get("mutation_allowed_user_ids") or [])
+                    + list(access.get("admin_user_ids") or [])
+                    + list(access.get("owners") or [])
+                    + list(access.get("admins") or [])
+                )
+                if str(x).strip()
+            ]
+            access_chat_ids = [str(x).strip() for x in (access.get("allowed_chat_ids") or []) if str(x).strip()]
+            all_users = list(dict.fromkeys([*recent_ids.get("user_ids", []), *access_user_ids]))
+            all_chats = list(dict.fromkeys([*recent_ids.get("chat_ids", []), *access_chat_ids]))
+            enriched = enrich_feishu_identities(
+                user_ids=all_users,
+                chat_ids=all_chats,
+                store=store,
+                agent_id="dylan",
+            )
+            recent = {
+                "user_ids": recent_ids.get("user_ids", []),
+                "chat_ids": recent_ids.get("chat_ids", []),
+                "users": [
+                    item
+                    for item in enriched.get("users", [])
+                    if item.get("id") in set(recent_ids.get("user_ids", []))
+                ],
+                "chats": [
+                    item
+                    for item in enriched.get("chats", [])
+                    if item.get("id") in set(recent_ids.get("chat_ids", []))
+                ],
+                "names": enriched.get("names") or {},
+            }
         finally:
             store.close()
     except Exception:
@@ -190,12 +245,17 @@ def agents_settings_payload() -> dict[str, Any]:
         "home": str(agents_home()),
         "config_path": str(agents_home() / "config.json"),
         "access": {
+            "default_policy": str(access.get("default_policy") or "legacy_allow"),
+            "owners": [str(x) for x in (access.get("owners") or []) if str(x).strip()],
+            "admins": [str(x) for x in (access.get("admins") or access.get("admin_user_ids") or []) if str(x).strip()],
             "allowed_chat_ids": [str(x) for x in (access.get("allowed_chat_ids") or []) if str(x).strip()],
             "allowed_user_ids": [str(x) for x in (access.get("allowed_user_ids") or []) if str(x).strip()],
             "mutation_allowed_user_ids": [
                 str(x) for x in (access.get("mutation_allowed_user_ids") or []) if str(x).strip()
             ],
             "admin_user_ids": [str(x) for x in (access.get("admin_user_ids") or []) if str(x).strip()],
+            "agents": access.get("agents") if isinstance(access.get("agents"), dict) else {},
+            "legacy_warning": str(access.get("default_policy") or "legacy_allow") == "legacy_allow",
         },
         "recent_feishu": recent,
         "agents": [agent_settings_view(agent_id, config) for agent_id in AGENT_META],

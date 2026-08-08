@@ -74,6 +74,9 @@ DYLAN_ACTIONS = (
     "scan.schedule.read",
     "scan.schedule.update",
     "scan.verify.request",
+    "host.disk.summary",
+    "host.runtime.summary",
+    "host.applications.summary",
 )
 
 MARK_ACTIONS = (
@@ -84,6 +87,24 @@ MARK_ACTIONS = (
     "delivery.cancel",
     "story.read",
     "technical_plan.read",
+    "test_case.generate",
+)
+
+MILCHICK_ACTIONS = (
+    "agent.list",
+    "agent.health",
+    "agent.job.list",
+    "agent.job.show",
+    "agent.job.create",
+    "agent.job.cancel",
+    "agent.job.retry",
+    "project.status",
+    "workflow.status",
+    "schedule.status",
+    "lumen.system.health",
+    "lumen.agent.status",
+    "lumen.runner.status",
+    "host.runtime.summary",
 )
 
 MUTATION_ACTIONS = frozenset(
@@ -95,5 +116,9 @@ MUTATION_ACTIONS = frozenset(
         "scan.verify.request",
         "delivery.start",
         "delivery.cancel",
+        "test_case.generate",
+        "agent.job.create",
+        "agent.job.cancel",
+        "agent.job.retry",
     }
 )

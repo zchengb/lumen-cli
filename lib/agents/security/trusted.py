@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from agents.security.access_policy import AccessDecision, classify_authorization_intent
 from agents.security.actions import ActionReceipt, ActionRequest
 from agents.security.broker import CapabilityBroker
 
@@ -16,6 +17,9 @@ class TrustedActionContext:
     thread_id: str
     source_message_id: str
     trace_id: str
+    chat_type: str = ""
+    authorization_intent: str = "none"
+    access_decision: AccessDecision | None = None
     explicit_authorization: bool = False
 
 
@@ -25,8 +29,15 @@ def trusted_context_from_meta(
     project_slug: str,
     meta: dict[str, str],
     trace_id: str,
-    explicit_authorization: bool = False,
+    user_text: str = "",
+    access_decision: AccessDecision | None = None,
+    explicit_authorization: bool | None = None,
 ) -> TrustedActionContext:
+    intent = classify_authorization_intent(user_text)
+    explicit = bool(explicit_authorization) if explicit_authorization is not None else intent in {
+        "mutate_explicit",
+        "confirm_previous",
+    }
     return TrustedActionContext(
         agent_id=str(agent_id or "").strip().lower(),
         project_slug=str(project_slug or "").strip(),
@@ -35,7 +46,10 @@ def trusted_context_from_meta(
         thread_id=str(meta.get("thread_id") or "").strip(),
         source_message_id=str(meta.get("message_id") or "").strip(),
         trace_id=str(trace_id or "").strip(),
-        explicit_authorization=bool(explicit_authorization),
+        chat_type=str(meta.get("chat_type") or "").strip(),
+        authorization_intent=intent,
+        access_decision=access_decision,
+        explicit_authorization=explicit,
     )
 
 
@@ -46,6 +60,9 @@ def bind_action_request(
     resource: Optional[dict[str, Any]] = None,
     arguments: Optional[dict[str, Any]] = None,
 ) -> ActionRequest:
+    args = dict(arguments or {})
+    args.setdefault("chat_type", context.chat_type)
+    args.setdefault("_authorization_intent", context.authorization_intent)
     return ActionRequest(
         agent_id=context.agent_id,
         action=str(action or "").strip(),
@@ -56,7 +73,7 @@ def bind_action_request(
         source_message_id=context.source_message_id,
         trace_id=context.trace_id,
         resource=dict(resource or {}),
-        arguments=dict(arguments or {}),
+        arguments=args,
         explicit_authorization=bool(context.explicit_authorization),
     )
 

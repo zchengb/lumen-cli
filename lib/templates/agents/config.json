@@ -8,6 +8,43 @@
     "mark": {
       "role": "delivery",
       "workflow": "auto_delivery"
+    },
+    "milchick": {
+      "role": "orchestrator",
+      "workflow": null
+    }
+  },
+  "access": {
+    "default_policy": "legacy_allow",
+    "owners": [],
+    "admins": [],
+    "agents": {
+      "dylan": {
+        "exposure_mode": "owner_private",
+        "allowed_user_ids": [],
+        "allowed_chat_ids": [],
+        "dm_only": true,
+        "host_read": "selected",
+        "host_read_capabilities": ["host.disk.summary", "host.runtime.summary"],
+        "mutation_allowed_user_ids": []
+      },
+      "mark": {
+        "exposure_mode": "restricted_team",
+        "allowed_user_ids": [],
+        "allowed_chat_ids": [],
+        "dm_only": false,
+        "host_read": "deny",
+        "mutation_allowed_user_ids": []
+      },
+      "milchick": {
+        "exposure_mode": "admin_private",
+        "allowed_user_ids": [],
+        "allowed_chat_ids": [],
+        "dm_only": true,
+        "host_read": "system_only",
+        "host_read_capabilities": ["lumen.system.health", "lumen.agent.status", "lumen.runner.status"],
+        "mutation_allowed_user_ids": []
+      }
     }
   },
   "dylan": {
@@ -119,8 +156,17 @@
       }
     }
   },
-  "mark": {
+    "mark": {
     "max_concurrent_jobs": 3,
+    "test_case": {
+      "projects": {
+        "mbpass": {
+          "base_app_token_env": "FEISHU_MBPASS_QA_APP_TOKEN",
+          "table_name": "Test Cases",
+          "view_strategy": "story"
+        }
+      }
+    },
     "conversation_v4": {
       "enabled": false,
       "mode": "autonomous_workspace",
@@ -166,6 +212,65 @@
       "soul": {
         "version": "1",
         "bootstrap_once": true
+      }
+    }
+  },
+  "milchick": {
+    "max_concurrent_jobs": 3,
+    "conversation_v4": {
+      "enabled": false,
+      "mode": "autonomous_workspace",
+      "provider": {
+        "type": "cursor_cli",
+        "model": "cursor-grok-4.5-medium",
+        "output_format": "stream-json",
+        "resume_sessions": true
+      },
+      "session": {
+        "scope": "thread_shared",
+        "idle_after_hours": 24,
+        "archive_after_days": 30,
+        "reset_on_workspace_change": true
+      },
+      "workspace": {
+        "stable_path_required": true,
+        "generate_agents_md": true,
+        "permission_profile": "workspace_autonomous"
+      },
+      "runtime": {
+        "soft_timeout_seconds": 90,
+        "hard_timeout_seconds": 300,
+        "max_concurrent_sessions": 3,
+        "serialize_same_session": true
+      },
+      "reaction": {
+        "enabled": true,
+        "emoji_type": "Typing",
+        "add_immediately": true,
+        "remove_on_success": true,
+        "remove_on_failure": true,
+        "cleanup_after_seconds": 120
+      },
+      "observability": {
+        "log_level": "INFO",
+        "jsonl_enabled": true,
+        "trace_enabled": true,
+        "record_tool_events": true,
+        "record_assistant_deltas": false,
+        "redact_secrets": true
+      },
+      "soul": {
+        "version": "1",
+        "bootstrap_once": true
+      }
+    }
+  },
+  "projects": {
+    "mbpass": {
+      "test_case": {
+        "base_app_token_env": "FEISHU_MBPASS_QA_APP_TOKEN",
+        "table_name": "Test Cases",
+        "view_strategy": "story"
       }
     }
   },

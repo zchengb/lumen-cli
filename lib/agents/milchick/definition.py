@@ -4,11 +4,10 @@ from pathlib import Path
 
 from agents.capabilities import AgentCapabilities
 from agents.definitions import AgentDefinition
-from agents.mark.delivery_adapter import DeliveryActionAdapter
-from agents.mark.session_bootstrap import PROTOCOL_VERSION, SOUL_VERSION, build_bootstrap_prompt, build_resume_prompt
-from agents.mark.workspace_contract import ensure_workspace_contract
+from agents.milchick.session_bootstrap import PROTOCOL_VERSION, SOUL_VERSION, build_bootstrap_prompt, build_resume_prompt
+from agents.milchick.workspace_contract import ensure_workspace_contract
 from agents.project_resolver import known_project_slugs, load_chat_project_map, resolve_project
-from agents.security.actions import MARK_ACTIONS
+from agents.security.actions import MILCHICK_ACTIONS
 
 
 def _resolve_workspace(project_slug: str, chat_id: str) -> tuple[str, Path]:
@@ -34,31 +33,31 @@ def _resolve_workspace(project_slug: str, chat_id: str) -> tuple[str, Path]:
     return slug, workspace
 
 
-MARK_DEFINITION = AgentDefinition(
-    id="mark",
-    display_name="Mark",
-    role="delivery",
+MILCHICK_DEFINITION = AgentDefinition(
+    id="milchick",
+    display_name="Milchick",
+    role="orchestrator",
     soul_path=Path(__file__).with_name("soul.md"),
     soul_version=SOUL_VERSION,
     protocol_version=PROTOCOL_VERSION,
-    workflow="auto_delivery",
-    result_contract="delivery-result.json",
-    permission_profile="delivery_conversational",
+    workflow=None,
+    result_contract=None,
+    permission_profile="workspace_autonomous",
     capabilities=AgentCapabilities(
-        actions=MARK_ACTIONS,
-        read_scopes=("delivery_docs", "story", "technical_plan", "jira_story"),
+        actions=MILCHICK_ACTIONS,
+        read_scopes=("agent_jobs", "schedules", "workflow_status"),
         filesystem_mode="workspace_read",
         network_profile="deny",
         secret_profile="isolated",
         direct_workspace_write=False,
-        allowed_workflows=("delivery.readiness", "delivery.status", "delivery.run", "delivery.cancel", "test_case.generate"),
-        allowed_mutations=("delivery.start", "test_case.generate"),
-        external_side_effects=("feishu.bitable.write",),
+        allowed_workflows=("agent.job.create", "agent.job.show", "agent.health"),
+        allowed_mutations=("agent.job.create", "agent.job.cancel", "agent.job.retry"),
+        external_side_effects=(),
     ),
     build_bootstrap_prompt=build_bootstrap_prompt,
     build_resume_prompt=build_resume_prompt,
     ensure_workspace_contract=ensure_workspace_contract,
     resolve_workspace=_resolve_workspace,
-    action_adapter=DeliveryActionAdapter(),
-    config_key="mark",
+    action_adapter=None,
+    config_key="milchick",
 )
