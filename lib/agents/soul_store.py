@@ -190,7 +190,7 @@ def agent_settings_view(agent_id: str, config: dict[str, Any] | None = None) -> 
     }
 
 
-def agents_settings_payload() -> dict[str, Any]:
+def agents_settings_payload(*, network: bool = False) -> dict[str, Any]:
     config = load_agents_config()
     access = config.get("access") if isinstance(config.get("access"), dict) else {}
     recent = {"user_ids": [], "chat_ids": [], "users": [], "chats": [], "names": {}}
@@ -219,7 +219,7 @@ def agents_settings_payload() -> dict[str, Any]:
                 user_ids=all_users,
                 chat_ids=all_chats,
                 store=store,
-                network=False,
+                network=network,
             )
             recent_user_set = set(recent_ids.get("user_ids", []))
             recent_chat_set = set(recent_ids.get("chat_ids", []))

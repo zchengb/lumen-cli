@@ -1739,7 +1739,7 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             try:
                 from agents.soul_store import agents_settings_payload
 
-                return self.respond_json(HTTPStatus.OK, agents_settings_payload())
+                return self.respond_json(HTTPStatus.OK, agents_settings_payload(network=True))
             except Exception as exc:
                 return self.respond_error(HTTPStatus.BAD_REQUEST, str(exc))
         if parsed.path == "/api/prompt":

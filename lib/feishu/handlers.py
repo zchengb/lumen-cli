@@ -72,7 +72,7 @@ def remember_message_identities(
     agent_id: str = "",
 ) -> None:
     try:
-        from feishu.identity import remember_user_identity
+        from feishu.identity import is_feishu_open_chat_id, remember_chat_identity, remember_user_identity
         from risk.store import GlobalAgentStore
     except Exception:
         return
@@ -87,6 +87,10 @@ def remember_message_identities(
                 union_id=str(meta.get("union_id") or "").strip(),
                 agent_id=agent_id,
             )
+        chat_id = str(meta.get("chat_id") or "").strip()
+        chat_type = str(meta.get("chat_type") or "").strip().lower()
+        if chat_id and is_feishu_open_chat_id(chat_id) and chat_type not in {"p2p", "private", "dm"}:
+            remember_chat_identity(store=store, chat_id=chat_id, agent_id=agent_id)
         body = event.get("event") if isinstance(event.get("event"), dict) else event
         message = body.get("message") if isinstance(body, dict) else {}
         mentions = message.get("mentions") if isinstance(message, dict) and isinstance(message.get("mentions"), list) else []

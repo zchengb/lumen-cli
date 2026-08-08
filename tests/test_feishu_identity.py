@@ -90,6 +90,7 @@ class FeishuIdentityTests(unittest.TestCase):
                 )
                 self.assertEqual(cached["names"][ALICE], "Alice")
                 self.assertEqual(cached["chats"][0]["name"], "")
+                self.assertNotEqual(cached["chats"][0]["name"], "mbpass")
             finally:
                 store.close()
 

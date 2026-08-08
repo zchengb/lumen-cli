@@ -33,11 +33,15 @@ def _resolve_one(
     store: Any,
     identity_id: str,
     identity_type: str,
+    preferred_agent: str = "",
 ) -> str:
     cached = store.get_feishu_display_name(identity_id)
     if cached:
         return cached
-    for agent_id in GATEWAY_AGENTS:
+    preferred = str(preferred_agent or "").strip().lower()
+    agents = [preferred] if preferred else []
+    agents.extend(a for a in GATEWAY_AGENTS if a not in agents)
+    for agent_id in agents:
         messenger = _messenger_for(agent_id)
         if messenger is None:
             continue
@@ -112,6 +116,23 @@ def remember_user_identity(
         )
 
 
+def remember_chat_identity(
+    *,
+    store: Any,
+    chat_id: str,
+    display_name: str = "",
+    agent_id: str = "",
+) -> None:
+    cid = str(chat_id or "").strip()
+    if not cid or not is_feishu_open_chat_id(cid):
+        return
+    name = str(display_name or "").strip() or store.get_feishu_display_name(cid)
+    if name:
+        store.upsert_feishu_identity(identity_id=cid, identity_type="chat", display_name=name)
+        return
+    _resolve_one(store=store, identity_id=cid, identity_type="chat", preferred_agent=agent_id)
+
+
 def link_access_identities(*, store: Any, identity_ids: list[str]) -> None:
     for identity_id in identity_ids:
         uid = str(identity_id or "").strip()
@@ -151,7 +172,12 @@ def enrich_feishu_identities(
             continue
         name = store.get_feishu_display_name(uid)
         if not name and network:
-            name = _resolve_one(store=store, identity_id=uid, identity_type="user")
+            name = _resolve_one(
+                store=store,
+                identity_id=uid,
+                identity_type="user",
+                preferred_agent=agent_id,
+            )
         users.append({"id": uid, "name": name or ""})
         if name:
             names[uid] = name
@@ -168,10 +194,13 @@ def enrich_feishu_identities(
             continue
         name = store.get_feishu_display_name(cid)
         if not name and network:
-            name = _resolve_one(store=store, identity_id=cid, identity_type="chat")
-        if not name and cid in project_names:
-            name = project_names[cid]
-        chats.append({"id": cid, "name": name or "", "kind": "chat"})
+            name = _resolve_one(
+                store=store,
+                identity_id=cid,
+                identity_type="chat",
+                preferred_agent=agent_id,
+            )
+        chats.append({"id": cid, "name": name or "", "kind": "chat", "project": project_names.get(cid) or ""})
         if name:
             names[cid] = name
 

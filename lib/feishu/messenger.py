@@ -101,11 +101,17 @@ class FeishuMessenger:
             self._token_expires_at = time.time() + max(expire - 60, 60)
         return token
 
-    def _urlopen_json(self, request: urllib.request.Request, *, retries: int = 3) -> dict[str, Any]:
+    def _urlopen_json(
+        self,
+        request: urllib.request.Request,
+        *,
+        retries: int = 3,
+        timeout: float = 30,
+    ) -> dict[str, Any]:
         last_exc: BaseException | None = None
         for attempt in range(max(retries, 1)):
             try:
-                with urllib.request.urlopen(request, timeout=30) as response:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
                     raw = response.read().decode("utf-8")
                     return json.loads(raw) if raw.strip() else {}
             except urllib.error.HTTPError as exc:
@@ -119,7 +125,16 @@ class FeishuMessenger:
         assert last_exc is not None
         raise last_exc
 
-    def _request(self, method: str, url: str, token: str, payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    def _request(
+        self,
+        method: str,
+        url: str,
+        token: str,
+        payload: Optional[dict[str, Any]] = None,
+        *,
+        retries: int = 4,
+        timeout: float = 30,
+    ) -> dict[str, Any]:
         data = None if payload is None else json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             url,
@@ -130,7 +145,7 @@ class FeishuMessenger:
             },
             method=method.upper(),
         )
-        return self._urlopen_json(request, retries=4)
+        return self._urlopen_json(request, retries=retries, timeout=timeout)
 
     def _post(self, url: str, token: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request("POST", url, token, payload)
@@ -219,7 +234,7 @@ class FeishuMessenger:
             return {"open_id": "", "name": "", "union_id": ""}
         token = self.tenant_token()
         url = f"https://open.feishu.cn/open-apis/contact/v3/users/{user_id}?user_id_type=open_id"
-        body = self._request("GET", url, token, None)
+        body = self._request("GET", url, token, None, retries=2, timeout=8)
         if int(body.get("code") or 0) != 0:
             return {"open_id": user_id, "name": "", "union_id": ""}
         data = body.get("data") if isinstance(body.get("data"), dict) else {}
@@ -249,11 +264,17 @@ class FeishuMessenger:
             return ""
         token = self.tenant_token()
         url = f"https://open.feishu.cn/open-apis/im/v1/chats/{cid}"
-        body = self._request("GET", url, token, None)
+        body = self._request("GET", url, token, None, retries=2, timeout=8)
         if int(body.get("code") or 0) != 0:
             return ""
         data = body.get("data") if isinstance(body.get("data"), dict) else {}
-        return str(data.get("name") or data.get("chat_name") or "").strip()
+        name = str(data.get("name") or data.get("chat_name") or "").strip()
+        if name:
+            return name
+        mode = str(data.get("chat_mode") or "").strip().lower()
+        if mode in {"p2p", "private", "dm"}:
+            return "Direct message"
+        return ""
 
     def safe_get_chat_name(self, chat_id: str) -> str:
         try:
